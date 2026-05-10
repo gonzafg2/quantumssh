@@ -24,5 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   apex and `www.quantumssh.org` redirect (HTTP 301) to the GitHub
   repository, preserving the request path. The "DNS not yet provisioned"
   caveat in `SECURITY.md` has been removed.
+- New `docs/operations.md`: a verification guide that lets external
+  observers check the project's DNSSEC chain, TLS posture, CAA whitelist,
+  PGP fingerprint, signed-commit history, and `main` branch protection
+  end-to-end without any special access. Includes a Mermaid diagram of
+  the DNS trust chain.
 
 [Unreleased]: https://github.com/gonzafg2/quantumssh/compare/HEAD...HEAD
