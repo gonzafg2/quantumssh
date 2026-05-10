@@ -15,11 +15,6 @@ Send a private report to:
 security@quantumssh.org
 ```
 
-> The DNS records for `quantumssh.org` are not yet provisioned at the time
-> of writing. Until they are, please send reports to the project lead
-> directly (see the maintainer's contact in `GOVERNANCE.md`) and reference
-> this file. This notice will be removed once the alias is live.
-
 If you wish to encrypt your report, use the project's PGP key:
 
 ```
