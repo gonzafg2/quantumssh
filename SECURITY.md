@@ -32,11 +32,27 @@ Expires:                    2028-05-09
 ```
 
 The full ASCII-armored public key is published in this repository at
-[`keys/security.asc`](./keys/security.asc). To import it locally:
+[`keys/security.asc`](./keys/security.asc). To import it locally and
+**verify the fingerprint before trusting it** — never skip this step
+on a security-sensitive key:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/gonzafg2/quantumssh/main/keys/security.asc | gpg --import
+# 1. Download (do NOT pipe directly to gpg --import without inspecting).
+curl -fsSL -o quantumssh-security.asc \
+  https://raw.githubusercontent.com/gonzafg2/quantumssh/main/keys/security.asc
+
+# 2. Verify the fingerprint OFFLINE against the value printed above.
+#    Expected primary fingerprint:
+#      66DB 5100 B070 0E4A E051  971F 9A8D FF06 AFD2 5B24
+gpg --show-keys quantumssh-security.asc
+
+# 3. Only after the fingerprint matches, import.
+gpg --import quantumssh-security.asc
 ```
+
+For extra assurance, cross-check the fingerprint against this README on
+`quantumssh.org` (served from a different origin) and against the
+project's signed git tags once the first release ships.
 
 If you cannot encrypt your report, plain email is acceptable; do not
 delay disclosure waiting on PGP setup.
