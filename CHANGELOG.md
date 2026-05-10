@@ -17,4 +17,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The `<TBD>` placeholder in `SECURITY.md` is replaced with the
   fingerprint metadata and verified-import instructions.
 
+### Changed
+
+- Email aliases for `quantumssh.org` are live: `security@quantumssh.org`
+  and `conduct@quantumssh.org` accept and forward correctly. The
+  apex and `www.quantumssh.org` redirect (HTTP 301) to the GitHub
+  repository, preserving the request path. The "DNS not yet provisioned"
+  caveat in `SECURITY.md` has been removed.
+
 [Unreleased]: https://github.com/gonzafg2/quantumssh/compare/HEAD...HEAD
