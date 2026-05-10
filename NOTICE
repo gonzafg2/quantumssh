@@ -1,0 +1,19 @@
+QuantumSSH
+Copyright 2026 Fleming Science and Technologies SpA
+
+This product includes software developed by:
+
+  - The russh project (https://github.com/Eugeny/russh), whose Rust SSH
+    protocol primitives are the intended foundation for QuantumSSH's
+    lower layers.
+
+  - The Open Quantum Safe project at the University of Waterloo
+    (https://openquantumsafe.org/), whose liboqs and liboqs-rust
+    libraries make post-quantum cryptography accessible to implementers.
+
+  - The OpenSSH team, whose 25 years of careful work taught the world
+    what a good SSH implementation looks like, and whose protocol
+    extensions are the de facto baseline for interoperability.
+
+This product is licensed under the Apache License, Version 2.0.
+See the LICENSE file in the project root for the full license text.

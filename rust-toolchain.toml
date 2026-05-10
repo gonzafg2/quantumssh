@@ -1,0 +1,7 @@
+# Pinned toolchain. rustup honours this file automatically when the
+# directory is entered, so contributors do not need to remember which
+# channel the project uses.
+[toolchain]
+channel    = "stable"
+components = ["rustfmt", "clippy", "rust-src"]
+profile    = "minimal"

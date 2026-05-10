@@ -1,0 +1,61 @@
+# cargo-deny configuration.
+# https://embarkstudios.github.io/cargo-deny/
+
+[graph]
+# Default to checking all targets we may build for.
+all-features = false
+
+[advisories]
+# Vulnerability advisories from RustSec.
+# https://embarkstudios.github.io/cargo-deny/checks/advisories/cfg.html
+version             = 2
+yanked              = "warn"
+ignore              = []
+
+[licenses]
+# Allow only well-understood permissive licenses. Copyleft licenses
+# (GPL, AGPL, LGPL) are deliberately excluded: this project's license
+# commitment forbids absorbing copyleft code into the codebase.
+version    = 2
+confidence-threshold = 0.93
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "MIT",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-DFS-2016",
+    "Unicode-3.0",
+    "Zlib",
+    "CC0-1.0",
+]
+
+# License clarifications: dependencies that are correctly licensed but
+# whose metadata cargo-deny cannot infer automatically. Add entries here
+# only with justification.
+[[licenses.clarify]]
+name       = "ring"
+expression = "ISC AND MIT AND OpenSSL"
+license-files = [
+    { path = "LICENSE", hash = 0xbd0eed23 },
+]
+
+[bans]
+# Multiple versions of the same crate inflate binary size, expand the
+# attack surface, and complicate auditing. We warn rather than deny so
+# that transitive dependency mismatches do not block CI before the
+# workspace has even shipped a real crate.
+multiple-versions = "warn"
+wildcards         = "deny"
+deny              = []
+skip              = []
+skip-tree         = []
+
+[sources]
+# Refuse to pull from registries or git repositories we have not
+# explicitly approved. crates.io is the only registry the workspace uses.
+unknown-registry = "deny"
+unknown-git      = "deny"
+allow-registry   = ["https://github.com/rust-lang/crates.io-index"]
+allow-git        = []

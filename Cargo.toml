@@ -1,0 +1,47 @@
+# QuantumSSH workspace root.
+#
+# This is a virtual manifest: there are no source files yet, only the
+# scaffolding for what will become a multi-crate workspace.
+#
+# When the first crate is added, list it under `members` below.
+
+[workspace]
+resolver = "3"
+members  = []
+
+# Default values inherited by every crate that opts in via
+# `package.<field>.workspace = true`.
+[workspace.package]
+edition      = "2024"
+license      = "Apache-2.0"
+authors      = ["QuantumSSH Contributors"]
+repository   = "https://github.com/gonzafg2/quantumssh"
+homepage     = "https://quantumssh.org"
+rust-version = "1.92"
+
+# Centralised dependency versions. Each crate in the workspace then
+# declares `<dep>.workspace = true` to inherit the version pinned here.
+# All entries are commented placeholders for now: the workspace has no
+# members yet, and we will add real version pins as crates are introduced.
+[workspace.dependencies]
+# russh                = "0.46"   # SSH protocol primitives, server + client
+# tokio                = { version = "1", features = ["full"] }
+# tracing              = "0.1"
+# tracing-subscriber   = { version = "0.3", features = ["env-filter"] }
+# anyhow               = "1"
+# thiserror            = "2"
+# clap                 = { version = "4", features = ["derive"] }
+# serde                = { version = "1", features = ["derive"] }
+# toml                 = "0.8"
+
+# Lints applied to every crate in the workspace via
+# `lints.workspace = true` in each crate's manifest.
+[workspace.lints.rust]
+unsafe_code  = "deny"
+missing_docs = "warn"
+unused       = "warn"
+
+[workspace.lints.clippy]
+all      = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+nursery  = { level = "warn", priority = -1 }

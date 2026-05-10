@@ -1,0 +1,27 @@
+# Normalize line endings on commit; check out as-is on each platform.
+* text=auto eol=lf
+
+# Explicitly mark known-text files (helps git diff and merge tooling)
+*.rs       text eol=lf diff=rust
+*.toml     text eol=lf
+*.md       text eol=lf
+*.yml      text eol=lf
+*.yaml     text eol=lf
+*.json     text eol=lf
+*.sh       text eol=lf
+Cargo.lock text eol=lf
+LICENSE    text eol=lf
+NOTICE     text eol=lf
+
+# Mark common binary formats so git does not try to diff them
+*.png      binary
+*.jpg      binary
+*.jpeg     binary
+*.gif      binary
+*.ico      binary
+*.pdf      binary
+*.zip      binary
+*.tar.gz   binary
+
+# Generated files: do not count toward language stats and collapse in PRs
+docs/api/** linguist-generated=true

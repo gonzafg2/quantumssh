@@ -1,0 +1,15 @@
+# rustfmt configuration.
+#
+# Some options below are unstable on the stable rustfmt channel and will
+# be silently ignored (with a warning) on stable. They take effect on
+# nightly. Documenting them here keeps the formatting intent explicit.
+
+edition                  = "2024"
+max_width                = 100
+use_field_init_shorthand = true
+
+# Unstable on stable rustfmt. Enabled here so they apply on nightly and
+# document the project's intent. Stable rustfmt prints a warning and
+# continues — `cargo fmt --check` still works.
+imports_granularity = "Module"
+group_imports       = "StdExternalCrate"

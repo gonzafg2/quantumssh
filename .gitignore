@@ -1,0 +1,60 @@
+# Rust build artifacts
+/target/
+**/*.rs.bk
+*.pdb
+
+# Cargo
+Cargo.lock
+# Note: Cargo.lock IS committed for binary crates and applications.
+# When the workspace adds a binary, remove the line above and commit
+# Cargo.lock for that crate. See:
+# https://blog.rust-lang.org/2023/08/29/committing-lockfiles.html
+
+# Environment / local secrets
+.env
+.env.*
+!.env.example
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+.Spotlight-V100
+.Trashes
+
+# JetBrains (RustRover, IntelliJ, CLion, etc.)
+.idea/
+*.iml
+*.iws
+out/
+
+# VS Code
+.vscode/
+!.vscode/settings.json.example
+!.vscode/extensions.json
+*.code-workspace
+
+# Vim / Emacs
+*.swp
+*.swo
+*~
+\#*\#
+.\#*
+
+# Coverage / profiling outputs
+*.profraw
+*.profdata
+tarpaulin-report.html
+cobertura.xml
+lcov.info
+
+# fuzz artifacts (when cargo-fuzz is added)
+fuzz/corpus/
+fuzz/artifacts/
+fuzz/coverage/
+
+# Local notes that should not be public
+NOTES.local.md
+SCRATCH.md

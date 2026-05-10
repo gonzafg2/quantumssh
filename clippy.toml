@@ -1,0 +1,6 @@
+# Project-wide clippy configuration.
+# Lint *enablement* lives in Cargo.toml under [workspace.lints.clippy].
+# This file tunes the thresholds and behaviour of individual lints.
+
+msrv                          = "1.92"
+cognitive-complexity-threshold = 20
