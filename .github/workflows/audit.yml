@@ -18,14 +18,33 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # cargo-audit requires Cargo.lock, which only exists once a binary
+      # or application member crate has been added to the workspace.
+      # Skip the audit until then; the guard disappears automatically
+      # when Cargo.lock appears at the repository root.
+      - name: Detect Cargo.lock
+        id: lockfile
+        shell: bash
+        run: |
+          if [ -f Cargo.lock ]; then
+            echo "present=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=0" >> "$GITHUB_OUTPUT"
+            echo "::notice::Cargo.lock not present yet; skipping cargo-audit until the workspace has its first lockfile-bearing crate."
+          fi
+
       - name: Install Rust toolchain
+        if: steps.lockfile.outputs.present == '1'
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo registry, index and target
+        if: steps.lockfile.outputs.present == '1'
         uses: Swatinem/rust-cache@v2
 
       - name: Install cargo-audit
+        if: steps.lockfile.outputs.present == '1'
         run: cargo install cargo-audit --locked
 
       - name: Run cargo audit
+        if: steps.lockfile.outputs.present == '1'
         run: cargo audit --deny warnings

@@ -17,7 +17,27 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # cargo-deny invokes `cargo metadata` internally, which fails on a
+      # virtual workspace with no members. Skip the action while the
+      # workspace is empty; the guard disappears once `members` is set.
+      - name: Detect workspace members
+        id: members
+        shell: bash
+        run: |
+          count=$(python3 - <<'PY'
+          import tomllib
+          with open("Cargo.toml", "rb") as f:
+              d = tomllib.load(f)
+          print(len(d.get("workspace", {}).get("members", [])))
+          PY
+          )
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+          if [ "$count" = "0" ]; then
+            echo "::notice::Workspace has no members yet; skipping cargo-deny check until the first crate lands."
+          fi
+
       - name: Run cargo-deny
+        if: steps.members.outputs.count != '0'
         uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check

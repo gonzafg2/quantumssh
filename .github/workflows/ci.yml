@@ -28,22 +28,48 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Until the workspace gains its first member crate, cargo refuses
+      # to operate on the virtual manifest. We detect this and skip the
+      # cargo steps so the job remains green during Phase 0. This guard
+      # disappears automatically once `members` in Cargo.toml is non-empty.
+      - name: Detect workspace members
+        id: members
+        shell: bash
+        run: |
+          count=$(python3 - <<'PY'
+          import tomllib
+          with open("Cargo.toml", "rb") as f:
+              d = tomllib.load(f)
+          print(len(d.get("workspace", {}).get("members", [])))
+          PY
+          )
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+          if [ "$count" = "0" ]; then
+            echo "::notice::Workspace has no members yet; skipping fmt/clippy/test/build until the first crate lands."
+          fi
+
       - name: Install Rust toolchain
+        if: steps.members.outputs.count != '0'
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
 
       - name: Cache cargo registry, index and target
+        if: steps.members.outputs.count != '0'
         uses: Swatinem/rust-cache@v2
 
       - name: Format check
+        if: steps.members.outputs.count != '0'
         run: cargo fmt --all -- --check
 
       - name: Clippy
+        if: steps.members.outputs.count != '0'
         run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: Tests
+        if: steps.members.outputs.count != '0'
         run: cargo test --workspace
 
       - name: Build (release)
+        if: steps.members.outputs.count != '0'
         run: cargo build --workspace --release
