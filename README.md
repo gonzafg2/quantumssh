@@ -84,7 +84,7 @@ We are deliberately not trying to be:
 
 ### Phase 0 — Foundation (mostly complete)
 - ✅ Manifesto, README, governance model
-- ✅ Threat model document — see [`docs/threat-model.md`](./docs/threat-model.md). Substantive content anchored in NIST SP 800-30 Rev.1 and MITRE ATT&CK; structural changes go through the RFC process from here.
+- ✅ Threat model document — see [`docs/threat-model.md`](./docs/threat-model.md); structural changes go through the RFC process from here.
 - 🟡 Decision on `russh` vs from scratch — tentatively `russh`; formal RFC pending alongside Phase 1 / Hito 1 ([#9](https://github.com/gonzafg2/quantumssh/issues/9))
 
 Phase 0 also delivered the project's supporting infrastructure (DNS with DNSSEC, TLS with HSTS preload submission, inbound email forwarding, a published project PGP key, branch protection on `main` enforcing signed commits, and CI scaffolding with workspace-state guards that self-disable when Phase 1 lands) and a 16-ADR catalog documenting each operational choice with its rationale. See [`docs/infrastructure.md`](./docs/infrastructure.md) for the current state, [`docs/operations.md`](./docs/operations.md) for independent verification recipes, and [`docs/adr/`](./docs/adr/) for the decision records.

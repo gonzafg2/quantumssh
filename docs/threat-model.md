@@ -9,7 +9,7 @@
 > **Maintenance:** Substantive changes to this document — additions to or
 > removals from the asset list, threat-actor tiers, trust boundaries, in-
 > scope attack vectors, or non-goals — go through the RFC process
-> ([`docs/rfcs/`](rfcs/)). Typographical and factual corrections may land
+> ([`docs/rfcs/`](rfcs/README.md)). Typographical and factual corrections may land
 > as ordinary documentation pull requests. The intent is the same as the
 > ADR errata mechanism in [ADR-0015](adr/0015-permit-annotated-errata-in-adrs.md):
 > revisions are visible in git history; structural changes are deliberate.
@@ -23,6 +23,8 @@ This document is meant to be read by:
   design and its code.
 - **Operators** deciding whether QuantumSSH is appropriate for a given
   deployment, and which complementary controls they need to add.
+
+**Contents.** §1 Scope and posture · §2 Assets · §3 Threat actors · §4 Trust boundaries · §5 Attack vectors · §6 Mitigations · §7 Residual risk · §8 Out of scope · §9 References.
 
 The model is deliberately concrete. Attack vectors are described at a
 level of detail that an implementer can use to design tests; mitigations
@@ -53,7 +55,7 @@ session. The default profile supports:
 - Hybrid post-quantum key exchange (`mlkem768x25519-sha256`).
 - Ed25519 host keys (RFC 8709).
 - Public-key user authentication only.
-- Single command execution, interactive PTY, and SFTP.
+- Single-command execution, interactive PTY, and SFTP.
 
 Port forwarding, X11 forwarding, agent forwarding, and other features
 are opt-in, gated behind explicit configuration. The threat model
@@ -66,8 +68,8 @@ threat model will be added before any client code lands.
 ### 1.3 Defensive posture, in one sentence
 
 QuantumSSH defends session confidentiality, integrity, and host
-authenticity against adversaries up to and including well-resourced
-state-level capability (NIST SP 800-30 Rev.1, Very High), under the
+authenticity against adversaries up to and including Very High
+capability (NIST SP 800-30 Rev.1, Appendix D), under the
 assumption that the host operating system and its administrators are
 not themselves the adversary. It does not defend against adversaries
 who have already compromised the host kernel, the operator account,
@@ -85,7 +87,9 @@ goal — and at what strength. Strength is qualified rather than
 numerical: *long-term* means "must remain protected for decades against
 harvest-now-decrypt-later", *session* means "must remain protected for
 the lifetime of an SSH session against an in-line attacker", *channel*
-means "must remain protected against tampering between endpoints".
+means "must remain protected against tampering between endpoints" (this
+document uses *channel* in two senses; SSH-protocol channels in §2.5
+onward are always qualified by context).
 
 ### 2.1 Session plaintext
 
@@ -194,10 +198,14 @@ and protocol errors significant enough to indicate attack.
 **Where.** Standard logging sinks under operator control (stderr,
 journald, files, log shippers).
 
-**Goal.** Integrity (long-term — an audit record an attacker can edit
-is not an audit record), authenticity (records must reflect what
-actually happened), availability (modest — the system continues to
-function if the log sink fails, with operator-visible degradation).
+**Goal.** Integrity at emission (records emitted by the server must
+reflect what actually happened) plus a one-way emission path to a sink
+the attacker cannot reach from inside the server process; long-term
+integrity belongs to the sink and is not the server's goal.
+Authenticity (records must be attributable to the server, not
+forgeable from inside the session). Availability (modest — the system
+continues to function if the log sink fails, with operator-visible
+degradation).
 
 ### 2.8 Service availability
 
@@ -390,9 +398,10 @@ maintainer's development environment.
 **Implication for design.** The post-quantum-by-default key
 exchange is precisely the response to the harvest-now-decrypt-
 later component of this threat. Supply-chain risk is addressed by
-the project's signed-commits, signed-tags, and dependency-discipline
-posture (see ADR-0006); reproducibility and bill-of-materials are
-on the Phase 3 roadmap.
+the project's signed-commits and signed-tags posture (see
+ADR-0006) and by dependency-discipline controls (`deny.toml`
+enforced in CI; see §5.5.2 and §6.4); reproducibility and
+bill-of-materials are on the Phase 3 roadmap.
 
 The HNDL adversary is "Very High" with respect to capability, but
 *nothing* about QuantumSSH's defence requires the adversary to be a
@@ -481,9 +490,14 @@ and the operator did not store the key in a location the
 filesystem cannot protect.
 
 **Trusted on the memory side.** That key material is kept in
-memory only for as long as it is needed, is zeroised after use
-where the language permits, is not written to swap, and is not
-exposed through error messages or panic output.
+memory only for as long as it is needed, and is zeroised on a
+best-effort basis via the `zeroize` crate after use (the guarantee
+is bounded by what the compiler does not reorder). Operators who
+require memory-confidentiality against an attacker with paging-
+file access must additionally configure `mlockall`/equivalent or
+disable swap at the host; the server itself cannot unilaterally
+prevent paging on every supported OS. Key material is not exposed
+through error messages or panic output.
 
 **What the boundary enforces.** That host private keys never leave
 the process by any path other than the cryptographic operations
@@ -666,8 +680,16 @@ form.
 **Test handle.** The negotiation MAC must bind the agreed
 algorithm list to the derived session key. A test must verify
 that mutating the `KEXINIT` of either party causes the handshake
-to abort. The server must refuse offers that do not include the
-default hybrid PQ method.
+to abort. Algorithm-name binding alone is insufficient
+post-CVE-2023-48795 (Terrapin): a prefix-truncation attack on the
+binary packet protocol manipulates sequence numbers across the
+NEWKEYS boundary despite a correct KEXINIT MAC. The hardening is
+the strict-kex extension (`kex-strict-c-v00@openssh.com` /
+`kex-strict-s-v00@openssh.com`), which the server must offer and
+require by default in the in-scope profile; test cases must
+verify that a peer omitting strict-kex is rejected when the
+operator has not opted into legacy-client mode. The server must
+refuse offers that do not include the default hybrid PQ method.
 
 #### 5.2.3 Host-key substitution
 
@@ -683,13 +705,15 @@ material exchanged inside the session.
 
 **ATT&CK reference.** `T1557`.
 
-**Test handle.** This vector is fundamentally client-side, but
+**Test handle.** This vector is fundamentally client-side.
 QuantumSSH's server-side responsibility is to make
-authentication-by-host-key cleanly anchorable: the server must
-publish its host key fingerprint in operationally usable forms
-(SSHFP records, advertised via DNSSEC-validating tooling, where
-the operator opts in), and the default must use Ed25519, whose
-fingerprint is compact enough for out-of-band verification.
+authentication-by-host-key cleanly anchorable: expose the
+host-key fingerprint in operationally usable forms so the
+operator can publish it. SSHFP records under a DNSSEC-signed
+zone are one such form; the publication itself and the DNSSEC
+operation are the operator's responsibility, not the server's.
+The default must use Ed25519, whose fingerprint is compact
+enough for out-of-band verification.
 
 #### 5.2.4 Key-derivation flaw
 
@@ -732,8 +756,12 @@ mechanism.
 the default profile. Public-key authentication does not benefit
 the attacker from repetition: either the attacker holds the
 private key or they do not. Authentication-failure events must be
-rate-limited per source and per target user, and recorded in the
-audit channel with deduplication metadata.
+rate-limited per source. The per-target-user dimension is
+deliberately omitted: on a public-key-only server, per-user
+counters create a user-enumeration oracle, where the attacker
+would learn which usernames exist by observing whether their
+counter advances. Failures are recorded in the audit channel
+with deduplication metadata.
 
 #### 5.3.2 Stolen private key (off-host compromise)
 
@@ -797,7 +825,7 @@ ever integrated) to admit themselves.
 sub-techniques as applicable; `T1554` (Compromise Host Software
 Binary).
 
-**Test handle.** This vector is **out of scope** for QuantumSSH-
+**Disposition.** This vector is **out of scope** for QuantumSSH-
 side defence — by the time it applies, the attacker already has
 the privileges the defence would need to act on. The project's
 contribution is upstream: signed releases, reproducible builds
@@ -885,7 +913,7 @@ already had legitimate read access by hypothesis.
 **ATT&CK reference.** `T1041` (Exfil over C2 channel), `T1071`
 (Application Layer Protocol), `T1573` (Encrypted Channel).
 
-**Test handle.** This is **out of scope** for QuantumSSH-side
+**Disposition.** This is **out of scope** for QuantumSSH-side
 defence; access control to data the user can read is the host's
 job. The QuantumSSH contribution is logging fidelity — a session
 recorded as having opened an SFTP subsystem, transferred N
@@ -894,8 +922,7 @@ not recorded.
 
 ### 5.5 Server lifecycle and operations
 
-ATT&CK tactic alignment: Persistence, Stealth (formerly Defense
-Evasion).
+ATT&CK tactic alignment: Persistence, Defense Evasion.
 
 #### 5.5.1 Audit-log tampering on the host
 
@@ -909,7 +936,7 @@ intrusion.
 
 **ATT&CK reference.** `T1685.004` (Disable or Modify Linux Audit
 System Log), `T1685.006` (Clear Linux or Mac System Logs). These
-identifiers reflect the v17 (April 2026) reorganisation of
+identifiers reflect the v19 (April 2026) reorganisation of
 ATT&CK's defence-evasion mappings; older mappings (`T1070.002`,
 `T1562.006`) are now consolidated under `T1685`.
 
@@ -964,10 +991,13 @@ a credential-access pattern with host-key semantics.
 
 **Test handle.** Forward secrecy in the key-exchange layer
 ensures that compromise of the host private key does **not**
-expose past session plaintexts. Operators must have a documented
-rotation procedure (Phase 2). The server must refuse to start if
-host-key file permissions are world-readable in the default
-configuration.
+expose past session plaintexts. This guarantee depends on the
+ephemeral KEM material having been destroyed after the session
+(see §2.4) and on the host key not being used in the key
+exchange in a way that leaks the ephemeral. Operators must have
+a documented rotation procedure (Phase 2). The server must
+refuse to start if host-key file permissions are world-readable
+in the default configuration.
 
 #### 5.5.4 Operator-account compromise
 
@@ -983,7 +1013,7 @@ replacement binary.
 
 **ATT&CK reference.** `T1078` (Valid Accounts).
 
-**Test handle.** **Out of scope.** The operator is, by the
+**Disposition.** **Out of scope.** The operator is, by the
 project's posture, not the adversary. Operators concerned about
 self-defence against operator-account compromise must look to
 host-level controls (privileged-access workstations, MFA on
@@ -1014,9 +1044,17 @@ repeating it.
 - **Negotiation MAC binding.** The agreed algorithm list is bound
   into the derived session key (RFC 4253 §7), preventing
   silent downgrade. Defends §5.2.2.
+- **Strict KEX (Terrapin defence).**
+  `kex-strict-{c,s}-v00@openssh.com` is advertised and required
+  by default; peers that fail to negotiate strict-kex are
+  rejected in the default profile. Sequence numbers are reset on
+  the strict-kex boundary, closing the CVE-2023-48795
+  prefix-truncation vector that algorithm-name binding alone does
+  not address. Defends §5.2.2.
 - **No legacy primitives.** No SSH-1, no RSA-1024, no DSA, no CBC
   modes, no `diffie-hellman-group1-sha1`, no
-  `diffie-hellman-group14-sha1`. Aligned with RFC 9142's MUST-NOT
+  `diffie-hellman-group14-sha1`, no `ssh-rsa` (SHA-1-signed RSA
+  host keys per RFC 9142 §4). Aligned with RFC 9142's MUST-NOT
   and SHOULD-NOT lists for new deployments.
 
 ### 6.2 Implementation posture
@@ -1079,7 +1117,7 @@ operators must account for. The principal items, by category, are:
   server-side; certificate-based authentication and short-lived
   credentials, both Phase-2 RFC items, narrow the window but do not
   close it.
-- **Compromise of the host or operator account** (§5.3.4, §5.5.4)
+- **Compromise of the host or operator account** (§5.5.4, §8.1)
   defeats QuantumSSH by hypothesis; host-level controls are the
   operator's responsibility.
 - **Cryptographic primitives might be broken** (ML-KEM, X25519,
@@ -1254,7 +1292,7 @@ occurred.
 
 ### Attack taxonomy
 
-- MITRE ATT&CK Enterprise Matrix, v17 (April 2026). Technique IDs
+- MITRE ATT&CK Enterprise Matrix, v19 (April 2026). Technique IDs
   cited inline in §5.
   <https://attack.mitre.org/>
 
@@ -1288,7 +1326,7 @@ occurred.
 - [`MANIFIESTO.es.md`](../MANIFIESTO.es.md) — Spanish-language
   manifesto.
 - [`docs/infrastructure.md`](infrastructure.md) — operational
-  topology referenced from §6.4.
+  topology referenced from §6.5.
 - [`docs/operations.md`](operations.md) — verification recipes
   referenced from §6.5.
 - [`docs/adr/`](adr/) — architecture decision records; ADR-0006
