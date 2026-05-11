@@ -40,8 +40,11 @@ enough operational evidence that its HTTPS surface is stable.
 
 - Returning visitors get full HSTS enforcement (`max-age` is six
   months).
-- The header is preload-eligible, so when we choose to submit, no
-  configuration change is required.
+- The `preload` directive is set in the header, signaling intent.
+  Actual preload-list submission will additionally require bumping
+  `max-age` to at least 31536000 (one year) per hstspreload.org
+  requirements; that bump is one configuration change at submission
+  time, not a re-architecting.
 - Deferral avoids irreversibly committing to a long removal window
   before the project has observed its own HTTPS behaviour.
 
@@ -72,9 +75,12 @@ is a cheap insurance policy.
 ### Alternative 2: Skip the `preload` directive entirely
 
 Would leave the protection at the `max-age` baseline and remove any
-implicit commitment. Rejected because the directive is the eligibility
-gate and including it now costs nothing — only the explicit submission
-locks anything in.
+implicit commitment. Rejected because the `preload` directive is one
+of several preload-list eligibility requirements (alongside
+`max-age` ≥ 31536000, `includeSubDomains`, and HTTP → HTTPS
+redirection); including it now costs nothing, signals intent, and
+keeps a clean configuration for the submission decision. Only the
+explicit submission locks anything in.
 
 ### Alternative 3: Shorter `max-age`
 

@@ -46,4 +46,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `docs/infrastructure.md` now cites these ADRs rather than inlining
   rationale, and `GOVERNANCE.md` documents the RFC-vs-ADR boundary.
 
+### Fixed
+
+- `docs/adr/0011-ci-guards-python-tomllib.md` and the corresponding
+  "CI guard implementation note" in `docs/infrastructure.md`
+  incorrectly described all three CI workflows as using a single
+  shared `tomllib`/`workspace.members` predicate. In reality
+  `audit.yml` is gated on `Cargo.lock` presence (matching what
+  `cargo-audit` actually needs), while `ci.yml` and `deny.yml` are
+  gated on the `tomllib` member count. Both documents now describe
+  the two-predicate split accurately. ADR-0011's title and
+  alternatives section are updated accordingly.
+- `docs/adr/0003-hsts-preload-deferred.md` claimed in its Positive
+  consequences that the header was "preload-eligible" with no
+  configuration change required at submission. That was internally
+  inconsistent with the same ADR's Alternative 3 section, which
+  correctly notes that the current `max-age=15552000` (six months) is
+  below the one-year (31536000) preload-list floor. The Positive
+  consequence and Alternative 2 wording are corrected to acknowledge
+  that submission will require bumping `max-age` to at least one year
+  in addition to the existing directive.
+
 [Unreleased]: https://github.com/gonzafg2/quantumssh/compare/HEAD...HEAD
