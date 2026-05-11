@@ -19,6 +19,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `README.md` Phase 0 roadmap entry updated to reflect actual status:
+  `Manifesto, README, governance model` marked complete; threat model
+  document and the `russh` decision marked in-progress with pointers
+  to the tracking issues; and a short paragraph added recognising the
+  supporting infrastructure (DNS/DNSSEC, HSTS preload, project PGP,
+  branch protection, CI scaffolding) and the 16-ADR catalog as Phase 0
+  deliverables alongside the originally listed three. Phase 0 header
+  changed from `(in progress)` to `(mostly complete)`. Phase 1+ entries
+  unchanged.
 - Email aliases for `quantumssh.org` are live: `security@quantumssh.org`
   and `conduct@quantumssh.org` accept and forward correctly. The
   apex and `www.quantumssh.org` redirect (HTTP 301) to the GitHub
