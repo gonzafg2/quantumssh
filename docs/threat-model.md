@@ -50,12 +50,14 @@ and the design choices that respond to them. It is not a risk assessment
 
 QuantumSSH is a memory-safe, post-quantum-first SSH server, written in
 Rust, intended for production use as the listening side of an SSH
-session. The default profile supports:
+session. The default profile (Phase 1–2 target; no Rust code has
+landed yet — see the [README roadmap](../README.md#roadmap) for the
+current phase) is designed to support:
 
-- Hybrid post-quantum key exchange (`mlkem768x25519-sha256`).
-- Ed25519 host keys (RFC 8709).
-- Public-key user authentication only.
-- Single-command execution, interactive PTY, and SFTP.
+- Hybrid post-quantum key exchange (`mlkem768x25519-sha256`) — Phase 1.
+- Ed25519 host keys (RFC 8709) — Phase 1.
+- Public-key user authentication only — Phase 1.
+- Single-command execution — Phase 1. Interactive PTY and SFTP — Phase 2.
 
 Port forwarding, X11 forwarding, agent forwarding, and other features
 are opt-in, gated behind explicit configuration. The threat model
@@ -1062,9 +1064,10 @@ repeating it.
 - **Memory safety as a primary defence.** Rust with the borrow
   checker, no `unsafe` in the pre-authentication code path in the
   default profile. Defends §5.1.2.
-- **Smallest plausible attack surface.** MVP supports pubkey auth,
-  command execution, PTY, SFTP. Everything else is opt-in behind a
-  feature flag. Defends §5.4 generally.
+- **Smallest plausible attack surface.** The MVP target is pubkey
+  auth (Phase 1), command execution (Phase 1), PTY and SFTP
+  (Phase 2). Everything else is opt-in behind a feature flag.
+  Defends §5.4 generally.
 - **Fuzzing as a Phase-3 deliverable.** `cargo-fuzz` and OSS-Fuzz
   integration are committed in the roadmap; corpora derived from the
   RFC 4253 binary packet grammar are the starting target. Defends
