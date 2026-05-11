@@ -1,6 +1,6 @@
 # ADR 0003: Set the HSTS preload directive but defer list submission
 
-- **Status:** Accepted
+- **Status:** Partially superseded by [ADR-0012](0012-hsts-max-age-bumped-to-one-year.md) on 2026-05-11. ADR-0012 supersedes the `max-age` value chosen here (6 months → 1 year). The preload-list submission deferral established in this ADR remains in effect.
 - **Date:** 2026-05-10
 - **Deciders:** Project lead
 - **Related:** `docs/infrastructure.md` § "TLS posture", GitHub issue tracking the submission decision
