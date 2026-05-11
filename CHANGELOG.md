@@ -19,6 +19,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `README.md` Phase 1 roadmap entry now cites the GitHub issue
+  tracking it (`#9`), matching the discoverability pattern already
+  applied to Phase 0 by the previous CHANGELOG entry.
+- `docs/infrastructure.md` "Calendar of time-bound actions" no longer
+  lists the 2026-07-10 HSTS preload submit-or-skip decision as a
+  pending entry. That decision was resolved ahead of schedule on
+  2026-05-11 by ADR-0014 (submission completed). A short note below
+  the calendar records the resolution and points at the ADR for
+  context, so a future reader auditing the project's calendar drift
+  finds the explanation in the same section.
 - `README.md` Phase 0 roadmap entry updated to reflect actual status:
   `Manifesto, README, governance model` marked complete; threat model
   document and the `russh` decision marked in-progress with pointers

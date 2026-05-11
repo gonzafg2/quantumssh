@@ -90,6 +90,7 @@ We are deliberately not trying to be:
 Phase 0 also delivered the project's supporting infrastructure (DNS with DNSSEC, TLS with HSTS preload submission, inbound email forwarding, a published project PGP key, branch protection on `main` enforcing signed commits, and CI scaffolding with workspace-state guards that self-disable when Phase 1 lands) and a 16-ADR catalog documenting each operational choice with its rationale. See [`docs/infrastructure.md`](./docs/infrastructure.md) for the current state, [`docs/operations.md`](./docs/operations.md) for independent verification recipes, and [`docs/adr/`](./docs/adr/) for the decision records.
 
 ### Phase 1 — Walking skeleton
+Tracked in [#9](https://github.com/gonzafg2/quantumssh/issues/9).
 - Server listens on a port, accepts a connection
 - Hybrid PQ key exchange (ML-KEM-768 + X25519)
 - Ed25519 host key
