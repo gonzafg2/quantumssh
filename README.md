@@ -95,7 +95,7 @@ Tracked in [#9](https://github.com/gonzafg2/quantumssh/issues/9).
 - Hybrid PQ key exchange (ML-KEM-768 + X25519)
 - Ed25519 host key
 - Public-key authentication only
-- Single command execution
+- Single-command execution
 - Structured logging via `tracing`
 
 ### Phase 2 — Usable
