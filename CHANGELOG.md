@@ -82,11 +82,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - HSTS `max-age` increased from `15552000` (6 months) to `31536000`
   (1 year). Recorded as
   [ADR-0012](docs/adr/0012-hsts-max-age-bumped-to-one-year.md), which
-  partially supersedes ADR-0003 (the `max-age` portion only; the
-  preload-list submission deferral established in ADR-0003 remains in
-  effect). The new value meets the floor required by hstspreload.org;
-  the remaining preload-list eligibility blockers (the HTTP→HTTPS
-  same-host first-hop redirect) and the submission decision itself
-  are tracked in GitHub issue #10.
+  partially supersedes ADR-0003.
+- HSTS preload-list submission completed. The Cloudflare Redirect Rule
+  was scoped to HTTPS-only traffic (via an added `ssl` clause in its
+  filter), enabling "Always Use HTTPS" to perform the HTTP→HTTPS
+  same-host upgrade before the rule fires; this satisfies the last
+  outstanding `hstspreload.org` eligibility requirement (first-hop
+  redirect must be to a secure page on the same host). The domain
+  `quantumssh.org` was then submitted at `hstspreload.org` and is now
+  in the `pending` queue for inclusion in the next Chromium release;
+  other browsers follow on their own cadence. Recorded as
+  [ADR-0014](docs/adr/0014-hsts-preload-submitted.md), which together
+  with ADR-0012 fully supersedes ADR-0003. Removal from the preload
+  list is by design slow (6-12 weeks per Chrome, longer elsewhere);
+  the project accepts this in exchange for protecting first-time
+  HTTP visitors from active downgrade attacks on initial request.
 
 [Unreleased]: https://github.com/gonzafg2/quantumssh/compare/HEAD...HEAD
