@@ -172,12 +172,14 @@ proxy state can stay.
 
 TLS 1.0 and TLS 1.1 are rejected at handshake time; TLS 1.2 and TLS 1.3
 are supported with modern AEAD ciphers only. The HSTS header is served
-with `max-age=15552000; includeSubDomains; preload`. The `preload`
-directive is set but the domain is **not** yet submitted to the browser
-preload list.
+with `max-age=31536000; includeSubDomains; preload` (one year). The
+`preload` directive is set but the domain is **not** yet submitted to
+the browser preload list.
 
-Decision rationale (HSTS preload deferral): see
-[ADR-0003](./adr/0003-hsts-preload-deferred.md).
+Decision rationale: the original ADR setting the header lives at
+[ADR-0003](./adr/0003-hsts-preload-deferred.md) (which deferred preload
+submission); the subsequent bump from 6-month to 1-year `max-age` is
+recorded in [ADR-0012](./adr/0012-hsts-max-age-bumped-to-one-year.md).
 
 The certificate is part of Cloudflare's Universal SSL pool; the current
 chain is from Let's Encrypt, but Cloudflare may rotate the issuing CA
@@ -217,13 +219,17 @@ availability.
 
 ### Authentication posture
 
-DMARC is published with `p=none` and an aggregate-reporting URI — a
-deliberate "monitor only" stance during an initial observation window.
-SPF and DKIM records are auto-managed by Cloudflare Email Routing for
-the receiving side.
+DMARC is published with `p=reject` and an aggregate-reporting URI.
+Receivers reject mail that fails alignment under `quantumssh.org`
+outright. SPF and DKIM records are auto-managed by Cloudflare Email
+Routing for the receiving side.
 
-Decision rationale (the `p=none` choice and the tightening path): see
-[ADR-0004](./adr/0004-dmarc-p-none-monitoring.md).
+Decision rationale: the original observation-window stance at `p=none`
+is recorded in [ADR-0004](./adr/0004-dmarc-p-none-monitoring.md); the
+subsequent tightening directly to `p=reject` (skipping the
+intermediate `p=quarantine` step that ADR-0004 had contemplated, on
+the grounds that the project sends no outbound mail) is recorded in
+[ADR-0013](./adr/0013-dmarc-tightened-to-p-reject.md).
 
 ## Identity and signing
 

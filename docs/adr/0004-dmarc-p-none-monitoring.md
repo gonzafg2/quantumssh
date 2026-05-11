@@ -1,6 +1,6 @@
 # ADR 0004: Publish DMARC with `p=none` during the observation window
 
-- **Status:** Accepted
+- **Status:** Superseded by [ADR-0013](0013-dmarc-tightened-to-p-reject.md) on 2026-05-11.
 - **Date:** 2026-05-10
 - **Deciders:** Project lead
 - **Related:** `docs/infrastructure.md` § "Authentication posture", GitHub issue tracking the policy tightening

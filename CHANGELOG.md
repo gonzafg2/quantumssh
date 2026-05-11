@@ -67,4 +67,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that submission will require bumping `max-age` to at least one year
   in addition to the existing directive.
 
+### Security
+
+- DMARC policy tightened from `p=none` to `p=reject`. Receivers now
+  reject mail that fails alignment under `quantumssh.org` outright
+  rather than merely reporting failures. Recorded as
+  [ADR-0013](docs/adr/0013-dmarc-tightened-to-p-reject.md), which
+  supersedes ADR-0004. The intermediate `p=quarantine` step
+  contemplated in ADR-0004 was skipped because the project sends no
+  outbound mail under this domain (no legitimate senders to validate
+  against the policy). Future outbound-mail integrations under
+  `@quantumssh.org` will need to be perfectly SPF/DKIM-aligned before
+  they send.
+- HSTS `max-age` increased from `15552000` (6 months) to `31536000`
+  (1 year). Recorded as
+  [ADR-0012](docs/adr/0012-hsts-max-age-bumped-to-one-year.md), which
+  partially supersedes ADR-0003 (the `max-age` portion only; the
+  preload-list submission deferral established in ADR-0003 remains in
+  effect). The new value meets the floor required by hstspreload.org;
+  the remaining preload-list eligibility blockers (the HTTP→HTTPS
+  same-host first-hop redirect) and the submission decision itself
+  are tracked in GitHub issue #10.
+
 [Unreleased]: https://github.com/gonzafg2/quantumssh/compare/HEAD...HEAD
