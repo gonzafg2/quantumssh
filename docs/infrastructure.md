@@ -168,18 +168,33 @@ satisfies the use case. When a project site exists in the future the
 Redirect Rule will be disabled or replaced; the DNS records and the
 proxy state can stay.
 
+HTTP requests are upgraded to HTTPS on the **same host** first, by
+Cloudflare's "Always Use HTTPS" setting, before the Redirect Rule
+fires. The rule's filter is scoped to `ssl` so it does not match HTTP
+traffic and bypass the upgrade; the resulting chain for an HTTP request
+is two 301 hops (`http://quantumssh.org/X` → `https://quantumssh.org/X`
+→ `https://github.com/gonzafg2/quantumssh/X`), with the first hop
+staying on the project's own host. This shape is required for HSTS
+preload-list eligibility — see
+[ADR-0014](./adr/0014-hsts-preload-submitted.md).
+
 ### TLS posture
 
 TLS 1.0 and TLS 1.1 are rejected at handshake time; TLS 1.2 and TLS 1.3
 are supported with modern AEAD ciphers only. The HSTS header is served
 with `max-age=31536000; includeSubDomains; preload` (one year). The
-`preload` directive is set but the domain is **not** yet submitted to
-the browser preload list.
+domain has been **submitted** to the browser HSTS preload list
+(`hstspreload.org` status: `pending`, awaiting inclusion in the next
+Chromium release; other browsers follow on their own cadence).
 
 Decision rationale: the original ADR setting the header lives at
-[ADR-0003](./adr/0003-hsts-preload-deferred.md) (which deferred preload
-submission); the subsequent bump from 6-month to 1-year `max-age` is
-recorded in [ADR-0012](./adr/0012-hsts-max-age-bumped-to-one-year.md).
+[ADR-0003](./adr/0003-hsts-preload-deferred.md); the subsequent bump
+from 6-month to 1-year `max-age` is recorded in
+[ADR-0012](./adr/0012-hsts-max-age-bumped-to-one-year.md); the
+preload-list submission itself (and the Redirect Rule scope change
+that made the domain preload-eligible) is recorded in
+[ADR-0014](./adr/0014-hsts-preload-submitted.md), which together with
+ADR-0012 fully supersedes ADR-0003.
 
 The certificate is part of Cloudflare's Universal SSL pool; the current
 chain is from Let's Encrypt, but Cloudflare may rotate the issuing CA
