@@ -15,6 +15,10 @@ this document, that itself is a signal worth reporting through the
 embargoed-disclosure process in `SECURITY.md`. Drift from documented
 state is meaningful information.
 
+For a description of what is configured and the rationale behind each
+choice, see [`infrastructure.md`](./infrastructure.md). This document
+focuses on independent verification of those configurations.
+
 ---
 
 ## DNS chain of trust (DNSSEC)
