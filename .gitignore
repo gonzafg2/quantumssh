@@ -58,3 +58,6 @@ fuzz/coverage/
 # Local notes that should not be public
 NOTES.local.md
 SCRATCH.md
+
+# Claude Code local settings
+.claude/
