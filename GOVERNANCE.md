@@ -68,6 +68,27 @@ to an RFC, say so on the RFC pull request before the comment period
 closes. Substantive objections must be addressed; "I don't like it" is
 not, on its own, a substantive objection.
 
+### RFCs and ADRs
+
+The project records its decisions in two complementary forms:
+
+- **RFCs** (`docs/rfcs/`) **propose** changes. They are heavy,
+  discussion-first documents used for substantial design decisions
+  (new protocol extensions, breaking interface changes, new default
+  cryptographic algorithms, dependencies that materially expand the
+  trust base). An RFC stays open for a comment period; it is accepted
+  by lazy consensus.
+- **ADRs** (`docs/adr/`) **record** decisions that have been taken.
+  They are lightweight, single-purpose, retrospective or concurrent
+  documents — one decision per file, with context, alternatives, and
+  consequences. ADRs are accepted on merge and immutable thereafter
+  (a later ADR can supersede an earlier one; the earlier ADR is not
+  edited in place). See `docs/adr/README.md` for the process.
+
+The two coexist: an accepted RFC typically lands as one or more ADRs
+that cite it; smaller decisions that do not warrant the RFC process
+land directly as ADRs.
+
 ## The license commitment (binding)
 
 The `Open source, really` section of `README.md` is treated as a

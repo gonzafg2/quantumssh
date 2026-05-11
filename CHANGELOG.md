@@ -36,5 +36,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   describes how to verify these configurations externally. Includes a
   service-topology Mermaid diagram. `README.md` and `docs/operations.md`
   cross-link to it.
+- Architecture Decision Record (ADR) system introduced under
+  `docs/adr/` with `README.md` describing process, a MADR-style
+  template, and ADRs 0001-0011 backfilling the Phase 0 decisions
+  (DNS host, registrar, HSTS preload deferral, DMARC `p=none`, PGP
+  two-year expiry, SSH-not-GPG commit signing, CAA whitelist scope,
+  branch protection with zero approving reviews, virtual workspace
+  in Phase 0, toolchain pinning, CI guards via Python `tomllib`).
+  `docs/infrastructure.md` now cites these ADRs rather than inlining
+  rationale, and `GOVERNANCE.md` documents the RFC-vs-ADR boundary.
 
 [Unreleased]: https://github.com/gonzafg2/quantumssh/compare/HEAD...HEAD
