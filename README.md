@@ -15,6 +15,8 @@ We are not forking OpenSSH. We are not adding PQ algorithms as an option. We are
 
 This repository currently holds the project's manifesto, roadmap, and governance commitments. Code is forthcoming. Star and watch if you want to follow the journey, or open an issue if you want to discuss the design.
 
+Supporting infrastructure (DNS, TLS, email, signing, repository hardening) is described in [`docs/infrastructure.md`](./docs/infrastructure.md); independent verification recipes live in [`docs/operations.md`](./docs/operations.md).
+
 ---
 
 ## The problem
