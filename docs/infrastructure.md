@@ -324,15 +324,26 @@ see [ADR-0010](./adr/0010-toolchain-pinning-resolver-3-edition-2024-msrv-1-92.md
 
 ### CI guard implementation note
 
-The three CI workflows (`ci.yml`, `audit.yml`, `deny.yml`) skip their
-cargo invocations when the workspace has no members. The skip
-predicate is implemented as a four-line Python script that reads
-`Cargo.toml` with the standard-library `tomllib` module and counts
-`workspace.members`.
+Each CI workflow that runs a Cargo subcommand is gated by a small
+predicate, but the predicates are not the same across the three
+workflows: they match the actual failure mode of the Cargo command
+they protect.
 
-Decision rationale (Python `tomllib` rather than bash regex or third-
-party TOML tooling): see
-[ADR-0011](./adr/0011-ci-guards-python-tomllib.md).
+- `ci.yml` and `deny.yml` are gated on **`workspace.members` being
+  non-empty**, read from `Cargo.toml` with the standard-library
+  `tomllib` module. These workflows run `cargo fmt`, `cargo clippy`,
+  `cargo test`, `cargo build`, and `cargo-deny` — all of which refuse
+  to operate on a virtual manifest with no members.
+- `audit.yml` is gated on **`Cargo.lock` being present**, via a
+  one-line bash test. `cargo-audit` scans the lockfile rather than
+  the manifest, so it cares about the lockfile's existence rather
+  than the workspace's member list.
+
+Both predicates self-disable when their respective condition resolves;
+neither requires a workflow edit at the Phase 0 → Phase 1 transition.
+
+Decision rationale (why two narrow predicates rather than one shared
+mechanism): see [ADR-0011](./adr/0011-ci-guards-python-tomllib.md).
 
 ## Calendar of time-bound actions
 
