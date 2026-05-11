@@ -29,5 +29,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   PGP fingerprint, signed-commit history, and `main` branch protection
   end-to-end without any special access. Includes a Mermaid diagram of
   the DNS trust chain.
+- New `docs/infrastructure.md`: a public overview of the project's
+  supporting infrastructure (DNS, TLS, email, signing, repository
+  hardening, CI scaffolding), with rationale for each non-obvious
+  configuration choice. Complements `docs/operations.md`, which
+  describes how to verify these configurations externally. Includes a
+  service-topology Mermaid diagram. `README.md` and `docs/operations.md`
+  cross-link to it.
 
 [Unreleased]: https://github.com/gonzafg2/quantumssh/compare/HEAD...HEAD
