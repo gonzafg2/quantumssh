@@ -5,6 +5,37 @@
 - **Deciders:** Project lead
 - **Related:** [ADR-0009](0009-workspace-no-members-during-phase-0.md), `.github/workflows/{ci,audit,deny}.yml`
 
+> **Post-acceptance errata** (per [ADR-0015](0015-permit-annotated-errata-in-adrs.md)):
+>
+> - **2026-05-11** ([PR #13](https://github.com/gonzafg2/quantumssh/pull/13)):
+>   Restructured the Context and Decision sections to describe the
+>   two-predicate split accurately. The original wording claimed all
+>   three CI workflows (`ci.yml`, `audit.yml`, `deny.yml`) skipped
+>   their cargo invocations using a single shared `tomllib`/
+>   `workspace.members` predicate. In reality, `audit.yml` is gated on
+>   `Cargo.lock` presence (matching what `cargo-audit` actually needs),
+>   while `ci.yml` and `deny.yml` are gated on the `tomllib` member
+>   count. The ADR title was also adjusted from "Implement
+>   workspace-empty CI guards with Python `tomllib`" to "Gate CI
+>   workflows on workspace state with two narrow predicates" to match
+>   the corrected scope, and an additional Alternative ("use the same
+>   predicate everywhere") was added with its rejection rationale.
+> - **2026-05-11** (this PR): Refined the description of when
+>   `Cargo.lock` appears at the repo root. The previous wording ("the
+>   lockfile only appears once a member crate has been built") was
+>   imprecise: the workflow predicate checks for `Cargo.lock` in the
+>   repository checkout, so the condition resolves only when a
+>   lockfile-producing crate (typically a binary or application
+>   crate) is added **and** its `Cargo.lock` is committed at the repo
+>   root. The new wording makes the commit step explicit.
+> - **2026-05-11** (this PR): The ADR file was renamed from
+>   `0011-ci-guards-python-tomllib.md` to
+>   `0011-ci-guards-workspace-state.md` so the filename slug reflects
+>   the corrected scope (the decision is about workspace-state guards
+>   in general, not specifically about the Python `tomllib`
+>   predicate). All inbound links in the repository were updated in
+>   the same commit.
+
 ## Context
 
 [ADR-0009](0009-workspace-no-members-during-phase-0.md) commits to a
@@ -14,15 +45,18 @@ virtual workspace with no member crates during Phase 0. That creates
 1. **No workspace members.** `cargo fmt`, `cargo clippy`, `cargo build`,
    `cargo test`, and `cargo-deny` all refuse to operate on a virtual
    manifest with `members = []`. This blocks `ci.yml` and `deny.yml`.
-2. **No `Cargo.lock`.** `cargo-audit` scans a lockfile rather than the
-   manifest. The lockfile only appears once a member crate has been
-   built (and is only relevant for binary or application crates that
-   commit `Cargo.lock`). This blocks `audit.yml`.
+2. **No `Cargo.lock` in the repo.** `cargo-audit` scans a lockfile
+   rather than the manifest. `Cargo.lock` appears at the repository
+   root only when a lockfile-producing crate (typically a binary or
+   application crate, per `cargo` convention) is added **and** the
+   generated lockfile is committed alongside it. This blocks
+   `audit.yml`.
 
 The two conditions resolve on different events: the first lifts as
 soon as a member is added to `Cargo.toml`; the second lifts when the
-first lockfile-bearing crate exists. Both lifts happen during Phase 1,
-but not necessarily simultaneously.
+first crate that commits `Cargo.lock` to the repository root lands.
+Both lifts happen during Phase 1, but not necessarily simultaneously
+or in the same commit.
 
 Each gating predicate must:
 

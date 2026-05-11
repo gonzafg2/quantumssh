@@ -5,6 +5,19 @@
 - **Deciders:** Project lead
 - **Related:** Supersedes [ADR-0004](0004-dmarc-p-none-monitoring.md). See also [`docs/infrastructure.md` § "Authentication posture"](../infrastructure.md#authentication-posture) and GitHub issue #11.
 
+> **Post-acceptance errata** (per [ADR-0015](0015-permit-annotated-errata-in-adrs.md)):
+>
+> - **2026-05-11** (this PR): Qualified the wording "Receivers will
+>   outright reject mail" / "rejected by compliant receivers
+>   immediately" to clarify that DMARC `p=reject` is a *policy
+>   request* to receivers. Enforcement is not universal: most major
+>   mailbox providers (Google, Microsoft, Yahoo, ProtonMail, and
+>   others) honour `p=reject` and reject failing mail; some legacy or
+>   non-compliant mailservers ignore DMARC entirely. The corrected
+>   wording uses "DMARC-compliant receivers" or "receivers are
+>   instructed to reject", which is the accurate framing of the
+>   policy's reach.
+
 ## Context
 
 [ADR-0004](0004-dmarc-p-none-monitoring.md) set DMARC to `p=none`
@@ -32,16 +45,22 @@ v=DMARC1; p=reject; rua=mailto:<Cloudflare aggregate-report endpoint>
 ```
 
 This skips the intermediate `p=quarantine` step that ADR-0004
-contemplated. Receivers will outright **reject** mail that fails
-alignment under `quantumssh.org`, rather than routing it to spam.
+contemplated. The policy instructs DMARC-compliant receivers to
+outright **reject** mail that fails alignment under `quantumssh.org`,
+rather than routing it to spam. `p=reject` is a policy *request* —
+enforcement depends on the receiver; major mailbox providers honour
+it, legacy or non-compliant mailservers may ignore DMARC entirely.
 
 ## Consequences
 
 ### Positive
 
 - Any unauthorized sender attempting to spoof `@quantumssh.org` is
-  rejected by compliant receivers immediately, not merely flagged
-  as suspicious.
+  rejected by DMARC-compliant receivers immediately, not merely
+  flagged as suspicious. Enforcement is best-effort across the
+  ecosystem (major mailbox providers honour `p=reject`; some legacy
+  servers ignore DMARC), but the marginal protection over `p=none`
+  or `p=quarantine` is meaningful.
 - The abuse window during which an attacker could use this domain
   for phishing or impersonation closes the moment caches refresh
   (well under 24h).

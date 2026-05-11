@@ -60,15 +60,33 @@ An ADR moves through three terminal states:
 - **Accepted** — the decision is in effect. The ADR is now part of the
   project's authoritative record.
 - **Superseded by ADR-NNNN** — a later ADR replaced this one. The
-  original stays in the repository as historical record; its content
-  is **not edited**. The new ADR cites it.
+  original stays in the repository as historical record. The new ADR
+  cites it.
 - **Deprecated** — the decision is no longer relevant (e.g., the
   feature it governed was removed) but no new ADR replaced it.
   Recorded for posterity.
 
-ADRs are **never edited in place** after acceptance, except to update
-the Status field when superseded or deprecated. If you want to change
-a decision, write a new ADR that supersedes the old one.
+ADRs are **never edited in place** after acceptance, with two narrow
+exceptions:
+
+1. **The Status field**, when the ADR is superseded or deprecated.
+2. **Factual errata** — corrections to factual claims that were wrong
+   at the time of acceptance (typographical, numerical, descriptive,
+   or logical errors). Errata edits **must** add a
+   `Post-acceptance errata` banner near the top of the ADR documenting
+   the date, the PR or CHANGELOG entry that records the edit, and a
+   short description of what was corrected. The full pre-edit wording
+   remains in git history; the banner is what makes the editing event
+   discoverable from the file itself.
+
+Errata are explicitly **not** a mechanism for decision changes. If
+you want to change the decision the ADR records — revise it, narrow
+it, broaden it, reverse it — write a new ADR that supersedes the old
+one. Errata are for "we said X but X is incorrect"; supersession is
+for "we decided X, now we decide Y".
+
+The errata mechanism was introduced by [ADR-0015](0015-permit-annotated-errata-in-adrs.md);
+that ADR is the authoritative reference for the rule and its rationale.
 
 ## Process
 

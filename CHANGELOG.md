@@ -42,13 +42,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (DNS host, registrar, HSTS preload deferral, DMARC `p=none`, PGP
   two-year expiry, SSH-not-GPG commit signing, CAA whitelist scope,
   branch protection with zero approving reviews, virtual workspace
-  in Phase 0, toolchain pinning, CI guards via Python `tomllib`).
+  in Phase 0, toolchain pinning, CI workflow gating via two narrow
+  workspace-state predicates — `tomllib`/`workspace.members` for
+  `ci.yml` and `deny.yml`, `Cargo.lock` presence for `audit.yml`).
   `docs/infrastructure.md` now cites these ADRs rather than inlining
   rationale, and `GOVERNANCE.md` documents the RFC-vs-ADR boundary.
 
 ### Fixed
 
-- `docs/adr/0011-ci-guards-python-tomllib.md` and the corresponding
+- `docs/adr/0011-ci-guards-workspace-state.md` and the corresponding
   "CI guard implementation note" in `docs/infrastructure.md`
   incorrectly described all three CI workflows as using a single
   shared `tomllib`/`workspace.members` predicate. In reality
@@ -66,12 +68,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   consequence and Alternative 2 wording are corrected to acknowledge
   that submission will require bumping `max-age` to at least one year
   in addition to the existing directive.
+- ADR process formalised an errata mechanism for accepted ADRs.
+  Previously the README stated that accepted ADRs were immutable
+  except for the Status field, but in practice PR #13 made in-place
+  factual corrections to ADR-0003 and ADR-0011. That tension is
+  resolved by [ADR-0015](docs/adr/0015-permit-annotated-errata-in-adrs.md),
+  which permits in-place edits **only** for factual errata, with an
+  explicit `Post-acceptance errata` banner near the top of the
+  affected ADR documenting the date, the PR or CHANGELOG entry, and
+  what was corrected. Decision changes still require a new ADR that
+  supersedes the old one. ADR-0003, ADR-0011, and ADR-0013 are
+  retroactively annotated with their errata banners under the new
+  rule.
+- ADR-0011 file renamed from `0011-ci-guards-python-tomllib.md` to
+  `0011-ci-guards-workspace-state.md` so the filename slug reflects
+  the ADR's corrected scope (two narrow workspace-state predicates,
+  not a single `tomllib` predicate). All inbound links in
+  `docs/infrastructure.md`, ADR-0009, and earlier CHANGELOG entries
+  are updated in the same commit.
+- ADR-0011's description of when `Cargo.lock` appears at the repo
+  root is refined: the original wording implied a build event in
+  some environment, but the actual workflow predicate checks for the
+  file in the repository checkout. The corrected wording makes the
+  commit step explicit.
+- DMARC-related claims in `docs/infrastructure.md`, `CHANGELOG.md`,
+  and `docs/adr/0013-dmarc-tightened-to-p-reject.md` had stated
+  absolutely that "Receivers reject mail" under `p=reject`. DMARC is
+  a policy *request*; enforcement varies (major mailbox providers
+  honour `p=reject`, some legacy mailservers ignore DMARC entirely).
+  The wording is qualified to "DMARC-compliant receivers" /
+  "receivers are instructed to reject" in all three locations.
+- The `Records reference` table in `docs/infrastructure.md` was
+  out of date with the rest of the document: it listed the DMARC TXT
+  record as `p=none` while the "Authentication posture" section
+  below it already described the `p=reject` policy. The table row is
+  updated to `p=reject`.
 
 ### Security
 
-- DMARC policy tightened from `p=none` to `p=reject`. Receivers now
-  reject mail that fails alignment under `quantumssh.org` outright
-  rather than merely reporting failures. Recorded as
+- DMARC policy tightened from `p=none` to `p=reject`. DMARC-compliant
+  receivers are instructed to reject mail that fails alignment under
+  `quantumssh.org` outright rather than merely reporting failures
+  (`p=reject` is a policy request and enforcement varies across the
+  receiver ecosystem). Recorded as
   [ADR-0013](docs/adr/0013-dmarc-tightened-to-p-reject.md), which
   supersedes ADR-0004. The intermediate `p=quarantine` step
   contemplated in ADR-0004 was skipped because the project sends no

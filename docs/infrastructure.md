@@ -144,7 +144,7 @@ exact `dig` invocation.
 | CNAME (proxied) | `www` | Flattens to apex; subject to the same Redirect Rule |
 | MX | `quantumssh.org` | Three Cloudflare Email Routing endpoints, priorities 11/20/44 |
 | TXT (SPF) | `quantumssh.org` | `v=spf1 include:_spf.mx.cloudflare.net ~all`, auto-managed |
-| TXT (DMARC) | `_dmarc` | `v=DMARC1; p=none; rua=...` — see [Authentication posture](#authentication-posture) |
+| TXT (DMARC) | `_dmarc` | `v=DMARC1; p=reject; rua=...` — see [Authentication posture](#authentication-posture) |
 | TXT (DKIM) | `cf2024-1._domainkey` | Auto-managed by Cloudflare Email Routing |
 | CAA | `quantumssh.org` | Eleven records — see [Certificate Authority Authorization](#certificate-authority-authorization) |
 | DNSKEY | `quantumssh.org` | KSK + ZSK, ECDSA P-256 (algorithm 13) |
@@ -235,8 +235,11 @@ availability.
 ### Authentication posture
 
 DMARC is published with `p=reject` and an aggregate-reporting URI.
-Receivers reject mail that fails alignment under `quantumssh.org`
-outright. SPF and DKIM records are auto-managed by Cloudflare Email
+DMARC-compliant receivers are instructed to reject mail that fails
+alignment under `quantumssh.org` outright; `p=reject` is a policy
+*request* and enforcement varies across the receiver ecosystem (major
+mailbox providers honour it, some legacy mailservers ignore DMARC
+entirely). SPF and DKIM records are auto-managed by Cloudflare Email
 Routing for the receiving side.
 
 Decision rationale: the original observation-window stance at `p=none`
@@ -364,7 +367,7 @@ Both predicates self-disable when their respective condition resolves;
 neither requires a workflow edit at the Phase 0 → Phase 1 transition.
 
 Decision rationale (why two narrow predicates rather than one shared
-mechanism): see [ADR-0011](./adr/0011-ci-guards-python-tomllib.md).
+mechanism): see [ADR-0011](./adr/0011-ci-guards-workspace-state.md).
 
 ## Calendar of time-bound actions
 
