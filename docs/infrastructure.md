@@ -373,12 +373,16 @@ mechanism): see [ADR-0011](./adr/0011-ci-guards-workspace-state.md).
 
 | Date | Event |
 |---|---|
-| 2026-07-10 | HSTS preload submit-or-skip decision (≈60 days post-activation) |
 | 2027-05-10 | Annual security posture review |
 | 2028-03-10 | PGP rotation: 60-day warning before expiry |
 | 2028-04-09 | PGP rotation: 30-day final warning |
 | 2028-05-09 | Project PGP key expires |
 | Quarterly | TLS cert is renewed automatically by Cloudflare (Let's Encrypt 90-day cadence); no maintainer action required |
+
+The HSTS preload submit-or-skip decision originally targeted for
+2026-07-10 was resolved ahead of schedule on 2026-05-11 by
+[ADR-0014](./adr/0014-hsts-preload-submitted.md) (submitted to the
+preload list).
 
 Material changes to any of these dates, or new entries, are reflected
 in `CHANGELOG.md` and announced via the `security` label on the issue
