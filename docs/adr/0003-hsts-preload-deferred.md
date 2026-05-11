@@ -1,9 +1,29 @@
 # ADR 0003: Set the HSTS preload directive but defer list submission
 
-- **Status:** Fully superseded on 2026-05-11. The `max-age` value chosen here (6 months) was superseded by [ADR-0012](0012-hsts-max-age-bumped-to-one-year.md) (1 year). The preload-list submission deferral was superseded by [ADR-0014](0014-hsts-preload-submitted.md) when the domain was submitted to the browser preload list ahead of the original 60-day observation target.
+- **Status:** Fully superseded on 2026-05-11. The `max-age` value
+  chosen here (6 months) was superseded by
+  [ADR-0012](0012-hsts-max-age-bumped-to-one-year.md) (1 year). The
+  preload-list submission deferral was superseded by
+  [ADR-0014](0014-hsts-preload-submitted.md) when the domain was
+  submitted to the browser preload list ahead of the original 60-day
+  observation target.
 - **Date:** 2026-05-10
 - **Deciders:** Project lead
 - **Related:** `docs/infrastructure.md` § "TLS posture", GitHub issue tracking the submission decision
+
+> **Post-acceptance errata** (per [ADR-0015](0015-permit-annotated-errata-in-adrs.md)):
+>
+> - **2026-05-11** ([PR #13](https://github.com/gonzafg2/quantumssh/pull/13)):
+>   Corrected the Positive-consequences bullet that claimed the header
+>   was "preload-eligible, so when we choose to submit, no
+>   configuration change is required". That claim contradicted the
+>   same ADR's Alternative 3 section, which correctly noted that the
+>   `max-age=15552000` value here is below the one-year preload-list
+>   floor. Replaced with text that acknowledges the directive is set
+>   but the floor is unmet. Also adjusted Alternative 2 wording from
+>   "the directive is the eligibility gate" to "one of several
+>   preload-list eligibility requirements", which is the accurate
+>   characterisation.
 
 ## Context
 

@@ -3,7 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-05-10
 - **Deciders:** Project lead
-- **Related:** `Cargo.toml`, [ADR-0010](0010-toolchain-pinning-resolver-3-edition-2024-msrv-1-92.md) (toolchain pinning), [ADR-0011](0011-ci-guards-python-tomllib.md) (CI guards), `docs/infrastructure.md` § "Workspace topology"
+- **Related:** `Cargo.toml`, [ADR-0010](0010-toolchain-pinning-resolver-3-edition-2024-msrv-1-92.md) (toolchain pinning), [ADR-0011](0011-ci-guards-workspace-state.md) (CI guards), `docs/infrastructure.md` § "Workspace topology"
 
 ## Context
 
@@ -51,7 +51,7 @@ lands in Phase 1.
 
 - Several Cargo subcommands refuse to operate on an empty virtual
   manifest. The CI workflows must guard against this explicitly
-  (see [ADR-0011](0011-ci-guards-python-tomllib.md)).
+  (see [ADR-0011](0011-ci-guards-workspace-state.md)).
 - A reader landing on the repo for the first time may be confused by
   a `Cargo.toml` with no source. Mitigation: the manifest's comments
   describe the situation, and `docs/infrastructure.md` documents the
