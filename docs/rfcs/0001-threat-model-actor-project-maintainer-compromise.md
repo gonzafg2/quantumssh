@@ -189,10 +189,20 @@ attaches each control to its actor and states explicitly what it does
 *not* cover. The full mapping is in the reference-level section below;
 the §6.4 text remains compact:
 
-> - **Signed releases and signed commits on `main`** (ADR-0006).
->   Defends §3.2.6 against attackers who do not hold the maintainer's
->   signing key. Does not defend against use of the legitimate signing
->   key by a compromised maintainer.
+> - **Signed releases and signed commits on `main`** (ADR-0006,
+>   enforced via branch protection per ADR-0008). GitHub-side
+>   enforcement requires every commit to carry a signature *verified*
+>   against any key registered to a collaborator of the repository;
+>   it does not pin to a specific fingerprint. This rejects unsigned
+>   commits and commits signed by keys not registered to any
+>   collaborator, but does **not** defend against (a) a session
+>   hijack that uploads a fresh signing key to the compromised
+>   account, (b) theft of the maintainer's existing SSH signing key,
+>   or (c) a malicious co-maintainer's own registered key. The
+>   pinned-fingerprint guarantee is available only out of band:
+>   downstream consumers can construct an `allowed_signers` file
+>   from the published key set (per ADR-0006's verification recipe)
+>   and reject unexpected fingerprints locally.
 > - **Branch protection on `main`** (ADR-0008). Defends §3.2.6 against
 >   direct push, force-push, and the destruction of merge history.
 >   With zero required reviews during single-maintainer phases, it
@@ -260,10 +270,10 @@ Moderate–High and could in principle sit between §3.2.3 and §3.2.4.
 The RFC proposes the §3.2.6 slot specifically because:
 
 1. The actor is structurally distinct from the §3.2.1–§3.2.5 ladder
-   (which moves from outside-in by capability), and trails the
-   external-only enumeration as the one in-scope adversary that
-   operates *behind* the project's trust boundary rather than across
-   it.
+   (which is ordered by capability tier and enumerates external
+   adversaries only), and trails it as the one in-scope adversary
+   that operates *behind* the project's trust boundary rather than
+   across it.
 2. The §3.2.5 paragraph today implicitly contains the "maintainer
    implant" thread; placing §3.2.6 immediately after makes the
    refinement of that paragraph (removal of the implant language)
@@ -284,7 +294,7 @@ different attack paths, both realistic:
 - **High**: realisable by a state-affiliated actor or a well-resourced
   intrusion set. Path: persistent implant on the maintainer's
   workstation, long-game social engineering for legitimate merge
-  rights, maintainership handoff to a colluding identity. Capabilities
+  rights (co-maintainer addition or successor handoff). Capabilities
   sufficient to inject code that survives source-level review.
 
 The High tier deliberately overlaps with §3.2.4 (Targeted intruder,
@@ -316,7 +326,7 @@ Per NIST SP 800-30 Rev.1, Table D-4 ("Adversary Intent") and Table D-5
 
 | Control | ADR / source | What it covers under §3.2.6 | What it does **not** cover |
 |---|---|---|---|
-| SSH commit signing on `main` | ADR-0006 | Commits authored by an attacker who does not hold the maintainer's SSH signing key (e.g. registry-side merge, malicious co-maintainer pre-handoff). | An attacker who has stolen the SSH signing key — which is the same key as the maintainer's GitHub auth key (ADR-0006 "Negative"), and therefore a single compromise affects both surfaces. |
+| SSH commit signing on `main` (server-side, GitHub `require_signed_commits`) | ADR-0006, ADR-0008 | Unsigned commits; commits signed by a key not registered to any repository collaborator (rejected as unverified). GitHub validates against any key in a collaborator's signing-key list. | Any signature GitHub marks *verified*, regardless of fingerprint: (a) a fresh signing key uploaded to a compromised collaborator account after session hijack, (b) the maintainer's existing SSH signing key after theft (also the GitHub auth key per ADR-0006 "Negative"), (c) a malicious co-maintainer's own registered key. Fingerprint pinning is out-of-band only (downstream verification via `allowed_signers`). |
 | Branch protection on `main` | ADR-0008 | Direct push, force-push, branch deletion, unsigned commits, bypassing required CI checks. Enforced on admins, so the maintainer is not exempt. | Four-eyes review — branch protection has `required_approving_review_count = 0` during single-maintainer phases. A comprehensively compromised maintainer merging through the normal PR flow defeats the control. The count rises to one on `GOVERNANCE.md`'s transition. |
 | Dependency discipline | `deny.toml`, cargo-deny in CI | Silent introduction of new crates outside the allowlist, banned licences, banned advisories. Defends §5.5.2.a. | Compromise of an already-allowlisted upstream (a different §5.5.2.a path). Does not defend §5.5.2.b at all — `deny.toml` is enforced *by* the maintainer, so a compromised maintainer can edit it. |
 | PGP key two-year expiry | ADR-0005 | Bounds blast radius of project-PGP-key compromise on the embargoed-disclosure path. Tangential to §3.2.6's primary paths but relevant for the disclosure trust anchor. | The signing-key path (ADR-0006), which is on a separate keypair. |
@@ -574,15 +584,21 @@ controls it does not in fact apply, or (b) lower the bar for what
   signing key (independent of compromise indication), bounding the
   validity window of any silently-stolen key. Parallel to the
   reasoning in ADR-0005 for the PGP key.
-- **Independent monitoring of `main` integrity.** A separate service
-  (operated by the maintainer or a third party) could periodically
-  fetch `main`'s tip, verify the signing chain against an
-  out-of-repository expected-fingerprint set, and emit a public alert
-  on divergence. ADR-0008's force-push prohibition prevents history
-  rewriting on the canonical remote, but does not detect attacks
-  where clients are redirected to a substitute remote, or where the
-  canonical remote itself is compromised through admin-level override
-  of branch protection.
+- **Independent monitoring of `main` integrity backed by a
+  pinned-fingerprint set.** Publishing a canonical `allowed_signers`
+  set out of band (anchored off-platform, or in the repository's
+  root and counter-signed independently) would let a separate
+  service — operated by the maintainer or a third party —
+  periodically fetch `main`'s tip and verify each commit's
+  signature against the pinned set, rather than against any key
+  registered to a collaborator (which is what GitHub's
+  `require_signed_commits` actually validates). On divergence, the
+  service emits a public alert. ADR-0008's force-push prohibition
+  prevents history rewriting on the canonical remote, but does not
+  detect (a) clients redirected to a substitute remote, (b)
+  admin-level override of branch protection, or (c) commits signed
+  by an attacker-added key on a compromised account; the third case
+  is what pinned-fingerprint monitoring closes.
 
 None of the items above is being proposed by this RFC. They are noted
 so that the §3.2.6 entry, once accepted, has a visible trajectory of
