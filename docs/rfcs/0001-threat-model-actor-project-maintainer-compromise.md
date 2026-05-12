@@ -18,10 +18,12 @@ attaches to a named adversary with an explicit statement of what it
 covers and what it does not.
 
 The new actor sits at NIST SP 800-30 Rev.1 capability **Moderate – High**,
-intent **Moderate – Very High**, targeting **High – Very High**. Its
-likelihood for QuantumSSH *today* is Low because the project has no
-production adoption; the model commits to revisiting that judgment when
-adoption changes.
+intent **Moderate – Very High**, targeting **High – Very High**.
+Consistent with §1.1's framing — the threat model is not a risk
+assessment and assigns no likelihoods — this RFC does not rate the
+adversary's likelihood. The actor entry exists so that the controls
+already in place or committed-to attach to a named threat rather
+than to a vector alone.
 
 The RFC also draws an explicit boundary: **repo-side** controls against
 maintainer compromise are in scope (signed commits, branch protection,
@@ -150,13 +152,6 @@ and the mitigation re-targeting in §6.4.
 > *downstream consumers* to detect divergence between the source on
 > `main` and the binaries they run, which is the only defence-in-depth
 > that survives a maintainer who is fully compromised.
->
-> **Likelihood, conditional on capability.** Low for QuantumSSH today,
-> given the project has no production adoption and presents no
-> immediate downstream value to compromise. The likelihood rises as
-> adoption rises. The actor entry exists *now* so that the
-> mitigations attach to a named threat from the first day they are
-> claimed.
 
 ### Proposed refinement to §5.5.2
 
@@ -393,15 +388,17 @@ not deliver.
    same logic that justifies §3.2.3 (Network-positioned, Moderate–High)
    coexisting with §3.2.4 (Targeted intruder, High) despite overlapping
    capability.
-4. **The actor's likelihood is currently Low.** A reviewer could argue
-   the entry is premature — a project with no users is not a likely
-   maintainer-compromise target. Mitigation: the RFC argues, in §1 of
-   the Motivation, that the controls being claimed (ADR-0006,
-   ADR-0008, and the Phase 3 deliverables) already exist or are
-   committed-to, and the threat model is more useful when it names the
-   adversary those controls respond to than when it leaves them
-   floating. The likelihood field is a present-tense judgment; the
-   capability field is the basis on which the project's design rests.
+4. **Premature documentation of an adversary unlikely to materialise
+   today.** A reviewer could argue a project with no users is not a
+   plausible maintainer-compromise target, and the entry is therefore
+   premature. Mitigation: the Motivation argues that the controls
+   being re-targeted (ADR-0006, ADR-0008, and the Phase 3
+   deliverables) already exist or are committed-to, and the threat
+   model is more useful when it names the adversary those controls
+   respond to than when it leaves them floating. §1.1's stance that
+   the document does not rate likelihoods is preserved; the entry's
+   inclusion is justified by the existence of its mitigations, not by
+   a probability claim.
 
 ## Rationale and alternatives
 
@@ -437,13 +434,14 @@ relationship while resolving the ambiguity.
 ### Why Moderate–High capability (rather than Low, or Very High)
 
 - **Low** was suggested in the PR #19 review on the basis of low
-  *likelihood*. Capability and likelihood are orthogonal axes; the
-  current §3.2 format uses capability ranges in the heading. The
-  likelihood-conditional-on-capability statement appears in the body of
-  the actor entry, matching how §3.2.5 handles its own likelihood
-  caveat (the HNDL adversary is Very High in capability "but *nothing*
-  about QuantumSSH's defence requires the adversary to be a
-  nation-state in practice").
+  expected activity against QuantumSSH today. The threat model does
+  not rate likelihood (§1.1), so that consideration does not enter
+  the capability tier. Capability is rated by what the adversary
+  *can* do, independent of how often QuantumSSH expects to encounter
+  them; the §3.2.5 entry follows the same logic when it notes the
+  HNDL adversary is Very High in capability "but *nothing* about
+  QuantumSSH's defence requires the adversary to be a nation-state
+  in practice".
 - **Very High** was considered for the implant case but rejected
   because the resources required for maintainer-targeted social
   engineering (the `xz-utils` model) are demonstrably below
@@ -531,14 +529,15 @@ controls it does not in fact apply, or (b) lower the bar for what
    §5.5.5 *Project maintainer compromise*)? The RFC proposes a/b for
    the reasons in *Rationale and alternatives*, but the alternative is
    defensible and would surface more cleanly in the table of contents.
-2. **Likelihood field as a first-class element.** The current §3.2
-   format does not include an explicit likelihood field; capability
-   ranges absorb a likelihood-flavoured judgment in their lower bound.
-   The new actor's body carries a likelihood paragraph. Should
-   §3.2.1–§3.2.5 be retro-fitted with the same paragraph for
-   consistency? That would be a larger structural change requiring its
-   own RFC; this RFC notes the inconsistency but does not propose to
-   resolve it.
+2. **Whether §3.2 should ever carry likelihood ratings.** §1.1
+   declares the document is not a risk assessment and assigns no
+   likelihoods. An earlier draft of this RFC carried a likelihood
+   paragraph for §3.2.6; it was removed in response to review feedback
+   to preserve consistency with §1.1. A future structural revision
+   could opt to convert the threat model into a full risk assessment
+   (with likelihood and impact ratings across all actors and vectors),
+   but that is a substantially larger change and would require its own
+   RFC. This RFC takes no position on that direction.
 3. **Hardware-backed signing key as a future ADR.** ADR-0006 today
    accepts the single-compromise-affects-both-surfaces trade-off for
    the SSH signing key. A subsequent ADR could record a decision to
@@ -551,13 +550,6 @@ controls it does not in fact apply, or (b) lower the bar for what
    reproducible-with-known-divergences in dependency versions, or
    SLSA-compatible build provenance) is a decision deferred to its own
    RFC. This RFC commits only to the *direction*.
-5. **When to re-rate likelihood.** The actor's likelihood is "Low for
-   QuantumSSH today" and is expected to rise with adoption. What
-   adoption milestones trigger a re-rating? Candidates: first packaged
-   distribution release; first downstream project pinning a QuantumSSH
-   release; published deployment count above an unspecified threshold.
-   The RFC does not commit to a trigger; this is a question for the
-   threat model's next substantive revision.
 
 ## Future possibilities
 
