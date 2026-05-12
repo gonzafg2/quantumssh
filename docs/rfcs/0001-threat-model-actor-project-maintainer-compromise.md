@@ -62,9 +62,9 @@ The asymmetry has real consequences for how the document reads:
    surface to gain commit access — can be executed by adversaries
    below nation-state capability.
 3. **The threat model's own maintenance clause forbids appending
-   actors silently.** Lines 9–15 of `docs/threat-model.md` require an
-   RFC for structural changes to the actor list. This RFC fulfils that
-   requirement.
+   actors silently.** The Maintenance note at the top of
+   `docs/threat-model.md` requires an RFC for structural changes to
+   the actor list. This RFC fulfils that requirement.
 
 This is not a hypothetical concern for QuantumSSH. The project's
 governance during Phases 0–2 is BDFL (`GOVERNANCE.md`, "Current model:
@@ -138,8 +138,8 @@ and the mitigation re-targeting in §6.4.
 > ATT&CK does not cleanly map the social-engineering-of-maintainer
 > path; `T1195.002` (Supply Chain Compromise: Compromise Software
 > Supply Chain) is used here as the umbrella technique. This
-> parallels the honest acknowledgment in §5.5.3 that not every
-> threat in this model has a precise ATT&CK identifier.
+> parallels the §5.5.3 entry's explicit note that no specific
+> ATT&CK technique applies.
 >
 > **Implication for design.** Repo-side controls must keep the
 > authoritative source on `main` defensible even when one maintainer
@@ -208,14 +208,17 @@ the §6.4 text remains compact:
 >   implementation PR for this RFC corrects the parent bullet to drop
 >   the "Signed releases and" phrase, scoping the entry honestly to
 >   what is enforced today. GitHub-side enforcement requires every
->   commit to carry a signature *verified* against any key registered
->   to a collaborator of the repository;
->   it does not pin to a specific fingerprint. This rejects unsigned
->   commits and commits signed by keys not registered to any
->   collaborator, but does **not** defend against (a) a session
->   hijack that uploads a fresh signing key to the compromised
->   account, (b) theft of the maintainer's existing SSH signing key,
->   or (c) a malicious co-maintainer's own registered key. The
+>   commit to carry a signature GitHub marks *Verified* — a signature
+>   whose key resolves to some GitHub account's signing-key list. The
+>   check is not collaborator-scoped (any Verified signature passes);
+>   collaborator-only push to `main` is enforced separately by
+>   repository permissions and branch protection. It does not pin to
+>   a specific fingerprint. This rejects unsigned commits and commits
+>   whose signature GitHub does not mark Verified, but does **not**
+>   defend against (a) a session hijack that uploads a fresh signing
+>   key to a compromised account with write access to `main`, (b)
+>   theft of the maintainer's existing SSH signing key, or (c) a
+>   malicious co-maintainer's own registered key. The
 >   pinned-fingerprint guarantee is available only out of band:
 >   downstream consumers can construct an `allowed_signers` file
 >   from the published key set (per ADR-0006's verification recipe)
@@ -226,13 +229,25 @@ the §6.4 text remains compact:
 >   does not add a four-eyes constraint; that defence activates when
 >   `GOVERNANCE.md`'s transition criteria are met.
 > - **Dependency discipline** (`deny.toml`, cargo-deny in CI). Defends
->   §5.5.2.a against silent introduction of disallowed crates. Does not
->   defend against compromise of an already-allowlisted dependency or
->   against §5.5.2.b.
+>   §5.5.2.a against introduction of dependencies with non-allowlisted
+>   licences, from unapproved registries or git sources, with wildcard
+>   version requirements, or with active RustSec advisories. `deny.toml`
+>   does not maintain a per-crate allowlist (`[bans] deny = []`), so it
+>   does not block introduction of a new permissively-licensed crate
+>   from crates.io on its own. Does not defend §5.5.2.b at all —
+>   `deny.toml` is enforced *by* the maintainer, so a compromised
+>   maintainer can edit it.
 > - **Reproducible builds and SBOM** (Phase 3, RFC-gated). When
->   landed, defend §3.2.6 by enabling downstream detection of
->   binary/source divergence — the only control that retains value
->   against a fully-compromised maintainer.
+>   landed, defend §3.2.6's **build-pipeline-compromise** sub-case —
+>   malicious modification of the build environment, the release host,
+>   or the distribution channel — by enabling third parties to detect
+>   divergence between the source on `main` and the binaries
+>   distributed under the project's name. They do **not** defend
+>   against a maintainer who merges malicious source on `main` and
+>   produces matching reproducible binaries from it; source and
+>   artefacts remain internally consistent. See §3.2.6's
+>   Implication-for-design paragraph and the source-side residual
+>   in §7.
 
 ### Proposed amendments elsewhere in `docs/threat-model.md`
 
@@ -275,10 +290,16 @@ gap explicitly:
 > operator of their own development environment. QuantumSSH's
 > controls cannot reach into that environment; the threat model
 > describes what the project *can* enforce. Operators concerned
-> about the strength of these endpoint defences must rely on the
+> about the strength of these endpoint defences rely on the
 > project's transparency posture (public source, signed commits,
 > reproducible builds when landed) rather than on this document's
 > coverage of the maintainer's endpoint.
+
+**§3.2.5 Typical techniques.** The trailing clause *"long-lived
+implants in the maintainer's development environment"* is removed
+from §3.2.5 (current line 397–398 of the threat model), now subsumed
+by §3.2.6's persistent-implant path at the High tier. §3.2.5 retains
+supply-chain compromise of dependencies as a nation-state technique.
 
 ## Reference-level explanation
 
@@ -347,11 +368,11 @@ Per NIST SP 800-30 Rev.1, Table D-4 ("Adversary Intent") and Table D-5
 
 | Control | ADR / source | What it covers under §3.2.6 | What it does **not** cover |
 |---|---|---|---|
-| SSH commit signing on `main` (server-side, GitHub `require_signed_commits`) | ADR-0006, ADR-0008 | Unsigned commits; commits signed by a key not registered to any repository collaborator (rejected as unverified). GitHub validates against any key in a collaborator's signing-key list. | Any signature GitHub marks *verified*, regardless of fingerprint: (a) a fresh signing key uploaded to a compromised collaborator account after session hijack, (b) the maintainer's existing SSH signing key after theft (also the GitHub auth key per ADR-0006 "Negative"), (c) a malicious co-maintainer's own registered key. Fingerprint pinning is out-of-band only (downstream verification via `allowed_signers`). |
+| SSH commit signing on `main` (server-side, GitHub `require_signed_commits`) | ADR-0006, ADR-0008 | Unsigned commits; commits whose signature GitHub does not mark *Verified* (i.e., the signing key does not resolve to any GitHub account's signing-key list). The check is not collaborator-scoped — collaborator-only push to `main` is enforced separately by repository permissions and branch protection. | Any signature GitHub marks *Verified*, regardless of fingerprint: (a) a fresh signing key uploaded to a compromised account with write access to `main` after session hijack, (b) the maintainer's existing SSH signing key after theft (also the GitHub auth key per ADR-0006 "Negative"), (c) a malicious co-maintainer's own registered key. Fingerprint pinning is out-of-band only (downstream verification via `allowed_signers`). |
 | Branch protection on `main` | ADR-0008 | Direct push, force-push, branch deletion, unsigned commits, bypassing required CI checks. Enforced on admins, so the maintainer is not exempt. | Four-eyes review — branch protection has `required_approving_review_count = 0` during single-maintainer phases. A comprehensively compromised maintainer merging through the normal PR flow defeats the control. The count rises to one on `GOVERNANCE.md`'s transition. |
-| Dependency discipline | `deny.toml`, cargo-deny in CI | Silent introduction of new crates outside the allowlist, banned licences, banned advisories. Defends §5.5.2.a. | Compromise of an already-allowlisted upstream (a different §5.5.2.a path). Does not defend §5.5.2.b at all — `deny.toml` is enforced *by* the maintainer, so a compromised maintainer can edit it. |
+| Dependency discipline | `deny.toml`, cargo-deny in CI | Introduction of dependencies with non-allowlisted licences (`[licenses] allow`), from non-approved registries or any git source (`[sources]`), with wildcard version requirements (`[bans] wildcards = "deny"`), or with RustSec advisories. Does **not** maintain a per-crate allowlist today (`[bans] deny = []`). Defends §5.5.2.a along those axes only. | Compromise of an already-pulled upstream (a different §5.5.2.a path); introduction of a fresh permissively-licensed crate from crates.io (no crate-level allowlist enforced today). Does not defend §5.5.2.b at all — `deny.toml` is enforced *by* the maintainer, so a compromised maintainer can edit it. |
 | PGP key two-year expiry | ADR-0005 | Bounds blast radius of project-PGP-key compromise on the embargoed-disclosure path. Tangential to §3.2.6's primary paths but relevant for the disclosure trust anchor. | The signing-key path (ADR-0006), which is on a separate keypair. |
-| Reproducible builds | Phase 3, RFC-gated (not yet landed) | Will enable third parties to detect divergence between published source on `main` and binaries distributed under the project's name. The only control that retains value against a fully-compromised maintainer, because verification occurs *outside* the maintainer's trust boundary. | An attacker who has compromised both the source and the build environment in coordinated fashion. |
+| Reproducible builds | Phase 3, RFC-gated (not yet landed) | Will enable third parties to detect divergence between published source on `main` and binaries distributed under the project's name. Retains value against §3.2.6's *build-pipeline-compromise* sub-case because verification occurs *outside* the maintainer's trust boundary. | A maintainer who merges malicious source on `main` and produces matching reproducible binaries from it — source and artefacts remain internally consistent, so reproducible builds alone do not detect the divergence. Bounded by source-side controls (§6.4) and source-level review; during single-maintainer phases the latter is not branch-protection-enforced per ADR-0008. Also does not cover coordinated source + build-environment compromise. |
 | Software bill of materials | Phase 3, RFC-gated (not yet landed) | Will reduce dwell time post-discovery by enabling consumers to enumerate exactly which versions of which dependencies their build contains. | Active compromise detection — SBOM is a forensic and impact-scoping tool, not a real-time control. |
 | `GOVERNANCE.md` transition to multi-maintainer | `GOVERNANCE.md`, "Transition to a maintainer team" | When the criteria are met (3 regular contributors over 6 months and `0.1.0` shipped), `required_approving_review_count` rises to 1, activating the four-eyes constraint. | The transition is not automatic; this RFC notes the dependency without proposing to alter the criteria. |
 
@@ -582,7 +603,7 @@ controls it does not in fact apply, or (b) lower the bar for what
    SLSA-compatible build provenance) is a decision deferred to its own
    RFC. This RFC commits only to the *direction*.
 5. **Scope of "signed releases".** The current `docs/threat-model.md`
-   §6.4 bullet (line 1091) reads *"Signed releases and signed commits
+   §6.4 first bullet reads *"Signed releases and signed commits
    on `main`. Recorded in ADR-0006."*, but ADR-0006 documents only
    SSH commit signing — there is no signed-tag, signed-release-
    artefact, or signed-checksum-manifest control established by any
@@ -633,9 +654,11 @@ controls it does not in fact apply, or (b) lower the bar for what
   root and counter-signed independently) would let a separate
   service — operated by the maintainer or a third party —
   periodically fetch `main`'s tip and verify each commit's
-  signature against the pinned set, rather than against any key
-  registered to a collaborator (which is what GitHub's
-  `require_signed_commits` actually validates). On divergence, the
+  signature against the pinned set, rather than against any Verified
+  GitHub signature (which is what GitHub's `require_signed_commits`
+  actually validates — the check resolves to any public signing key
+  on any GitHub account, not to a pinned fingerprint set). On
+  divergence, the
   service emits a public alert. ADR-0008's force-push prohibition
   prevents history rewriting on the canonical remote, but does not
   detect (a) clients redirected to a substitute remote, (b)
