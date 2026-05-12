@@ -148,10 +148,20 @@ and the mitigation re-targeting in §6.4.
 > the project's name; dependency discipline (`deny.toml`, cargo-deny
 > in CI) bounds the surface that a compromised maintainer could
 > silently widen. Reproducible builds and a published software
-> bill-of-materials (Phase 3, RFC-gated) are the controls that allow
-> *downstream consumers* to detect divergence between the source on
-> `main` and the binaries they run, which is the only defence-in-depth
-> that survives a maintainer who is fully compromised.
+> bill-of-materials (Phase 3, RFC-gated) allow *downstream consumers*
+> to detect divergence between the source on `main` and the binaries
+> they run; they retain value against the **build-pipeline-compromise**
+> sub-case of §3.2.6 — malicious modification of the build environment,
+> the release host, or the distribution channel — because verification
+> occurs outside the maintainer's trust boundary. Against a maintainer
+> who merges malicious source on `main` and produces matching
+> reproducible binaries from it, reproducible builds alone do not
+> detect the divergence: source and artefacts remain consistent. The
+> source-side residual is bounded by the controls that gate what
+> enters `main` (§6.4) and by source-level review — which, during
+> single-maintainer phases, the project's branch protection does not
+> require (ADR-0008). See the §6.4 reference-level table for the
+> precise per-control bound.
 
 ### Proposed refinement to §5.5.2
 
@@ -189,10 +199,17 @@ attaches each control to its actor and states explicitly what it does
 *not* cover. The full mapping is in the reference-level section below;
 the §6.4 text remains compact:
 
-> - **Signed releases and signed commits on `main`** (ADR-0006,
->   enforced via branch protection per ADR-0008). GitHub-side
->   enforcement requires every commit to carry a signature *verified*
->   against any key registered to a collaborator of the repository;
+> - **Signed commits on `main`** (ADR-0006, enforced via branch
+>   protection per ADR-0008). The threat model's current §6.4 bullet
+>   reads *"Signed releases and signed commits on `main`. Recorded in
+>   ADR-0006."*, but ADR-0006 documents only SSH commit signing —
+>   there is no signed-tag, signed-release-artefact, or checksum
+>   manifest control established by any current ADR. The
+>   implementation PR for this RFC corrects the parent bullet to drop
+>   the "Signed releases and" phrase, scoping the entry honestly to
+>   what is enforced today. GitHub-side enforcement requires every
+>   commit to carry a signature *verified* against any key registered
+>   to a collaborator of the repository;
 >   it does not pin to a specific fingerprint. This rejects unsigned
 >   commits and commits signed by keys not registered to any
 >   collaborator, but does **not** defend against (a) a session
@@ -241,8 +258,12 @@ gap explicitly:
 > simultaneously compromised retains the ability to publish under
 > the project's name through the normal PR flow. The bound on this
 > residual is what controls outside the maintainer's trust boundary
-> can detect after the fact — reproducible builds, SBOM, signed-tag
-> verification by downstream consumers. The bound is not zero.
+> can detect after the fact — reproducible builds, SBOM, and
+> downstream signed-commit verification against a pinned
+> `allowed_signers` set (per ADR-0006's verification recipe).
+> Adoption of signed release tags or signed release artefacts is not
+> currently established by any ADR; see *Unresolved questions* and
+> *Future possibilities*. The bound is not zero.
 
 **§8 (Out of scope).** A new §8.11 entry, modelled on §8.1's format:
 
@@ -364,8 +385,8 @@ re-targeted §6.4 entry on branch protection — state explicitly that
 component of branch protection is not active, and the residual risk of
 a comprehensively compromised maintainer is bounded only by the
 controls that operate outside the maintainer's trust boundary
-(reproducible builds, SBOM, downstream verification of signed releases
-against a published expected-fingerprint set).
+(reproducible builds, SBOM, downstream verification of signed
+commits against a pinned `allowed_signers` set).
 
 This is not a flaw in the threat model; it is a fact about the project's
 current scale. The threat model's job is to describe that fact
@@ -560,6 +581,20 @@ controls it does not in fact apply, or (b) lower the bar for what
    reproducible-with-known-divergences in dependency versions, or
    SLSA-compatible build provenance) is a decision deferred to its own
    RFC. This RFC commits only to the *direction*.
+5. **Scope of "signed releases".** The current `docs/threat-model.md`
+   §6.4 bullet (line 1091) reads *"Signed releases and signed commits
+   on `main`. Recorded in ADR-0006."*, but ADR-0006 documents only
+   SSH commit signing — there is no signed-tag, signed-release-
+   artefact, or signed-checksum-manifest control established by any
+   ADR today. This RFC's re-targeted §6.4 specimen drops the "Signed
+   releases and" phrase, and the implementation PR will apply the
+   same correction to the parent threat model. Whether the project
+   should adopt signed release tags (SSH-signed via the existing
+   ADR-0006 key, or via a separate tag-signing key) and/or signed
+   release artefacts (e.g., Sigstore, minisign, or detached
+   SSH-signed checksum manifests) is deferred to a future ADR or RFC
+   — see *Future possibilities* below. This RFC takes no position on
+   which path.
 
 ## Future possibilities
 
@@ -574,6 +609,14 @@ controls it does not in fact apply, or (b) lower the bar for what
   This is a procedural control that closes part of the §3.2.6 residual
   without changing any code; it is naturally a follow-up to the
   governance transition rather than an action this RFC commits to.
+- **Signed release tags or signed release artefacts as a future
+  ADR.** Today only commits on `main` are signed (ADR-0006). A future
+  ADR could record a decision to sign release tags (SSH-signed via
+  the existing ADR-0006 key, or via a dedicated tag-signing key) and
+  to publish a signed checksum manifest alongside each release
+  artefact. This is the foundation any "signed releases" claim in the
+  threat model would rest on, and is a prerequisite for the
+  transparency-log-witnessed variant immediately below.
 - **Detached, externally-witnessed release signatures.** A future
   control could publish release signatures to a public transparency
   log (analogous to Sigstore's `rekor`), making a silently-revoked or
