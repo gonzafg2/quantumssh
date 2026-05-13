@@ -731,9 +731,18 @@ sessions.
 **ATT&CK reference.** No specific ATT&CK technique; this is an
 implementation-cryptanalysis vector.
 
-**Test handle.** Test vectors from the IETF hybrid PQ KEX draft
-must be reproduced byte-for-byte by the implementation. The
-KEX-to-KDF transcript must be testable against fixed inputs.
+**Test handle.** The current `draft-ietf-sshm-mlkem-hybrid-kex`
+(version -10, 26 February 2026) does not itself publish hybrid-combiner
+test vectors; the substitute is layered. Component-level vectors must
+be reproduced byte-for-byte: NIST ACVP-Server vectors for the ML-KEM-768
+half (`gen-val/json-files/ML-KEM-keyGen-FIPS203` and
+`ML-KEM-encapDecap-FIPS203`) and RFC 7748 §6.1 vectors for the X25519
+half. Hybrid-combiner output (`K = HASH(K_PQ || K_CL)`) and the
+SSH-level exchange hash `H` must be testable against fixed inputs;
+internally-captured golden vectors against an OpenSSH 10.x peer using
+a fixed-RNG test profile (analogous to OpenSSH's
+`TEST_SSH_FIXED_KEX_SEED`) close the gap until the IETF draft adopts
+an appendix of canonical vectors.
 
 ### 5.3 Authentication
 
