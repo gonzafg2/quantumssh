@@ -3,7 +3,7 @@
 - **Status:** Draft
 - **Authors:** <Name(s)>
 - **Created:** YYYY-MM-DD
-- **Tracking issue:** <link or "TBD">
+- **Roadmap issue:** <link to the relevant Phase tracking issue, e.g. `#9` for Phase 1>
 - **Implementation PR:** <link or "TBD">
 
 ## Summary

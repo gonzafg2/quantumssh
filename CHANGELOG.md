@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `docs/rfcs/README.md` and `docs/adr/README.md` codify the project's
+  one-decision-per-file convention. Each RFC addresses a single
+  shape-determining decision; the implementing subsidiary decisions
+  (workspace topology, dependency version pins, configuration
+  parameters) are split into separate ADRs that cite the RFC, never
+  packaged inside the RFC itself. ADRs in turn record a single
+  decision each. The reasoning is reviewability: a reader of an RFC
+  must be able to identify the decision in one sentence and the
+  alternatives as a list, and a substantive objection to one half of
+  a packaged RFC otherwise blocks the other half from landing.
+- `docs/rfcs/README.md` also documents the project's tracking
+  convention: RFCs reference the Phase-level GitHub issue (e.g. `#9`
+  for Phase 1) in their `Roadmap issue:` field rather than create a
+  per-RFC tracking issue. The roadmap in `README.md` plus the
+  Phase-level issues are the single tracking surface; discussion of a
+  specific RFC happens on its pull request. RFC-0001's per-RFC
+  tracking issue (`#20`) predates this convention and remains as a
+  historical record; it is not retroactively replaced.
+- `docs/rfcs/0000-template.md` renames its `Tracking issue:` field to
+  `Roadmap issue:` with default guidance to cite the Phase-level
+  issue. The change to RFC-0002 (PR #24) applies the new field name
+  retroactively in the same pull request.
 - Initial project scaffolding, governance documents, contribution
   guidelines, license, and CI/CD configuration.
 - Project security PGP key published at `keys/security.asc`
@@ -19,6 +41,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `README.md` §"Roadmap" no longer carries per-Phase calendar
+  estimates. The previous wording — *"We expect Phase 1 to take weeks.
+  Phase 2, months. Phase 3, a year or more."* — was an implicit
+  schedule commitment that invited scope/quality compromises whenever
+  a phase's actual work outgrew the estimate (cf. the Phase 1
+  greenfield-vs-`russh` tension surfaced during the panel
+  investigation that produced this and the adjacent PRs). The replacement
+  reads: *"Each phase ships when it is ready, not on a calendar. We do
+  not estimate Phase durations: the schedule is a function of
+  correctness, scrutiny, and community formation, and committing to a
+  timeline would invert the priority. We are not in a hurry.
+  Cryptographic infrastructure earns trust slowly."* The high-level
+  ambitions in `MANIFIESTO.es.md` §"Cómo medimos el éxito" (year-one /
+  year-two / year-five outcomes) are deliberately kept; they are
+  ambitions, not scope estimates, and removing them would weaken the
+  project's stated direction.
 - `README.md` Phase 1 roadmap entry now cites the GitHub issue
   tracking it (`#9`), matching the discoverability pattern already
   applied to Phase 0 by the previous CHANGELOG entry.
