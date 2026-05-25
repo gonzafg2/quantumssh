@@ -125,7 +125,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - DMARC-related claims in `docs/infrastructure.md`, `CHANGELOG.md`,
   and `docs/adr/0013-dmarc-tightened-to-p-reject.md` had stated
   absolutely that "Receivers reject mail" under `p=reject`. DMARC is
-  a policy *request*; enforcement varies (major mailbox providers
+  a policy _request_; enforcement varies (major mailbox providers
   honour `p=reject`, some legacy mailservers ignore DMARC entirely).
   The wording is qualified to "DMARC-compliant receivers" /
   "receivers are instructed to reject" in all three locations.
@@ -134,6 +134,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   record as `p=none` while the "Authentication posture" section
   below it already described the `p=reject` policy. The table row is
   updated to `p=reject`.
+- `README.md` §"The problem" and `MANIFIESTO.es.md` §"El punto de
+  partida" each said that GitHub *"rolled out post-quantum SSH access
+  in September 2025"* / *"habilitó SSH post-cuántico en septiembre de
+  2025"*. The sentence is preceded by the claim that OpenSSH 10.0
+  made ML-KEM the default, and in that order the wording invites the
+  reader to infer that GitHub adopted ML-KEM. GitHub in fact enabled
+  `sntrup761x25519-sha512@openssh.com` (not `mlkem768x25519-sha256`)
+  on 17 September 2025, automatically selected for clients that
+  support it. Both sentences are amended to name the algorithm
+  explicitly. Source: GitHub Engineering blog,
+  *Post-quantum security for SSH access on GitHub*, 17 Sep 2025.
+- `docs/threat-model.md` §5.2.4 ("Key-derivation flaw") **Test
+  handle** referenced *"Test vectors from the IETF hybrid PQ KEX
+  draft"*. The current draft (`draft-ietf-sshm-mlkem-hybrid-kex`,
+  version -10, 26 Feb 2026) does not in fact publish hybrid-combiner
+  test vectors; its appendices are A (Other Combiners) and B (FIPS)
+  only. The Test handle is rewritten to a layered substitute that
+  exists today: NIST ACVP-Server vectors for the ML-KEM-768 half,
+  RFC 7748 §6.1 vectors for the X25519 half, and internally-captured
+  golden vectors for the hybrid combiner output and SSH exchange
+  hash, generated against an OpenSSH 10.x peer with a fixed-RNG test
+  profile analogous to OpenSSH's `TEST_SSH_FIXED_KEX_SEED`. The
+  closure condition (an IETF appendix of canonical vectors) is named
+  inline so the test handle reverts to the original wording if the
+  draft adopts one. Treated as a factual correction under the
+  threat-model maintenance clause; an RFC was not required because
+  the change is to a Test handle subsection, not to an asset, an
+  actor tier, a trust boundary, an in-scope attack vector, or a
+  non-goal.
 
 ### Security
 
