@@ -44,11 +44,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   estimates. The previous wording — *"We expect Phase 1 to take weeks.
   Phase 2, months. Phase 3, a year or more."* — was an implicit
   schedule commitment that invited scope/quality compromises whenever
-  a phase's actual work outgrew the estimate (cf. the Phase 1
-  greenfield-vs-`russh` tension surfaced during the panel
-  investigation that produced this and the adjacent PRs). The replacement
-  reads: *"Each phase ships when it is ready, not on a calendar. We do
-  not estimate Phase durations: the schedule is a function of
+  a phase's actual work outgrew the estimate. The replacement reads:
+  *"Each phase ships when it is ready, not on a calendar. We do not
+  estimate Phase durations: the schedule is a function of
   correctness, scrutiny, and community formation, and committing to a
   timeline would invert the priority. We are not in a hurry.
   Cryptographic infrastructure earns trust slowly."* The high-level
