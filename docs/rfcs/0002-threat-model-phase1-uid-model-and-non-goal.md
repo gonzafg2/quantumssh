@@ -151,10 +151,10 @@ goal to Phase 3 and points the reader at §8.12 for the Phase 1 reality.
 > *authenticated identity* and the *executing UID* as separate fields
 > precisely so this gap is visible to anyone reviewing logs.
 >
-> The closure condition for this non-goal is the Phase 3 privilege-
-> separation RFC. When that RFC lands and per-user UID isolation is
-> implemented, a follow-up RFC supersedes this entry and removes §8.12.
-> The non-goal is, by design, temporary.
+> The closure condition for this non-goal is Phase 3 privilege
+> separation being implemented and a follow-up RFC superseding this
+> entry and removing §8.12. Until both happen, this remains a
+> deliberate temporary non-goal.
 
 ### Proposed amendment elsewhere
 
