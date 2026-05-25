@@ -3,7 +3,7 @@
 - **Status:** Draft
 - **Authors:** Gonzalo Fleming Garrido
 - **Created:** 2026-05-13
-- **Roadmap issue:** [`#9`](https://github.com/gonzafg2/quantumssh/issues/9) (Phase 1 / Hito 1)
+- **Tracking issue:** [`#9`](https://github.com/gonzafg2/quantumssh/issues/9) (Phase 1 / Hito 1)
 - **Implementation PR:** TBD
 - **Supersedes:** Refines [`docs/threat-model.md`](../threat-model.md) §2.5 (Command execution authority) and adds §8.12 (Out of scope).
 
