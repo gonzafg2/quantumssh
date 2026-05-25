@@ -18,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   decision each. The reasoning is reviewability: a reader of an RFC
   must be able to identify the decision in one sentence and the
   alternatives as a list, and a substantive objection to one half of
-  a packaged RFC otherwise blocks the other half from landing.
+  a packaged RFC would otherwise block the other half from landing.
 - `docs/rfcs/README.md` also documents the project's tracking
   convention: RFCs reference the Phase-level GitHub issue (e.g. `#9`
   for Phase 1) in their `Roadmap issue:` field rather than create a
