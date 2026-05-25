@@ -29,7 +29,7 @@ But it carries two compounding burdens:
 
 **2. The quantum cliff.** Today's SSH key exchange relies primarily on classical Diffie-Hellman over elliptic curves and RSA. Both are vulnerable to Shor's algorithm on a sufficiently capable quantum computer. The threat model that matters today is not "quantum computers exist tomorrow" — it is **harvest-now-decrypt-later**. Nation-state adversaries are recording encrypted SSH sessions today, betting they can decrypt them in 10–15 years. Any session that protects information with a long shelf life — source code, infrastructure secrets, regulated banking data, personal correspondence — is already at risk.
 
-OpenSSH is responding. Version 10.0 made the ML-KEM hybrid key exchange the default. GitHub rolled out post-quantum SSH access in September 2025. The direction is right. But the implementations are bolted onto a 25-year-old codebase in a memory-unsafe language, retaining decades of legacy algorithms, configuration surface, and edge cases — every line of which is a potential attack surface and a maintenance burden.
+OpenSSH is responding. Version 10.0 made the ML-KEM hybrid key exchange the default. GitHub rolled out hybrid post-quantum SSH access (`sntrup761x25519-sha512@openssh.com`) on 17 September 2025; the algorithm is selected automatically for modern clients with no opt-in required. The direction is right. But the implementations are bolted onto a 25-year-old codebase in a memory-unsafe language, retaining decades of legacy algorithms, configuration surface, and edge cases — every line of which is a potential attack surface and a maintenance burden.
 
 We think there is room for a different answer.
 
