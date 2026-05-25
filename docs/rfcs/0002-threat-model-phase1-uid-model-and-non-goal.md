@@ -26,9 +26,9 @@ privilege-separation lands in Phase 3:
    out of scope) and §8.1 (Compromise of the host kernel or operator
    account).
 
-The non-goal has a **closing date**: it lifts when the Phase 3
+The non-goal has a **closure condition**: it lifts when the Phase 3
 privilege-separation work lands and a follow-up RFC removes §8.12.
-Stating the closure condition inline makes the entry a temporary
+Stating that condition inline makes the entry a temporary
 disclosure, not a permanent exemption.
 
 ## Motivation
