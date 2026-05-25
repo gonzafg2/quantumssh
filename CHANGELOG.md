@@ -29,8 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   historical record; it is not retroactively replaced.
 - `docs/rfcs/0000-template.md` renames its `Tracking issue:` field to
   `Roadmap issue:` with default guidance to cite the Phase-level
-  issue. The change to RFC-0002 (PR #24) applies the new field name
-  retroactively in the same pull request.
+  issue.
 - Initial project scaffolding, governance documents, contribution
   guidelines, license, and CI/CD configuration.
 - Project security PGP key published at `keys/security.asc`
