@@ -257,9 +257,10 @@ account and one operator. This guidance belongs in
 1. **Risk of normalising the gap.** Adding a non-goal makes the gap
    visible, but a determined reader might interpret §8.12 as a permanent
    exemption rather than a temporary disclosure. Mitigation: the
-   closure-condition paragraph in §8.12 names the Phase 3 RFC by
-   reference and asserts the non-goal is temporary. A reader who reads
-   §8.12 to its end cannot reasonably infer permanence.
+   closure-condition paragraph in §8.12 states that the non-goal is
+   temporary and will be superseded by a follow-up Phase 3 RFC. A
+   reader who reads §8.12 to its end cannot reasonably infer
+   permanence.
 
 2. **Risk of weakening §2.5.** A reviewer could argue that adding a
    Phase-bounded paragraph to §2.5 dilutes the asset definition.
