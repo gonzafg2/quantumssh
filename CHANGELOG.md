@@ -23,11 +23,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   authenticated user"* goal is the Phase 3 target, and (b) a new
   §8.12 (Out of scope) entry naming *"Per-user UID isolation until
   Phase 3"* as a temporary, closure-conditioned non-goal. The closure
-  condition is the Phase 3 privilege-separation RFC, named inline so
-  the non-goal is auditable as temporary rather than permanent. The
-  RFC also proposes adding `executing_uid` as a first-class field of
-  the §2.7 audit record so the Phase-1 UID gap is operationally
-  checkable in logs by the operator.
+  condition is a follow-up Phase 3 RFC (TBD), so the non-goal is
+  auditable as temporary rather than permanent. The RFC also proposes
+  adding `executing_uid` as a first-class field of the §2.7 audit
+  record so the Phase-1 UID gap is operationally checkable in logs by
+  the operator.
 
 ### Changed
 
