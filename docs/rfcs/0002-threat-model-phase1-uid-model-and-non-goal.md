@@ -5,9 +5,11 @@
 - **Created:** 2026-05-13
 - **Tracking issue:** [`#9`](https://github.com/gonzafg2/quantumssh/issues/9) (Phase 1 / Hito 1)
 - **Implementation PR:** TBD
-- **Supersedes:** Refines [`docs/threat-model.md`](../threat-model.md) §2.5 (Command execution authority) and adds §8.12 (Out of scope).
 
 ## Summary
+
+This RFC refines [`docs/threat-model.md`](../threat-model.md) §2.5
+(Command execution authority) and adds §8.12 (Out of scope).
 
 This RFC proposes two coupled refinements to `docs/threat-model.md` so
 that the document continues to describe what QuantumSSH *actually*
