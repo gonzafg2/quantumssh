@@ -3,7 +3,7 @@
 - **Status:** Draft
 - **Authors:** Gonzalo Fleming Garrido
 - **Created:** 2026-05-13
-- **Tracking issue:** [`#9`](https://github.com/gonzafg2/quantumssh/issues/9) (Phase 1 / Hito 1)
+- **Roadmap issue:** [`#9`](https://github.com/gonzafg2/quantumssh/issues/9) (Phase 1 / Hito 1)
 - **Implementation PR:** TBD
 
 ## Summary
