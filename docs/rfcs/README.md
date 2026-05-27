@@ -36,6 +36,36 @@ For everything else, just open an issue or a pull request. Examples:
 If you are not sure, open an issue first and ask. Maintainers can
 upgrade an issue into an RFC if the discussion turns out to need one.
 
+## Scope: one decision per RFC
+
+Each RFC addresses a single shape-determining decision. When a decision
+generates multiple operative subsidiary decisions (workspace topology,
+choice of a specific dependency version, configuration parameters), the
+subsidiaries are recorded as separate ADRs that cite the RFC; they are
+not packaged inside the RFC. If a proponent feels that two decisions
+"must go together", they are probably the same decision and the RFC
+should be formulated that way; or they are two distinct decisions and
+need two RFCs.
+
+The reason for the discipline is reviewability. A reader of an RFC
+should be able to identify the decision in one sentence and the
+alternatives in a list. A multi-decision RFC has neither property: the
+decision sprawls, the alternatives multiply combinatorially, and a
+substantive objection to one half blocks the other half from landing.
+
+## Tracking: roadmap issues, not per-RFC issues
+
+The project's roadmap lives in `README.md` and is tracked operationally
+through Phase-level GitHub issues (e.g. issue `#9` for Phase 1). RFCs
+reference the Phase issue in their `Roadmap issue:` field, **not** a
+new issue created for the RFC itself. Discussion of the RFC happens on
+the RFC's own pull request; the Phase issue is the place where the
+project's progress against the roadmap is visible in aggregate.
+
+Creating a separate tracking issue for every RFC would duplicate the
+roadmap and fragment the discussion across two surfaces. The Phase
+issue is sufficient.
+
 ## How the process works
 
 1. **Copy `0000-template.md`** to a new file. Pick a slug describing the

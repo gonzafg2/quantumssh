@@ -117,7 +117,7 @@ Tracked in [#9](https://github.com/gonzafg2/quantumssh/issues/9).
 - Reference deployment patterns
 - Quantum-readiness guidance for regulated industries
 
-We expect Phase 1 to take weeks. Phase 2, months. Phase 3, a year or more. We are not in a hurry. Cryptographic infrastructure earns trust slowly.
+Each phase ships when it is ready, not on a calendar. We do not estimate Phase durations: the schedule is a function of correctness, scrutiny, and community formation, and committing to a timeline would invert the priority. We are not in a hurry. Cryptographic infrastructure earns trust slowly.
 
 ---
 

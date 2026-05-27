@@ -44,6 +44,20 @@ Do **not** write one for:
 
 When in doubt, write the ADR. It is cheap; not having it is expensive.
 
+## Scope: one decision per ADR
+
+An ADR records a single decision. When a substantial RFC is accepted,
+the implementing decisions are split into separate ADRs, each citing
+the RFC; they are not packaged into one ADR. This keeps the ADR catalog
+navigable — a reader scanning filenames sees one decision per slug —
+and lets each ADR be referenced, superseded, or annotated with errata
+independently.
+
+If you find yourself writing an ADR with two unrelated decisions in it,
+split them. ADRs are cheap; the cost of an extra file is far below the
+cost of having to disentangle two decisions when one of them is
+superseded later.
+
 ## Numbering
 
 ADRs are numbered sequentially starting from `0001`. The number is

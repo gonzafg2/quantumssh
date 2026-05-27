@@ -3,7 +3,7 @@
 - **Status:** Draft
 - **Authors:** <Name(s)>
 - **Created:** YYYY-MM-DD
-- **Tracking issue:** <link or "TBD">
+- **Roadmap issue:** <link or "TBD" (e.g. [#9](https://github.com/gonzafg2/quantumssh/issues/9) for Phase 1)>
 - **Implementation PR:** <link or "TBD">
 
 ## Summary
