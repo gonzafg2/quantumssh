@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `docs/adr/0016-phase-1-service-account-uid-model.md` (Proposed)
+  records the operational counterpart to RFC-0002: `quantumsshd` will
+  run in Phase 1 as a dedicated non-root service account
+  (`quantumssh:quantumssh`), never holding `root`, never calling
+  `setuid`/`setgid`/`initgroups`/`chroot`, and never integrating with
+  PAM. Commands inherit the service account's UID/GID and a sanitised
+  environment. The `executing_uid` audit field (RFC-0002 §2.7) is
+  populated by `nix::unistd::Uid::current()`; in Phase 1 the value is
+  a per-process constant, and the schema is forward-compatible with
+  the Phase 3 per-user value. The ADR depends on the merge of
+  RFC-0002 and advances from Proposed to Accepted when Phase 1
+  implementation begins.
 - `docs/rfcs/README.md` and `docs/adr/README.md` codify the project's
   one-decision-per-file convention. Each RFC addresses a single
   shape-determining decision; the implementing subsidiary decisions
