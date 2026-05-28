@@ -36,8 +36,9 @@ disclosure, not a permanent exemption.
 ## Motivation
 
 The walking-skeleton scope captured in `README.md` §"Phase 1" specifies
-five deliverables: a listener, hybrid PQ KEX, an Ed25519 host key,
-public-key authentication, and **single-command execution**. The
+six deliverables: a listener, hybrid PQ KEX, an Ed25519 host key,
+public-key authentication, **single-command execution**, and structured
+logging via `tracing`. The
 design work supporting this RFC examined what "single-command
 execution" must minimally deliver in RFC 4254 terms and how the
 host-side authority should be bounded. The conclusion reached,
@@ -129,6 +130,12 @@ goal to Phase 3 and points the reader at §8.12 for the Phase 1 reality.
 
 ### Proposed §8.12 (new non-goal)
 
+The entry is numbered §8.12 rather than §8.11 because §8 currently ends
+at §8.10 and §8.11 is reserved by RFC 0001 ("Hardening of the
+maintainer's personal endpoint"). This RFC therefore assumes RFC 0001's
+§8.11 lands in `threat-model.md` first; if RFC 0001 is rejected or
+renumbered, this entry should be renumbered to §8.11 to avoid a gap.
+
 > #### 8.12 Per-user UID isolation until Phase 3
 >
 > Until the privilege-separation work scheduled for Phase 3 lands,
@@ -158,12 +165,25 @@ goal to Phase 3 and points the reader at §8.12 for the Phase 1 reality.
 
 ### Proposed amendment elsewhere
 
-**§2.7 (Audit record).** The existing entry lists *"authentication
-outcomes (success and failure)"*. To make the Phase 1 reality
-auditable, the entry should also commit to recording the executing UID
-on each command boundary, distinct from the authenticated identity.
-This is a one-sentence addition; it lets §8.12's second paragraph rest
-on a concrete log field rather than a hope.
+**§2.7 (Audit record).** The existing **What** subsection lists the
+event classes recorded (*"connection acceptance, authentication
+outcomes (success and failure), session lifecycle events,
+command-execution boundaries, configuration load, …"*) but does not
+enumerate the fields each record carries. To make the Phase 1 reality
+auditable, §2.7 should commit to recording the executing UID on each
+command-execution boundary, distinct from the authenticated identity.
+The paste-ready addition is a sentence appended to the §2.7 **What**
+subsection:
+
+> Each command-execution boundary records the *authenticated identity*
+> (the key fingerprint that authenticated) and the *executing UID* (the
+> operating-system identity the command actually runs under) as separate
+> fields, so that the gap documented in §8.12 is visible to anyone
+> reviewing server logs.
+
+This lets §8.12's second paragraph rest on a concrete log field rather
+than a hope. The field naming (`executing_uid` vs alternatives) is left
+to the PR; see Unresolved Questions.
 
 ## Reference-level explanation
 
@@ -373,12 +393,15 @@ is the disclosure mechanism that makes the deferral honest.
 
 1. **Whether §8.12 should commit to a date.** The RFC names the
    closure condition by Phase, not by calendar. The roadmap in
-   `README.md` says *"Phase 3 will take a year or more"*, which is a
-   range, not a deadline. A reviewer might prefer a *no-later-than*
-   date to keep the deferral from becoming indefinite. The author's
-   judgement is that calendar dates on multi-year roadmaps degrade
-   silently and that the closure condition (a follow-up RFC + a
-   privsep landing) is the right anchor. Reviewers may differ.
+   `README.md` deliberately carries no per-phase estimates — it states
+   that *"each phase ships when it is ready, not on a calendar"* and
+   that the project does not estimate phase durations — so there is
+   no roadmap deadline to anchor against in the first place. A reviewer
+   might still prefer a *no-later-than* date to keep the deferral from
+   becoming indefinite. The author's judgement is that calendar dates
+   on an explicitly estimate-free roadmap degrade silently and that the
+   closure condition (a follow-up RFC + a privsep landing) is the right
+   anchor. Reviewers may differ.
 
 2. **Whether to refuse to start in multi-user-looking environments.**
    QuantumSSH could refuse to launch if its service account is `root`,
