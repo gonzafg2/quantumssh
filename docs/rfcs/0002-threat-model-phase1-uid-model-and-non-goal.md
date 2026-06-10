@@ -1,8 +1,9 @@
 # RFC 0002: Threat model — Phase 1 UID model honesty and non-goal §8.12
 
-- **Status:** Draft
+- **Status:** Accepted
 - **Authors:** Gonzalo Fleming Garrido
 - **Created:** 2026-05-13
+- **Accepted:** 2026-06-10 — lazy consensus; the 14-day comment period closed with no substantive maintainer objection, and the project lead (Phase 0) made the call per [`docs/rfcs/README.md`](README.md#decision-rule). The four unresolved questions are resolved at acceptance (see §"Unresolved questions"). The operational counterpart is [ADR-0016](../adr/0016-phase-1-service-account-uid-model.md); acceptance records the *decision*, while the `docs/threat-model.md` edits land in the Implementation PR.
 - **Roadmap issue:** [`#9`](https://github.com/gonzafg2/quantumssh/issues/9) (Phase 1 / Hito 1)
 - **Implementation PR:** TBD
 
@@ -391,6 +392,8 @@ is the disclosure mechanism that makes the deferral honest.
 
 ## Unresolved questions
 
+All four questions below were resolved at acceptance (2026-06-10). The original framing is preserved; each carries its **Resolution** so the reasoning is on record.
+
 1. **Whether §8.12 should commit to a date.** The RFC names the
    closure condition by Phase, not by calendar. The roadmap in
    `README.md` deliberately carries no per-phase estimates — it states
@@ -403,6 +406,12 @@ is the disclosure mechanism that makes the deferral honest.
    closure condition (a follow-up RFC + a privsep landing) is the right
    anchor. Reviewers may differ.
 
+   **Resolution (no calendar date; closure condition is the anchor).**
+   §8.12 stays Phase-anchored. A no-later-than date on an explicitly
+   estimate-free roadmap would degrade silently; the closure condition
+   (the Phase 3 privsep RFC plus a privsep landing) keeps the non-goal
+   auditable as temporary without inventing a deadline.
+
 2. **Whether to refuse to start in multi-user-looking environments.**
    QuantumSSH could refuse to launch if its service account is `root`,
    if `authorized_keys` lists more than one key, or if the host has
@@ -412,9 +421,22 @@ is the disclosure mechanism that makes the deferral honest.
    to enforce it programmatically. A separate RFC could revisit
    whether enforcement is desirable.
 
+   **Resolution (document, do not enforce).** Phase 1 documents the
+   single-user assumption; it does not add launch-time refusal
+   heuristics, which would reject legitimate single-key/root
+   deployments. Whether to enforce programmatically is deferred to a
+   separate RFC.
+
 3. **Naming of the executing-UID log field.** The reference section
    above proposes `executing_uid`. Alternatives include `service_uid`,
    `process_uid`, or `os_uid`. Bike-shed on the PR.
+
+   **Resolution (`executing_uid`).** Settled on `executing_uid`, which
+   is already the field name in the merged operational counterpart
+   [ADR-0016](../adr/0016-phase-1-service-account-uid-model.md) §"Decision".
+   Choosing any alternative now would put the RFC and an accepted ADR
+   out of sync for no benefit; the name is forward-compatible with the
+   Phase 3 per-user value.
 
 4. **Whether the audit-record addition deserves its own RFC.** §2.7
    today lists the events recorded but does not enumerate fields. The
@@ -422,6 +444,11 @@ is the disclosure mechanism that makes the deferral honest.
    list that does not exist yet. If reviewers feel this addition is
    substantial enough to warrant its own RFC, split it; the author's
    judgement is that it is small enough to ride with this one.
+
+   **Resolution (rides with this RFC; no split).** The `executing_uid`
+   audit-field addition is small enough to land within this RFC's
+   Implementation PR. It does not warrant a separate RFC; no
+   substantive objection asked for the split during the comment period.
 
 ## Future possibilities
 
