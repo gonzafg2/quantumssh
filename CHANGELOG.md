@@ -9,7 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `docs/rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md` (Draft)
+- `docs/rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md` (added as
+  Draft; promoted to Accepted in the same Unreleased cycle — see
+  **Changed** below)
   proposes that Phase 1's SSH-2 transport, KEX, authentication, and
   channel layers be implemented greenfield on top of audited
   cryptographic primitive crates (`ml-kem`, `x25519-dalek`,
@@ -79,6 +81,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `docs/rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md` advances
+  from Draft to **Accepted** (2026-06-10, lazy consensus — the 14-day
+  comment period closed with no substantive maintainer objection). The
+  decision is now binding: Phase 1's SSH-2 transport, KEX,
+  authentication, and channel layers are implemented greenfield on
+  audited primitive crates; `russh` is **not** a dependency and becomes
+  a reference implementation only. The RFC's four unresolved questions
+  are resolved at acceptance: (1) the upstream `russh` fuzz-harness
+  contribution is deferred until Phase 1 gains a second contributor;
+  (2) `unsafe_code = "forbid"` is enforced workspace-wide from the
+  first crate's first line; (3) the hybrid Option C is *not* promoted
+  to co-equal, staying a named narrow extension; (4) CI pins a specific
+  OpenSSH version for the interop gate and treats version bumps as
+  their own reviewed PR. The four follow-up ADRs the RFC named
+  (workspace topology, `unsafe_code = forbid`, `RustCrypto/ml-kem`
+  selection, CI interop gate) are now unblocked.
+- Issue [`#9`](https://github.com/gonzafg2/quantumssh/issues/9) (Phase 1
+  / Hito 1) reconciled with RFC-0003: the `russh` dependency framing is
+  removed, the crate layout moves to `crates/quantumssh` (binary) +
+  `crates/quantumssh-core` (library), and the acceptance criteria are
+  preserved unchanged per RFC-0003 §"Acceptance criteria stay as issue
+  #9 defines them".
 - `docs/rfcs/0001-threat-model-actor-project-maintainer-compromise.md`
   advances from Draft to **Accepted** (2026-06-10, lazy consensus —
   the 14-day comment period closed with no substantive maintainer
