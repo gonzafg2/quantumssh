@@ -1,8 +1,9 @@
 # RFC 0003: Phase 1 SSH stack — greenfield-modular vs `russh`
 
-- **Status:** Draft
+- **Status:** Accepted
 - **Authors:** Gonzalo Fleming Garrido
 - **Created:** 2026-05-27
+- **Accepted:** 2026-06-10 — by lazy consensus per [`docs/rfcs/README.md`](README.md#decision-rule): the 14-day comment period closed with no substantive maintainer objection, which is itself acceptance (no project-lead tie-break was needed). The four unresolved questions are resolved at acceptance (see §"Unresolved questions").
 - **Roadmap issue:** [`#9`](https://github.com/gonzafg2/quantumssh/issues/9) (Phase 1 / Hito 1)
 - **Implementation PR:** TBD
 
@@ -10,7 +11,7 @@
 
 Phase 1's walking skeleton needs a foundation: either we depend on the existing [`russh`](https://github.com/Eugeny/russh) crate for the SSH-2 wire and KEX layers, or we implement those layers ourselves on top of audited cryptographic primitive crates (`ml-kem`, `x25519-dalek`, `ed25519-dalek`, `chacha20poly1305`, `aes-gcm`).
 
-The [`README.md`](../../README.md) roadmap entry for Phase 0 records a *tentative* preference for `russh` and explicitly defers the formal decision to this RFC. The adversarial analysis captured in [`claudedocs/phase1-open-decisions.md`](../../claudedocs/phase1-open-decisions.md) (2026-05-13) examined three options against the MANIFIESTO commitments; this RFC proposes that we adopt the **greenfield-modular** option (A), with the **`russh`-with-mitigations** option (B) named as a documented fallback only if a future constraint forces the trade.
+The [`README.md`](../../README.md) roadmap entry for Phase 0 records a *tentative* preference for `russh` and explicitly defers the formal decision to this RFC. The adversarial analysis behind this RFC examined three options against the MANIFIESTO commitments; this RFC proposes that we adopt the **greenfield-modular** option (A), with the **`russh`-with-mitigations** option (B) named as a documented fallback only if a future constraint forces the trade. The full comparison and its evidence are presented in this document.
 
 The decision belongs to RFC and not ADR scope because Phase 1's foundation determines what code runs in QuantumSSH's pre-authentication path — the highest-trust surface in the system — for the lifetime of the project. Reversing it later costs an order of magnitude more than choosing once.
 
@@ -18,7 +19,7 @@ The decision belongs to RFC and not ADR scope because Phase 1's foundation deter
 
 The MANIFIESTO commits the project to five things: memory safety by construction, post-quantum by default, zero legacy, small attack surface with sharp edges, and permanently open. Phase 1 is where these commitments stop being aspirational and start being load-bearing.
 
-The two candidate foundations score very differently against those commitments. The summary table below comes from [`claudedocs/phase1-open-decisions.md`](../../claudedocs/phase1-open-decisions.md) §"Decisión 1 — `russh` vs. implementación greenfield"; the full evidence with citations lives there.
+The two candidate foundations score very differently against those commitments. The summary table below captures the comparison; the supporting evidence for each row is set out in this RFC's *Reference-level explanation* and *Rationale and alternatives* sections.
 
 | Dimension | `russh` | Greenfield | Winner |
 |---|---|---|---|
@@ -52,7 +53,7 @@ subtle            = { version = "2",     default-features = false }
 zeroize           = { version = "1",     default-features = false, features = ["zeroize_derive"] }
 ```
 
-All nine crates are pure-Rust (no FFI, no C) and all are Apache-2.0 or MIT; the three key-material crates (`ml-kem`, `x25519-dalek`, `ed25519-dalek`) enable their `zeroize` feature for the key-material hygiene that `docs/threat-model.md` §2.4 and §5.2.4 require. The selection of `RustCrypto/ml-kem` over alternatives (`libcrux-ml-kem`, `aws-lc-rs`, `liboqs-rust`, `pqcrypto-mlkem`, `fips203`) is documented in [`claudedocs/phase1-open-decisions.md`](../../claudedocs/phase1-open-decisions.md) §"Decisión 3" and will move to its own ADR when this RFC merges.
+All nine crates are pure-Rust (no FFI, no C) and all are Apache-2.0 or MIT; the three key-material crates (`ml-kem`, `x25519-dalek`, `ed25519-dalek`) enable their `zeroize` feature for the key-material hygiene that `docs/threat-model.md` §2.4 and §5.2.4 require. The selection of `RustCrypto/ml-kem` over alternatives (`libcrux-ml-kem`, `aws-lc-rs`, `liboqs-rust`, `pqcrypto-mlkem`, `fips203`) is recorded in its own ADR (ADR-0019) when this RFC merges.
 
 The Phase 1 protocol code lives in `quantumssh-core` as modules:
 
@@ -129,10 +130,10 @@ The vectors layout is part of the Phase 1 implementation PR, not this RFC.
 
 If this RFC is accepted, four follow-up ADRs become unblocked. Their numbering will be reassigned at merge time (ADRs are numbered chronologically by merge order per [`docs/adr/README.md`](../adr/README.md)):
 
-- **Workspace topology.** Two crates, flat layout (`crates/quantumssh` binary + `crates/quantumssh-core` library), per [`claudedocs/phase1-open-decisions.md`](../../claudedocs/phase1-open-decisions.md) §"Decisión 2".
+- **Workspace topology.** Two crates, flat layout (`crates/quantumssh` binary + `crates/quantumssh-core` library).
 - **`unsafe_code = "forbid"` workspace-wide.** Promote from the current `"deny"` (which permits per-item `#[allow]`) to `"forbid"` (which does not). Now possible because no dependency requires the escape hatch.
-- **`RustCrypto/ml-kem` 0.3.0** as the ML-KEM-768 implementation, with `libcrux-ml-kem` named as fallback under specific triggers (formal verification requirement, OpenSSH byte-parity requirement) per [`claudedocs/phase1-open-decisions.md`](../../claudedocs/phase1-open-decisions.md) §"Decisión 3".
-- **CI interop gate** (Debian trixie container, OpenSSH 10.0p1) per [`claudedocs/phase1-open-decisions.md`](../../claudedocs/phase1-open-decisions.md) §"Decisión 5".
+- **`RustCrypto/ml-kem` 0.3.0** as the ML-KEM-768 implementation, with `libcrux-ml-kem` named as fallback under specific triggers (formal verification requirement, OpenSSH byte-parity requirement).
+- **CI interop gate** (Debian trixie container, OpenSSH 10.0p1).
 
 These ADRs are deliberately *not* bundled into this RFC, per the one-decision-per-file convention codified in [PR #25](https://github.com/gonzafg2/quantumssh/pull/25). They each merit a focused decision record cited back to this RFC.
 
@@ -191,13 +192,23 @@ This was considered. Phase 1 cannot begin in earnest without this decision: the 
 
 ## Unresolved questions
 
+All four questions below were resolved at acceptance (2026-06-10). The original framing is preserved; each carries its **Resolution** so the reasoning is on record.
+
 1. **Whether the `cargo-fuzz` harness contribution upstream to `russh` (Option B condition 5) should still happen even though we choose Option A.** The work would benefit the broader ecosystem and would let downstream `russh` users (warpgate, Tabby, GitButler, etc.) inherit a stronger fuzz baseline. Argument for: good citizenship in the Rust SSH community. Argument against: contributor time is the scarcest resource, and Phase 1 work has higher direct project value. Defer until Phase 1 implementation gains a second contributor.
+
+   **Resolution (deferred, not a Phase 1 blocker).** The contribution is good-citizenship work, not a dependency of any issue [`#9`](https://github.com/gonzafg2/quantumssh/issues/9) acceptance criterion. It is revisited when Phase 1 gains a second contributor; until then, scarce contributor time goes to direct project work. Recorded under §"Future possibilities — Contributing back" so it is not lost.
 
 2. **Whether to enforce `unsafe_code = "forbid"` *immediately* on workspace creation (in the same PR as the first crate), or land it in a follow-up ADR.** Forbid is the stronger commitment but requires the first crate to compile under it from line 1. The current `"deny"` permits `#[allow]` escapes that we may need during exploration. Author's lean: land `"forbid"` from day 1, accept the discipline cost. Open for review.
 
+   **Resolution (`forbid` from day 1).** Resolved in favour of the author's lean. The first crate compiles under workspace-wide `unsafe_code = "forbid"` from line 1; the `#[allow]` escape hatch is given up deliberately, since no chosen dependency needs it (that is the whole point of Option A). The promotion from the current `"deny"` is recorded in the derived "`unsafe_code = forbid` workspace-wide" ADR (§"Operational dependencies of this decision"), which lands in the same PR as the first crate.
+
 3. **Whether the hybrid Option C should be promoted to a co-equal "Option A+" rather than a documented narrow extension.** The argument is that `ssh-key` for `authorized_keys` parsing is a much better-tested artefact than anything we would write in Phase 1, and rewriting it would be cycles spent on solved problems. The counter-argument is the audit-boundary cost. This is the most defensible question to bike-shed during the comment period.
 
+   **Resolution (not promoted; stays a narrow extension).** Option A remains the single chosen path. The Phase 1 implementer *may* adopt `ssh-key` for `authorized_keys` and host-key parsing without opening a new RFC — the audit posture holds because `ssh-key` is `#![forbid(unsafe_code)]` and pulls no `rsa-rc12` — but the BPP / KEX / transport / auth / channel layers stay greenfield, and Option C does not become a co-equal foundation. Treating it as co-equal would invite the audit boundary to creep crate by crate; keeping it a named, bounded extension preserves the "small attack surface, sharp edges" commitment.
+
 4. **What "interop hard gate" means precisely under CI failures.** If OpenSSH 10.0 patches a bug that changes wire format slightly (this has happened during the PQ KEX rollout), does the QuantumSSH PR block until upstream OpenSSH stabilises, or do we pin to an OpenSSH version in CI? Proposed default: pin to an OpenSSH version in CI, surface "OpenSSH version bump" as its own PR with a deliberate review. Open for review.
+
+   **Resolution (pin OpenSSH in CI; bumps are their own reviewed PR).** Resolved in favour of the proposed default. CI pins a specific OpenSSH version (Debian trixie container, OpenSSH 10.0p1 per §"Operational dependencies of this decision"); an upstream wire-format change never silently breaks an unrelated PR, and an OpenSSH version bump lands as its own deliberately-reviewed PR. The exact container, version, and failure semantics are recorded in the derived "CI interop gate" ADR.
 
 ## Future possibilities
 
