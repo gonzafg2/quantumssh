@@ -23,7 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ADR-0011 `audit.yml` predicate and self-disabling the
   workspace-empty CI guards. Advances to Accepted when the first
   Phase 1 crate lands.
-- `docs/rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md` (Draft)
+- `docs/rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md` (added as
+  Draft; promoted to Accepted in the same Unreleased cycle — see
+  **Changed** below)
   proposes that Phase 1's SSH-2 transport, KEX, authentication, and
   channel layers be implemented greenfield on top of audited
   cryptographic primitive crates (`ml-kem`, `x25519-dalek`,
@@ -93,6 +95,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `docs/rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md` advances
+  from Draft to **Accepted** (2026-06-10, lazy consensus — the 14-day
+  comment period closed with no substantive maintainer objection). The
+  decision is now binding: Phase 1's SSH-2 transport, KEX,
+  authentication, and channel layers are implemented greenfield on
+  audited primitive crates; `russh` is **not** a dependency and becomes
+  a reference implementation only. The RFC's four unresolved questions
+  are resolved at acceptance: (1) the upstream `russh` fuzz-harness
+  contribution is deferred until Phase 1 gains a second contributor;
+  (2) `unsafe_code = "forbid"` is enforced workspace-wide from the
+  first crate's first line; (3) the hybrid Option C is *not* promoted
+  to co-equal, staying a named narrow extension; (4) CI pins a specific
+  OpenSSH version for the interop gate and treats version bumps as
+  their own reviewed PR. The four follow-up ADRs the RFC named
+  (workspace topology, `unsafe_code = forbid`, `RustCrypto/ml-kem`
+  selection, CI interop gate) are now unblocked.
+- Issue [`#9`](https://github.com/gonzafg2/quantumssh/issues/9) (Phase 1
+  / Hito 1) reconciled with RFC-0003: the `russh` dependency framing is
+  removed, the crate layout moves to `crates/quantumssh` (binary) +
+  `crates/quantumssh-core` (library), and the acceptance criteria are
+  preserved unchanged per RFC-0003 §"Acceptance criteria stay as issue
+  #9 defines them".
+- `docs/rfcs/0001-threat-model-actor-project-maintainer-compromise.md`
+  advances from Draft to **Accepted** (2026-06-10, lazy consensus —
+  the 14-day comment period closed with no substantive maintainer
+  objection). The five unresolved questions are resolved at
+  acceptance: (1) the §5.5.2 refinement uses the a/b sub-heading
+  layout as proposed; (2) §3.2 stays qualitative with no likelihood
+  ratings; (3) the hardware-backed signing key is deferred to its own
+  future ADR; (4) reproducible builds are committed to as a Phase 3
+  direction only, with the exact form deferred to a dedicated RFC; (5)
+  the §6.4 "Signed releases and" phrase will be dropped in the
+  Implementation PR, with the signed-release mechanism itself deferred.
+  Acceptance records the decision; the `docs/threat-model.md` edits
+  will land in the (still TBD) Implementation PR.
+- `docs/rfcs/0002-threat-model-phase1-uid-model-and-non-goal.md`
+  advances from Draft to **Accepted** (2026-06-10, lazy consensus —
+  the 14-day comment period closed with no substantive maintainer
+  objection). The four unresolved questions are resolved at
+  acceptance: (1) §8.12 stays Phase-anchored with no calendar date,
+  the closure condition (Phase 3 privsep RFC + landing) being the
+  anchor; (2) Phase 1 documents the single-user assumption rather than
+  enforcing it with launch-time refusal heuristics; (3) the audit
+  field is named `executing_uid`, matching the merged ADR-0016; (4)
+  the `executing_uid` addition rides with this RFC and is not split
+  into its own RFC. Acceptance records the decision; the
+  `docs/threat-model.md` edits will land in the Implementation PR. This
+  unblocks ADR-0016 (operational counterpart) to advance from
+  Proposed to Accepted when Phase 1 implementation begins.
 - `README.md` §"Roadmap" no longer carries per-Phase calendar
   estimates. The previous wording — *"We expect Phase 1 to take weeks.
   Phase 2, months. Phase 3, a year or more."* — was an implicit
