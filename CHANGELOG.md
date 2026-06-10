@@ -88,10 +88,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ratings; (3) the hardware-backed signing key is deferred to its own
   future ADR; (4) reproducible builds are committed to as a Phase 3
   direction only, with the exact form deferred to a dedicated RFC; (5)
-  the §6.4 "Signed releases and" phrase is dropped in the
+  the §6.4 "Signed releases and" phrase will be dropped in the
   Implementation PR, with the signed-release mechanism itself deferred.
   Acceptance records the decision; the `docs/threat-model.md` edits
-  land in the (still TBD) Implementation PR.
+  will land in the (still TBD) Implementation PR.
 - `README.md` §"Roadmap" no longer carries per-Phase calendar
   estimates. The previous wording — *"We expect Phase 1 to take weeks.
   Phase 2, months. Phase 3, a year or more."* — was an implicit

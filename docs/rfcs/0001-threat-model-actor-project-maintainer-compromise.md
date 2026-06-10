@@ -3,7 +3,13 @@
 - **Status:** Accepted
 - **Authors:** Gonzalo Fleming Garrido
 - **Created:** 2026-05-11
-- **Accepted:** 2026-06-10 — lazy consensus; the 14-day comment period closed with no substantive maintainer objection, and the project lead (Phase 0) made the call per [`docs/rfcs/README.md`](README.md#decision-rule). The five unresolved questions are resolved at acceptance (see §"Unresolved questions"). Acceptance records the *decision*; the corresponding edits to `docs/threat-model.md` land in the Implementation PR.
+- **Accepted:** 2026-06-10 — by lazy consensus per
+  [`docs/rfcs/README.md`](README.md#decision-rule): the 14-day comment
+  period closed with no substantive maintainer objection, which is
+  itself acceptance (no project-lead tie-break was needed). The five
+  unresolved questions are resolved at acceptance (see §"Unresolved
+  questions"). Acceptance records the *decision*; the corresponding
+  edits to `docs/threat-model.md` will land in the Implementation PR.
 - **Tracking issue:** [#20](https://github.com/gonzafg2/quantumssh/issues/20)
 - **Implementation PR:** TBD
 
@@ -576,7 +582,12 @@ controls it does not in fact apply, or (b) lower the bar for what
 
 ## Unresolved questions
 
-All five questions below were resolved at acceptance (2026-06-10). The original framing is preserved; each carries its **Resolution** so the reasoning is on record. Four of the five resolve to "deferred / no position taken" — i.e. the RFC commits to a direction and explicitly leaves the dependent decision to a later ADR or RFC; only Q1 chooses between two presented layouts.
+All five questions below were resolved at acceptance (2026-06-10). The
+original framing is preserved; each carries its **Resolution** so the
+reasoning is on record. Four of the five resolve to "deferred / no
+position taken" — i.e. the RFC commits to a direction and explicitly
+leaves the dependent decision to a later ADR or RFC; only Q1 chooses
+between two presented layouts.
 
 1. **§5.5.2 split layout.** Should the refinement use a/b sub-headings
    (5.5.2.a, 5.5.2.b) as proposed, or should it instead break out into
@@ -585,7 +596,13 @@ All five questions below were resolved at acceptance (2026-06-10). The original 
    the reasons in *Rationale and alternatives*, but the alternative is
    defensible and would surface more cleanly in the table of contents.
 
-   **Resolution (a/b sub-headings, as proposed).** The Implementation PR uses the §5.5.2.a / §5.5.2.b layout. The two refinements are facets of one threat-model section (supply-chain trust into the project); keeping them under one number preserves that relationship and matches the *Rationale and alternatives* argument. A reader who prefers the ToC visibility of parallel sections is not blocked — a later editorial PR could split them — but the accepted shape is a/b.
+   **Resolution (a/b sub-headings, as proposed).** The Implementation
+   PR will use the §5.5.2.a / §5.5.2.b layout. The two refinements are
+   facets of one threat-model section (supply-chain trust into the
+   project); keeping them under one number preserves that relationship
+   and matches the *Rationale and alternatives* argument. A reader who
+   prefers the ToC visibility of parallel sections is not blocked — a
+   later editorial PR could split them — but the accepted shape is a/b.
 2. **Whether §3.2 should ever carry likelihood ratings.** §1.1
    declares the document is not a risk assessment and assigns no
    likelihoods. An earlier draft of this RFC carried a likelihood
@@ -638,7 +655,7 @@ All five questions below were resolved at acceptance (2026-06-10). The original 
    which path.
 
    **Resolution (correct §6.4; signed-release mechanism deferred).** The
-   Implementation PR drops the "Signed releases and" phrase from the
+   Implementation PR will drop the "Signed releases and" phrase from the
    §6.4 specimen so the threat model no longer claims a control that no
    ADR establishes. Whether to adopt signed release tags and/or signed
    artefacts is deferred to a future ADR/RFC; this RFC takes no position
