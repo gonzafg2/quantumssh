@@ -3,7 +3,7 @@
 - **Status:** Proposed
 - **Date:** TBD (advances to Accepted when the first Phase 1 crate lands)
 - **Deciders:** Project lead
-- **Related:** Implements [RFC-0003](../rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md) §"Operational dependencies of this decision"; sources [`claudedocs/phase1-open-decisions.md`](../../claudedocs/phase1-open-decisions.md) §"Decisión 3"; constrained by [ADR-0010](0010-toolchain-pinning-resolver-3-edition-2024-msrv-1-92.md) (MSRV 1.92) and [ADR-0018](0018-phase-1-unsafe-code-forbid-workspace.md) (`unsafe_code = "forbid"`).
+- **Related:** Implements [RFC-0003](../rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md) §"Operational dependencies of this decision"; sources the project's internal Phase-1 decision notes §"Decisión 3"; constrained by [ADR-0010](0010-toolchain-pinning-resolver-3-edition-2024-msrv-1-92.md) (MSRV 1.92) and [ADR-0018](0018-phase-1-unsafe-code-forbid-workspace.md) (`unsafe_code = "forbid"`).
 
 ## Context
 
@@ -16,10 +16,10 @@ Six candidates were surveyed: `RustCrypto/ml-kem`, `libcrux-ml-kem`, `aws-lc-rs`
 We will use **`RustCrypto/ml-kem` 0.3.0** as the ML-KEM-768 implementation:
 
 ```toml
-ml-kem       = { version = "0.3.0", default-features = false, features = ["zeroize"] }
-x25519-dalek = { version = "2.0.1", default-features = false, features = ["static_secrets", "zeroize"] }
-sha2         = "0.10"
+ml-kem = { version = "0.3.0", default-features = false, features = ["zeroize"] }
 ```
+
+(The classical half — `x25519-dalek` — and `sha2` are part of the RFC-0003 primitive stack and are not decided here; this ADR scopes only the ML-KEM-768 crate.)
 
 Reasons, in order:
 
@@ -80,7 +80,7 @@ Rejected as a production dependency. It is the only candidate with an explicit `
 
 ## Links
 
-- Decision source: [RFC-0003](../rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md) §"Operational dependencies of this decision"; analysis in [`claudedocs/phase1-open-decisions.md`](../../claudedocs/phase1-open-decisions.md) §"Decisión 3".
+- Decision source: [RFC-0003](../rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md) §"Operational dependencies of this decision"; analysis in the project's internal Phase-1 decision notes §"Decisión 3".
 - Conformance vectors: NIST ACVP-Server (`ML-KEM-keyGen-FIPS203`, `ML-KEM-encapDecap-FIPS203`); X25519 against RFC 7748 §6.1. Test-vector sourcing aligns with [ADR-0020](0020-phase-1-ci-openssh-interop-gate.md) and RFC-0003 §"Test vectors and KAT plan".
 - Upstream convergence: [`russh` PR #660](https://github.com/Eugeny/russh/pull/660) (migration to `RustCrypto/ml-kem`).
 - Constrained by: [ADR-0010](0010-toolchain-pinning-resolver-3-edition-2024-msrv-1-92.md) (MSRV), [ADR-0018](0018-phase-1-unsafe-code-forbid-workspace.md) (`unsafe_code = "forbid"`).
