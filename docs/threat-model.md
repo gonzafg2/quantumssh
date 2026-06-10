@@ -261,8 +261,9 @@ informative cross-references, not normative classification.
 The actors below define the **upper bound** of capability QuantumSSH's
 design responds to. The most consequential one for the project's
 architecture is the Very-High harvest-now-decrypt-later adversary;
-§3.2.1–§3.2.5 all inherit the protections built for that case. §3.2.6
-is structurally distinct: it is the one in-scope adversary that operates
+§3.2.1–§3.2.4 inherit the protections built for that case; §3.2.5 is
+that case. §3.2.6 is structurally distinct: it is the one in-scope
+adversary that operates
 *behind* the project's own trust boundary rather than across it, and its
 mitigations are in §6.4 rather than §6.1–§6.3.
 
@@ -460,7 +461,7 @@ co-maintainer rights (`T1195.002`, procedure exemplar: `xz-utils` 2024
 / CVE-2024-3094); maintainership handoff to a malicious successor
 (`T1195.002`, procedure exemplar: `event-stream` 2018); abuse of
 repository CI to introduce malicious code via workflow files
-(`T1195.002`); attempts to publish a malicious tag, release artefact,
+(`T1195.002`); attempts to publish a malicious tag, release artifact,
 or container image under the project's name.
 
 ATT&CK does not cleanly map the social-engineering-of-maintainer path;
@@ -1204,7 +1205,8 @@ repeating it.
 - **Signed commits on `main`** (ADR-0006, enforced via branch
   protection per ADR-0008). GitHub marks each commit *Verified* against
   the committer's registered signing key. Defends §5.5.2.b against
-  unsigned push and commits whose signature GitHub cannot verify. Does
+  commits that lack a verifiable signature (GitHub rejects merges where
+  every commit does not carry a signature GitHub marks *Verified*). Does
   **not** pin to a specific key fingerprint (any registered-key
   signature passes); does not defend against theft of the maintainer's
   existing signing key or against a co-maintainer's own registered key.
