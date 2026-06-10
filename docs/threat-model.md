@@ -174,6 +174,14 @@ authenticity (the user the host believes is executing the command is
 the user who authenticated). Confinement *beyond* what the host OS
 provides for that user is **not** a QuantumSSH-side goal; see §8.
 
+**Phase-bounded reality.** The authority described above is the
+Phase-3 target. During Phase 1 the server runs commands as the OS
+identity of the QuantumSSH service account itself, not as the
+authenticated user. The Phase-1 posture is documented as a temporary
+non-goal in §8.12; per-user UID isolation is part of the
+privilege-separation work scheduled for Phase 3 and gated by its own
+RFC.
+
 ### 2.6 Configuration and policy
 
 **What.** The server's configuration file (TOML), the host key paths,
@@ -195,7 +203,12 @@ embedded.
 **What.** The structured log records produced via `tracing`: connection
 acceptance, authentication outcomes (success and failure), session
 lifecycle events, command-execution boundaries, configuration load,
-and protocol errors significant enough to indicate attack.
+and protocol errors significant enough to indicate attack. Each
+command-execution boundary record includes the *authenticated identity*
+(the key fingerprint that authenticated) and the *executing UID*
+(`executing_uid` field, populated by `nix::unistd::Uid::current()`) as
+separate fields, so that the gap documented in §8.12 is visible to
+anyone reviewing server logs.
 
 **Where.** Standard logging sinks under operator control (stderr,
 journald, files, log shippers).
@@ -1252,6 +1265,40 @@ target the chosen primitives directly. The project's commitment is
 to track NIST and IETF guidance and to migrate before deprecation
 deadlines, not to anticipate breakthroughs that have not yet
 occurred.
+
+### 8.11 Hardening of the maintainer's personal endpoint
+
+*(Reserved by [RFC-0001](rfcs/0001-threat-model-actor-project-maintainer-compromise.md)
+§"Proposed amendments — §8". Lands in the RFC-0001 Implementation PR.)*
+
+### 8.12 Per-user UID isolation until Phase 3
+
+Until the privilege-separation work scheduled for Phase 3 lands,
+QuantumSSH executes the authenticated user's command under the
+operating-system identity of the QuantumSSH service account (the same
+account that owns the listening process), **not** under the OS
+identity of the authenticated user. Two consequences follow.
+
+First, operators must deploy Phase 1 with the assumption that any key
+in `authorized_keys` is operationally equivalent to a key for the
+service account; multi-tenant deployments are not in scope for Phase 1.
+The supported posture is single-user: one operator, one set of keys,
+one account.
+
+Second, file-system and process accesses performed by commands run
+through QuantumSSH inherit the service account's authority, not the
+authenticated user's. Auditors reading server logs must read
+`executing_uid = <service account UID>` on every command-execution
+record rather than a per-user UID; the §2.7 audit record includes
+`executing_uid` as a first-class field precisely so this gap is
+visible to anyone reviewing logs.
+
+The closure condition for this non-goal is Phase 3 privilege separation
+being implemented and a follow-up RFC superseding this entry and
+removing §8.12. Until both happen, this remains a deliberate temporary
+non-goal. See [RFC-0002](rfcs/0002-threat-model-phase1-uid-model-and-non-goal.md)
+and [ADR-0016](adr/0016-phase-1-service-account-uid-model.md) for the
+full rationale and operational counterpart.
 
 ---
 
