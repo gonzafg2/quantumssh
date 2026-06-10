@@ -1,8 +1,15 @@
 # RFC 0001: Threat model — add 'Project maintainer compromise' actor under §3.2
 
-- **Status:** Draft
+- **Status:** Accepted
 - **Authors:** Gonzalo Fleming Garrido
 - **Created:** 2026-05-11
+- **Accepted:** 2026-06-10 — by lazy consensus per
+  [`docs/rfcs/README.md` §"Decision rule"](README.md#decision-rule): the 14-day comment
+  period closed with no substantive maintainer objection, which is
+  itself acceptance (no project-lead tie-break was needed). The five
+  unresolved questions are resolved at acceptance (see §"Unresolved
+  questions"). Acceptance records the *decision*; the corresponding
+  edits to `docs/threat-model.md` will land in the Implementation PR.
 - **Tracking issue:** [#20](https://github.com/gonzafg2/quantumssh/issues/20)
 - **Implementation PR:** TBD
 
@@ -575,12 +582,27 @@ controls it does not in fact apply, or (b) lower the bar for what
 
 ## Unresolved questions
 
+All five questions below were resolved at acceptance (2026-06-10). The
+original framing is preserved; each carries its **Resolution** so the
+reasoning is on record. Four of the five resolve to "deferred / no
+position taken" — i.e. the RFC commits to a direction and explicitly
+leaves the dependent decision to a later ADR or RFC; only Q1 chooses
+between two presented layouts.
+
 1. **§5.5.2 split layout.** Should the refinement use a/b sub-headings
    (5.5.2.a, 5.5.2.b) as proposed, or should it instead break out into
    two parallel sections (§5.5.2 *Upstream dependency compromise*,
    §5.5.5 *Project maintainer compromise*)? The RFC proposes a/b for
    the reasons in *Rationale and alternatives*, but the alternative is
    defensible and would surface more cleanly in the table of contents.
+
+   **Resolution (a/b sub-headings, as proposed).** The Implementation
+   PR will use the §5.5.2.a / §5.5.2.b layout. The two refinements are
+   facets of one threat-model section (supply-chain trust into the
+   project); keeping them under one number preserves that relationship
+   and matches the *Rationale and alternatives* argument. A reader who
+   prefers the ToC visibility of parallel sections is not blocked — a
+   later editorial PR could split them — but the accepted shape is a/b.
 2. **Whether §3.2 should ever carry likelihood ratings.** §1.1
    declares the document is not a risk assessment and assigns no
    likelihoods. An earlier draft of this RFC carried a likelihood
@@ -590,18 +612,33 @@ controls it does not in fact apply, or (b) lower the bar for what
    (with likelihood and impact ratings across all actors and vectors),
    but that is a substantially larger change and would require its own
    RFC. This RFC takes no position on that direction.
+
+   **Resolution (no likelihood ratings; deferred).** §3.2 stays
+   qualitative, consistent with §1.1's "not a risk assessment" stance.
+   Converting the threat model into a full risk assessment is named as
+   a possible future direction but is out of scope here and gated by
+   its own RFC.
 3. **Hardware-backed signing key as a future ADR.** ADR-0006 today
    accepts the single-compromise-affects-both-surfaces trade-off for
    the SSH signing key. A subsequent ADR could record a decision to
    move the maintainer's signing key into a hardware token (FIDO2 /
    smartcard) once one is available. This RFC notes the possibility
    without proposing the decision; it is properly its own ADR.
+
+   **Resolution (deferred to its own ADR).** No decision is taken here.
+   The hardware-token move is recorded as a candidate follow-up ADR;
+   the ADR-0006 trade-off stands until such an ADR supersedes it.
 4. **Reproducible-builds RFC scope.** The §6.4 entry on reproducible
    builds points at a Phase 3 deliverable that is not yet RFC-gated in
    detail. The exact form (bit-reproducible source-to-binary, or
    reproducible-with-known-divergences in dependency versions, or
    SLSA-compatible build provenance) is a decision deferred to its own
    RFC. This RFC commits only to the *direction*.
+
+   **Resolution (direction only; form deferred).** The commitment is to
+   reproducible builds as a Phase 3 direction; the exact form
+   (bit-reproducible, reproducible-with-known-divergences, or
+   SLSA-style provenance) is left to a dedicated Phase 3 RFC.
 5. **Scope of "signed releases".** The current `docs/threat-model.md`
    §6.4 first bullet reads *"Signed releases and signed commits
    on `main`. Recorded in ADR-0006."*, but ADR-0006 documents only
@@ -616,6 +653,13 @@ controls it does not in fact apply, or (b) lower the bar for what
    SSH-signed checksum manifests) is deferred to a future ADR or RFC
    — see *Future possibilities* below. This RFC takes no position on
    which path.
+
+   **Resolution (correct §6.4; signed-release mechanism deferred).** The
+   Implementation PR will drop the "Signed releases and" phrase from the
+   §6.4 specimen so the threat model no longer claims a control that no
+   ADR establishes. Whether to adopt signed release tags and/or signed
+   artefacts is deferred to a future ADR/RFC; this RFC takes no position
+   on the mechanism, only on removing the unsupported claim.
 
 ## Future possibilities
 
