@@ -261,7 +261,10 @@ informative cross-references, not normative classification.
 The actors below define the **upper bound** of capability QuantumSSH's
 design responds to. The most consequential one for the project's
 architecture is the Very-High harvest-now-decrypt-later adversary;
-everything else inherits the protections built for that case.
+§3.2.1–§3.2.5 all inherit the protections built for that case. §3.2.6
+is structurally distinct: it is the one in-scope adversary that operates
+*behind* the project's own trust boundary rather than across it, and its
+mitigations are in §6.4 rather than §6.1–§6.3.
 
 #### 3.2.1 Opportunistic remote attacker (Very Low – Low)
 
@@ -394,8 +397,8 @@ chain compromise of dependencies in the build pipeline
 targeted OpenSSH's authentication path through a compression
 dependency); attempts to influence standards, defaults, or
 upstream maintainers; targeted parser exploitation
-pre-authentication (`T1190`); long-lived implants in the
-maintainer's development environment.
+pre-authentication (`T1190`). (The long-lived-implant path against the
+maintainer's development environment is now subsumed by §3.2.6.)
 
 **Implication for design.** The post-quantum-by-default key
 exchange is precisely the response to the harvest-now-decrypt-
@@ -412,6 +415,79 @@ cheap; the cryptanalytic capability that decrypts it later is the
 expensive part. The asymmetry is what motivates the project's
 default.
 
+#### 3.2.6 Project maintainer compromise (Moderate – High)
+
+**Capability.** Spans two distinguishable tiers, each realisable
+through procedurally distinct paths.
+
+At the **Moderate** end (Table D-3, Moderate): *compromise of an
+existing maintainer* via credential phishing against developer-platform
+accounts (GitHub, package registries), theft of the maintainer's SSH
+signing key through opportunistic endpoint compromise, or registry-side
+account takeover via session-token reuse (procedure exemplars:
+`ua-parser-js` 2021, `eslint-scope` 2018).
+
+At the **High** end (Table D-3, High): persistent implants in the
+maintainer's development environment capable of injecting code at
+commit, build, or release time; or *infiltration to acquire merge rights
+legitimately*, sub-divided into (a) **co-maintainer addition** under
+social-engineering pressure on the original maintainer (procedure
+exemplar: `xz-utils` 2024 / CVE-2024-3094, against the OpenSSH
+authentication path) and (b) **handoff to a malicious successor** when
+the original maintainer steps away (procedure exemplar: `event-stream`
+2018).
+
+**Intent.** Ranges from "obtain critical or sensitive information …
+by establishing a foothold" (Table D-4, Moderate) — when the
+compromised project is a stepping stone to downstream targets — to
+"undermine, severely impede, or destroy a core mission or business
+function" (Table D-4, Very High) — when the goal is to discredit the
+project itself or its users.
+
+**Targeting.** By definition deliberate against this specific project
+(Table D-5, High). Where the project is a supply-chain vector to
+higher-value downstream consumers, targeting matches the Very-High
+row's "supply chains and supporting personnel" language.
+
+**Typical techniques.** Credential phishing (`T1566`) and
+session-cookie theft (`T1539`) against the maintainer's platform
+accounts; theft of signing material from a compromised developer
+endpoint (`T1552.004` for private keys at rest); persistent implants on
+the maintainer's workstation enabling code injection at build time
+(`T1195.002` realised at the maintainer rather than at the dependency);
+long-game cultivation of a new contributor identity to acquire
+co-maintainer rights (`T1195.002`, procedure exemplar: `xz-utils` 2024
+/ CVE-2024-3094); maintainership handoff to a malicious successor
+(`T1195.002`, procedure exemplar: `event-stream` 2018); abuse of
+repository CI to introduce malicious code via workflow files
+(`T1195.002`); attempts to publish a malicious tag, release artefact,
+or container image under the project's name.
+
+ATT&CK does not cleanly map the social-engineering-of-maintainer path;
+`T1195.002` (Supply Chain Compromise: Compromise Software Supply Chain)
+is used here as the umbrella technique. This parallels the §5.5.3
+entry's explicit note that no specific ATT&CK technique applies.
+
+**Implication for design.** Repo-side controls must keep the
+authoritative source on `main` defensible even when one maintainer is
+the only human in the loop. Commit signing (ADR-0006) and branch
+protection (ADR-0008) constrain what an attacker can publish under the
+project's name; dependency discipline (`deny.toml`, `cargo-deny` in CI)
+bounds the surface that a compromised maintainer could silently widen.
+Reproducible builds and a published software bill-of-materials (Phase 3,
+RFC-gated) will allow downstream consumers to detect divergence between
+the source on `main` and the binaries they run — retaining value against
+the build-pipeline-compromise sub-case — but do not defend against a
+maintainer who merges malicious source on `main` and produces matching
+reproducible binaries from it. Against that sub-case, the bound is
+source-side review and the controls in §6.4. See §5.5.2.b and §7 for
+the residual.
+
+The endpoint-hardening of the maintainer's personal workstation is
+**not** in scope for QuantumSSH's controls; see §8.11.
+
+---
+
 ### 3.3 Non-adversarial threat sources
 
 NIST SP 800-30 Rev.1 distinguishes adversarial threat sources from
@@ -421,8 +497,8 @@ are noted here for completeness:
 - **Accidental.** Operator misconfiguration, fat-finger errors,
   inadvertent exposure. Mitigated by configuration validation and
   defaults that fail closed.
-- **Structural.** Bugs in QuantumSSH itself, in `russh`, or in any
-  upstream cryptographic library. Mitigated by Rust's memory-safety
+- **Structural.** Bugs in QuantumSSH itself, or in any upstream
+  cryptographic primitive library. Mitigated by Rust's memory-safety
   guarantees, by minimising the surface, by the Phase 3 audit, and
   by continuous fuzzing.
 - **Environmental.** Host kernel failures, hardware faults, power
@@ -959,32 +1035,59 @@ host. Format stability of the log schema is part of the public
 interface from Phase 2 onward, so log-shipping configurations do
 not silently break.
 
-#### 5.5.2 Supply-chain compromise of dependencies
+#### 5.5.2 Supply-chain compromise of dependencies and maintainership
 
-**Mechanism.** A dependency in QuantumSSH's build pipeline is
-backdoored upstream — by maintainer compromise, by registry
-attack, or by social-engineering as in the 2024 `xz-utils`
-operation (CVE-2024-3094), which targeted OpenSSH's authentication
-path through a compression dependency.
+Supply-chain attacks against an SSH implementation come in two
+categorically distinct sub-cases, with overlapping mitigations but
+different actor mappings.
 
-**Assets at risk.** Every asset, because the attacker now runs
-inside the server process.
+**5.5.2.a Upstream dependency compromise.** A dependency in
+QuantumSSH's build pipeline is backdoored upstream — by registry
+attack, by compromise of a dependency maintainer's account, or by
+social-engineering as in the 2024 `xz-utils` operation
+(CVE-2024-3094), which targeted OpenSSH's authentication path through
+a compression dependency.
 
-**Actors.** Nation-state (Very High) is the realistic actor at
-the maintainer-compromise scale; lower tiers realise registry-
-attack variants.
+**Assets at risk.** Every asset, because the attacker now runs inside
+the server process.
 
-**ATT&CK reference.** `T1195.002` (Supply Chain Compromise:
-Compromise Software Supply Chain). The 2024 `xz-utils` incident
-is not at present documented as a procedure example under
-`T1195.002`; the primary public references are Red Hat
-RHSB-2024-001 and the NIST NVD entry for CVE-2024-3094.
+**Actors.** Nation-state (Very High) is the realistic actor at the
+coordinated-supply-chain scale; lower tiers realise registry-attack
+variants.
 
-**Test handle.** Dependency discipline is recorded in
-`deny.toml`; the `cargo deny` invocation runs in CI; the
-project's signed-tag posture is recorded in ADR-0006. Phase 3
-introduces reproducible builds and a published software bill of
-materials, both of which are RFC-gated.
+**ATT&CK reference.** `T1195.002` (Supply Chain Compromise: Compromise
+Software Supply Chain). The 2024 `xz-utils` incident is not at present
+documented as a procedure example under `T1195.002`; the primary public
+references are Red Hat RHSB-2024-001 and the NIST NVD entry for
+CVE-2024-3094.
+
+**Test handle.** Dependency discipline is recorded in `deny.toml`; the
+`cargo deny` invocation runs in CI. Phase 3 introduces reproducible
+builds and a published software bill of materials, both RFC-gated.
+
+---
+
+**5.5.2.b Project maintainer compromise.** A current QuantumSSH
+maintainer's credentials, signing key, or development environment is
+compromised, or merge rights are acquired legitimately by a malicious
+newcomer (co-maintainer addition or full handoff). The attacker
+publishes malicious code under the project's name through paths the
+repository's controls treat as legitimate.
+
+**Assets at risk.** Every asset, because the attacker controls what
+enters `main` and what binaries ship under the project's name.
+
+**Actors.** §3.2.6 (Project maintainer compromise). Also reachable,
+at lower fidelity, by a nation-state operating §3.2.5's
+supply-chain and standards-influence capabilities.
+
+**ATT&CK reference.** `T1195.002` as the umbrella technique; `T1566`,
+`T1552.004`, `T1539` for credential-compromise sub-cases. ATT&CK does
+not cleanly cover the infiltration sub-cases; see §3.2.6.
+
+**Test handle.** The §6.4 controls (signed commits, branch protection,
+reproducible builds, SBOM) collectively bound but do not eliminate this
+risk; see §7 for the residual.
 
 #### 5.5.3 Host private key compromise
 
@@ -1098,15 +1201,34 @@ repeating it.
 
 ### 6.4 Operational posture (project-side)
 
-- **Signed releases and signed commits on `main`.** Recorded in
-  ADR-0006. Defends §5.5.2 partially.
-- **Dependency discipline.** `deny.toml` enforced in CI; reviewed in
-  PRs. Defends §5.5.2 partially.
-- **Reproducible builds and SBOM** are Phase-3 RFC-gated
-  deliverables. Will defend §5.5.2 fully.
-- **Branch protection on `main`.** Recorded in ADR-0008. Defends the
-  authoritative source against single-actor compromise of the
-  repository.
+- **Signed commits on `main`** (ADR-0006, enforced via branch
+  protection per ADR-0008). GitHub marks each commit *Verified* against
+  the committer's registered signing key. Defends §5.5.2.b against
+  unsigned push and commits whose signature GitHub cannot verify. Does
+  **not** pin to a specific key fingerprint (any registered-key
+  signature passes); does not defend against theft of the maintainer's
+  existing signing key or against a co-maintainer's own registered key.
+  The pinned-fingerprint guarantee is available out of band: downstream
+  consumers can construct an `allowed_signers` file from ADR-0006's
+  published key and reject unexpected fingerprints locally.
+- **Branch protection on `main`** (ADR-0008). Defends §3.2.6 against
+  direct push and force-push. With zero required reviews during
+  single-maintainer phases, it does not add a four-eyes constraint;
+  that defence activates when `GOVERNANCE.md`'s transition criteria are
+  met.
+- **Dependency discipline** (`deny.toml`, `cargo-deny` in CI). Defends
+  §5.5.2.a against introduction of dependencies with non-allowlisted
+  licences, from unapproved registries, with wildcard version
+  requirements, or with active RustSec advisories. Does **not** defend
+  §5.5.2.b: `deny.toml` is enforced *by* the maintainer, so a
+  compromised maintainer can edit it.
+- **Reproducible builds and SBOM** (Phase 3, RFC-gated). When landed,
+  will defend §3.2.6's build-pipeline-compromise sub-case by allowing
+  third parties to detect divergence between the source on `main` and
+  distributed binaries. Do **not** defend against a maintainer who
+  merges malicious source on `main` and produces matching reproducible
+  binaries; that sub-case is bounded by source-side review and the
+  controls above.
 
 ### 6.5 Documentation as defence
 
@@ -1149,6 +1271,17 @@ operators must account for. The principal items, by category, are:
   QuantumSSH inherits whatever the underlying transport library
   offers and does not at this stage promise resistance to a
   sophisticated traffic-analysis adversary.
+
+- **Single-maintainer window for §3.2.6** (§5.5.2.b). Until
+  `GOVERNANCE.md`'s transition criteria are met (three regular
+  contributors over six months plus a `0.1.0` release) and
+  `required_approving_review_count` rises from 0 to 1, a maintainer
+  whose credentials, signing key, and development endpoint are
+  simultaneously compromised retains the ability to publish under the
+  project's name through the normal PR flow. The compensating controls
+  are reproducible builds (Phase 3), SBOM (Phase 3), and downstream
+  signed-commit verification against a pinned `allowed_signers` set
+  (per ADR-0006's verification recipe). The bound is not zero.
 
 The intent of listing residual risk explicitly is the same intent
 behind §8: an operator who deploys QuantumSSH should know what they
@@ -1252,6 +1385,17 @@ target the chosen primitives directly. The project's commitment is
 to track NIST and IETF guidance and to migrate before deprecation
 deadlines, not to anticipate breakthroughs that have not yet
 occurred.
+
+### 8.11 Hardening of the maintainer's personal endpoint
+
+Operating-system controls, MFA enforcement on personal platform
+accounts, and hardware-backed key storage on the maintainer's personal
+workstation are the maintainer's responsibility as an operator of their
+own development environment. QuantumSSH's controls cannot reach into
+that environment. Operators concerned about the strength of these
+endpoint defences rely on the project's transparency posture — public
+source, signed commits, reproducible builds when landed — rather than
+on this document's coverage of the maintainer's endpoint.
 
 ---
 

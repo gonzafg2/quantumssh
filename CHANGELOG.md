@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `docs/threat-model.md` — Implementation PR for [RFC-0001](docs/rfcs/0001-threat-model-actor-project-maintainer-compromise.md):
+  added §3.2.6 (Project maintainer compromise, Moderate–High), split
+  §5.5.2 into 5.5.2.a (upstream dependency) and 5.5.2.b (maintainer
+  compromise), updated §6.4 to drop the unsupported "Signed releases"
+  phrase and add per-control actor scoping, added the single-maintainer
+  residual to §7, and added §8.11 (endpoint hardening OOS). Removed
+  the §3.2.5 "long-lived implants in the maintainer's development
+  environment" clause (now subsumed by §3.2.6). Removed the stale
+  `russh` mention from §3.3 (QuantumSSH does not depend on `russh`;
+  see RFC-0003).
 - `docs/adr/0020-phase-1-ci-openssh-interop-gate.md` (Proposed)
   records the hard CI interop gate from RFC-0003, resolving its
   unresolved question 4 in favour of pinning. Every PR must drive a
