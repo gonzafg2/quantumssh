@@ -37,7 +37,7 @@ The split is **two, not one and not four-plus**. The binary stays a wiring/CLI s
 - Integration tests target `quantumssh-core` directly, without spawning the binary.
 - Single-responsibility boundary: the binary is entrypoint/CLI; the library is the server. The boundary is enforced by the crate edge, not by convention.
 - `Cargo.lock` appears at the first binary commit, satisfying the `audit.yml` predicate from [ADR-0011](0011-ci-guards-workspace-state.md) with no extra work, and self-disabling the workspace-empty CI guards on the same commit.
-- Lint inheritance is uniform: every crate carries `[lints] workspace = true`, so [ADR-0018](0018-phase-1-unsafe-code-forbid-workspace.md)'s `unsafe_code = "forbid"` applies everywhere by construction.
+- Lint inheritance is uniform: every crate carries `[lints] workspace = true`, so the workspace `unsafe_code` lint (`"deny"` today; promoted to `"forbid"` by the planned [ADR-0018](0018-phase-1-unsafe-code-forbid-workspace.md)) applies to every crate by construction.
 
 ### Negative
 
