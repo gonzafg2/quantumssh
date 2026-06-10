@@ -1,8 +1,9 @@
 # RFC 0003: Phase 1 SSH stack — greenfield-modular vs `russh`
 
-- **Status:** Draft
+- **Status:** Accepted
 - **Authors:** Gonzalo Fleming Garrido
 - **Created:** 2026-05-27
+- **Accepted:** 2026-06-10 — lazy consensus; the 14-day comment period closed with no substantive maintainer objection, and the project lead (Phase 0) made the call per [`docs/rfcs/README.md`](README.md#decision-rule). The four unresolved questions are resolved at acceptance (see §"Unresolved questions").
 - **Roadmap issue:** [`#9`](https://github.com/gonzafg2/quantumssh/issues/9) (Phase 1 / Hito 1)
 - **Implementation PR:** TBD
 
@@ -191,13 +192,23 @@ This was considered. Phase 1 cannot begin in earnest without this decision: the 
 
 ## Unresolved questions
 
+All four questions below were resolved at acceptance (2026-06-10). The original framing is preserved; each carries its **Resolution** so the reasoning is on record.
+
 1. **Whether the `cargo-fuzz` harness contribution upstream to `russh` (Option B condition 5) should still happen even though we choose Option A.** The work would benefit the broader ecosystem and would let downstream `russh` users (warpgate, Tabby, GitButler, etc.) inherit a stronger fuzz baseline. Argument for: good citizenship in the Rust SSH community. Argument against: contributor time is the scarcest resource, and Phase 1 work has higher direct project value. Defer until Phase 1 implementation gains a second contributor.
+
+   **Resolution (deferred, not a Phase 1 blocker).** The contribution is good-citizenship work, not a dependency of any issue [`#9`](https://github.com/gonzafg2/quantumssh/issues/9) acceptance criterion. It is revisited when Phase 1 gains a second contributor; until then, scarce contributor time goes to direct project work. Recorded under §"Future possibilities — Contributing back" so it is not lost.
 
 2. **Whether to enforce `unsafe_code = "forbid"` *immediately* on workspace creation (in the same PR as the first crate), or land it in a follow-up ADR.** Forbid is the stronger commitment but requires the first crate to compile under it from line 1. The current `"deny"` permits `#[allow]` escapes that we may need during exploration. Author's lean: land `"forbid"` from day 1, accept the discipline cost. Open for review.
 
+   **Resolution (`forbid` from day 1).** Resolved in favour of the author's lean. The first crate compiles under workspace-wide `unsafe_code = "forbid"` from line 1; the `#[allow]` escape hatch is given up deliberately, since no chosen dependency needs it (that is the whole point of Option A). The promotion from the current `"deny"` is recorded in the derived "`unsafe_code = forbid` workspace-wide" ADR (§"Operational dependencies of this decision"), which lands in the same PR as the first crate.
+
 3. **Whether the hybrid Option C should be promoted to a co-equal "Option A+" rather than a documented narrow extension.** The argument is that `ssh-key` for `authorized_keys` parsing is a much better-tested artefact than anything we would write in Phase 1, and rewriting it would be cycles spent on solved problems. The counter-argument is the audit-boundary cost. This is the most defensible question to bike-shed during the comment period.
 
+   **Resolution (not promoted; stays a narrow extension).** Option A remains the single chosen path. The Phase 1 implementer *may* adopt `ssh-key` for `authorized_keys` and host-key parsing without opening a new RFC — the audit posture holds because `ssh-key` is `#![forbid(unsafe_code)]` and pulls no `rsa-rc12` — but the BPP / KEX / transport / auth / channel layers stay greenfield, and Option C does not become a co-equal foundation. Treating it as co-equal would invite the audit boundary to creep crate by crate; keeping it a named, bounded extension preserves the "small attack surface, sharp edges" commitment.
+
 4. **What "interop hard gate" means precisely under CI failures.** If OpenSSH 10.0 patches a bug that changes wire format slightly (this has happened during the PQ KEX rollout), does the QuantumSSH PR block until upstream OpenSSH stabilises, or do we pin to an OpenSSH version in CI? Proposed default: pin to an OpenSSH version in CI, surface "OpenSSH version bump" as its own PR with a deliberate review. Open for review.
+
+   **Resolution (pin OpenSSH in CI; bumps are their own reviewed PR).** Resolved in favour of the proposed default. CI pins a specific OpenSSH version (Debian trixie container, OpenSSH 10.0p1 per §"Operational dependencies of this decision"); an upstream wire-format change never silently breaks an unrelated PR, and an OpenSSH version bump lands as its own deliberately-reviewed PR. The exact container, version, and failure semantics are recorded in the derived "CI interop gate" ADR.
 
 ## Future possibilities
 
