@@ -3,7 +3,15 @@
 - **Status:** Accepted
 - **Authors:** Gonzalo Fleming Garrido
 - **Created:** 2026-05-13
-- **Accepted:** 2026-06-10 — lazy consensus; the 14-day comment period closed with no substantive maintainer objection, and the project lead (Phase 0) made the call per [`docs/rfcs/README.md`](README.md#decision-rule). The four unresolved questions are resolved at acceptance (see §"Unresolved questions"). The operational counterpart is [ADR-0016](../adr/0016-phase-1-service-account-uid-model.md); acceptance records the *decision*, while the `docs/threat-model.md` edits land in the Implementation PR.
+- **Accepted:** 2026-06-10 — by lazy consensus per
+  [`docs/rfcs/README.md`](README.md#decision-rule): the 14-day comment
+  period closed with no substantive maintainer objection, which is
+  itself acceptance (no project-lead tie-break was needed). The four
+  unresolved questions are resolved at acceptance (see §"Unresolved
+  questions"). The operational counterpart is
+  [ADR-0016](../adr/0016-phase-1-service-account-uid-model.md);
+  acceptance records the *decision*, while the `docs/threat-model.md`
+  edits will land in the Implementation PR.
 - **Roadmap issue:** [`#9`](https://github.com/gonzafg2/quantumssh/issues/9) (Phase 1 / Hito 1)
 - **Implementation PR:** TBD
 
@@ -392,7 +400,9 @@ is the disclosure mechanism that makes the deferral honest.
 
 ## Unresolved questions
 
-All four questions below were resolved at acceptance (2026-06-10). The original framing is preserved; each carries its **Resolution** so the reasoning is on record.
+All four questions below were resolved at acceptance (2026-06-10). The
+original framing is preserved; each carries its **Resolution** so the
+reasoning is on record.
 
 1. **Whether §8.12 should commit to a date.** The RFC names the
    closure condition by Phase, not by calendar. The roadmap in

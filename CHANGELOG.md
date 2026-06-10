@@ -90,7 +90,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   field is named `executing_uid`, matching the merged ADR-0016; (4)
   the `executing_uid` addition rides with this RFC and is not split
   into its own RFC. Acceptance records the decision; the
-  `docs/threat-model.md` edits land in the Implementation PR. This
+  `docs/threat-model.md` edits will land in the Implementation PR. This
   unblocks ADR-0016 (operational counterpart) to advance from
   Proposed to Accepted when Phase 1 implementation begins.
 - `README.md` §"Roadmap" no longer carries per-Phase calendar
