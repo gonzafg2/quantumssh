@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `docs/adr/0018-phase-1-unsafe-code-forbid-workspace.md` (Proposed)
+  records the decision to promote `unsafe_code` from `"deny"` to
+  `"forbid"` in `[workspace.lints.rust]`, resolving RFC-0003's
+  unresolved question 2 in favour of doing it immediately. `forbid`
+  removes the `#[allow(unsafe_code)]` escape hatch that `deny` leaves
+  open, so no future commit can silently reintroduce first-party
+  `unsafe`. The constraint binds first-party code only; the audited
+  pure-Rust primitive crates RFC-0003 relies on keep their own
+  internal `unsafe`. The `Cargo.toml` flip lands with the first Phase 1
+  crate (the lint has no effect on today's empty workspace), at which
+  point the ADR advances to Accepted.
 - `docs/rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md` (Draft)
   proposes that Phase 1's SSH-2 transport, KEX, authentication, and
   channel layers be implemented greenfield on top of audited
