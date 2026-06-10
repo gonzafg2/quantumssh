@@ -12,8 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `docs/adr/0019-phase-1-ml-kem-crate-rustcrypto.md` (Proposed)
   selects `RustCrypto/ml-kem` 0.3.0 as the Phase 1 ML-KEM-768
   implementation, per RFC-0003. Chosen for being pure-Rust with no
-  `unsafe` on the exposed surface (compatible with ADR-0018's
-  `forbid`), the path `russh` 0.59 itself adopted (PR #660, so the
+  `unsafe` on the exposed surface (compatible with the workspace
+  `unsafe_code` lint, including the planned `"forbid"` promotion in
+  ADR-0018), the path `russh` 0.59 itself adopted (PR #660, so the
   stack does not diverge if RFC-0003's Option B fallback is taken),
   Apache-2.0 OR MIT, ACVP-conformant to FIPS 203 final, `zeroize`-
   capable, and MSRV-compatible (1.85 ≤ 1.92). Names `libcrux-ml-kem`

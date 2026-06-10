@@ -7,7 +7,7 @@
 
 ## Context
 
-[RFC-0003](../rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md) commits Phase 1 to a greenfield stack built on audited primitive crates and names the ML-KEM-768 crate selection as a follow-up ADR. The post-quantum half of the `mlkem768x25519-sha256` hybrid KEX is the single most consequential dependency choice in the cryptographic core: it sits in the pre-authentication path, it must conform to NIST FIPS 203 final, and Phase 1's `unsafe_code = "forbid"` posture ([ADR-0018](0018-phase-1-unsafe-code-forbid-workspace.md)) requires it to keep any `unsafe` confined inside the dependency rather than forcing first-party escapes.
+[RFC-0003](../rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md) commits Phase 1 to a greenfield stack built on audited primitive crates and names the ML-KEM-768 crate selection as a follow-up ADR. The post-quantum half of the `mlkem768x25519-sha256` hybrid KEX is the single most consequential dependency choice in the cryptographic core: it sits in the pre-authentication path, it must conform to NIST FIPS 203 final, and Phase 1's `unsafe_code` lint (`"deny"` today, promoted to `"forbid"` by the planned [ADR-0018](0018-phase-1-unsafe-code-forbid-workspace.md)) requires it to keep any `unsafe` confined inside the dependency rather than forcing first-party escapes.
 
 Six candidates were surveyed: `RustCrypto/ml-kem`, `libcrux-ml-kem`, `aws-lc-rs`, `liboqs-rust`, `pqcrypto-mlkem`, and `fips203`. The classical half (X25519) is settled separately in the same RFC stack and is noted here only for completeness. This ADR records the ML-KEM crate choice and the conditions under which the fallback would be taken.
 
@@ -23,7 +23,7 @@ ml-kem = { version = "0.3.0", default-features = false, features = ["zeroize"] }
 
 Reasons, in order:
 
-1. **Pure Rust, zero FFI, no `unsafe` on the exposed surface** — compatible with `unsafe_code = "forbid"` ([ADR-0018](0018-phase-1-unsafe-code-forbid-workspace.md)).
+1. **Pure Rust, zero FFI, no `unsafe` on the exposed surface** — compatible with the workspace `unsafe_code` lint, including the planned `"forbid"` promotion ([ADR-0018](0018-phase-1-unsafe-code-forbid-workspace.md)).
 2. **It is the path `russh` itself adopted in 0.59** ([PR #660](https://github.com/Eugeny/russh/pull/660), 2026-03-26), so the stack does not diverge from the wider Rust SSH ecosystem even if RFC-0003's Option B fallback is ever taken.
 3. **Apache-2.0 OR MIT**, compatible with the project's Apache-2.0 licence.
 4. **NIST ACVP KATs run in CI**; conformant to FIPS 203 final (2024-08-13).
