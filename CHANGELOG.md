@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `docs/adr/0017-phase-1-workspace-topology-two-crates-flat.md`
+  (Proposed) records the Phase 1 workspace shape derived from
+  RFC-0003: two crates in a flat `crates/` layout —
+  `crates/quantumssh` (thin binary entrypoint) and
+  `crates/quantumssh-core` (the server library). Rejects both the
+  mono-crate option (the marginal cost over it is one extra
+  `Cargo.toml`, bought back in testability and an entrypoint/logic
+  edge) and premature four-to-five-crate fragmentation (matklad
+  large-workspaces guidance plus `russh` reverting its own
+  `russh-keys` split). The library is `publish = false` until Phase 3+;
+  `Cargo.lock` appears at the first binary commit, satisfying the
+  ADR-0011 `audit.yml` predicate and self-disabling the
+  workspace-empty CI guards. Advances to Accepted when the first
+  Phase 1 crate lands.
 - `docs/rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md` (Draft)
   proposes that Phase 1's SSH-2 transport, KEX, authentication, and
   channel layers be implemented greenfield on top of audited
