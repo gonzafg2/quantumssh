@@ -13,11 +13,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   records the hard CI interop gate from RFC-0003, resolving its
   unresolved question 4 in favour of pinning. Every PR must drive a
   real OpenSSH 10.x client through connect/auth/exec/close against
-  `quantumssh`, run in a `debian:trixie-slim` container (OpenSSH
-  10.0p1-7) because `ubuntu-latest` ships only 9.6p1. The OpenSSH
-  version is pinned, not floated: an upstream wire-format change never
-  silently reddens an unrelated PR, and version bumps land as their
-  own reviewed "OpenSSH version bump" PR. Enforces the
+  `quantumssh`, run in a Debian trixie container (OpenSSH 10.0p1-7)
+  because `ubuntu-latest` ships only 9.6p1. The OpenSSH bits are
+  explicitly pinned (image referenced by digest and `openssh-client`
+  installed at an explicit version from a frozen source — the
+  `debian:trixie-slim` tag alone is mutable and would still drift): an
+  upstream wire-format change never silently reddens an unrelated PR,
+  and pin bumps land as their own reviewed "OpenSSH version bump" PR.
+  Enforces the
   `openssh_smoke` / `openssh_verbose_kex` / `negative_no_hybrid` HARD
   subset; defers `cargo-fuzz` to Phase 3 (lightweight `proptest` is
   the non-blocking complement). The interop job is wired up in the

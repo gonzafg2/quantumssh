@@ -3,7 +3,7 @@
 - **Status:** Proposed
 - **Date:** TBD (advances to Accepted when the first Phase 1 crate lands)
 - **Deciders:** Project lead
-- **Related:** Implements [RFC-0003](../rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md) §"Acceptance criteria stay as issue #9 defines them" and resolves its unresolved question 4; sources [`claudedocs/phase1-open-decisions.md`](../../claudedocs/phase1-open-decisions.md) §"Decisión 5"; adds a workflow alongside `.github/workflows/ci.yml`.
+- **Related:** Implements [RFC-0003](../rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md) §"Acceptance criteria stay as issue #9 defines them" and resolves its unresolved question 4; sources the project's internal Phase-1 decision notes §"Decisión 5"; adds a workflow alongside `.github/workflows/ci.yml`.
 
 ## Context
 
@@ -13,14 +13,15 @@ The structural defence RFC-0003 names is a **hard interop gate**: every PR must 
 
 ## Decision
 
-We will add a **mandatory CI interop job** that exercises a real OpenSSH 10.x client against `quantumssh` end-to-end on every PR, with the OpenSSH version **pinned**:
+We will add a **mandatory CI interop job** that exercises a real OpenSSH 10.x client against `quantumssh` end-to-end on every PR, with the OpenSSH version **explicitly pinned** (not left to a floating tag):
 
-- The job runs in a **Debian trixie container** (`debian:trixie-slim`, OpenSSH 10.0p1-7) on a GitHub-hosted runner, because the default Ubuntu runner ships 9.6p1.
-- The job asserts the client version (`ssh -V` must report `OpenSSH_10.0p1`), builds the release binary, runs the full test suite, and runs `tests/interop/run_openssh_client.sh` (connect → pubkey auth → `echo hello` → clean close).
+- The job runs in a **Debian trixie container** providing OpenSSH 10.0p1-7, on a GitHub-hosted runner, because the default Ubuntu runner ships 9.6p1.
+- The pin is enforced concretely, because the `debian:trixie-slim` *tag* is mutable and Debian's APT repositories advance over time: the container is referenced **by image digest** (`debian@sha256:…`), and `openssh-client` is installed with an **explicit version** (`apt-get install openssh-client=<version>`) from a frozen source (a pinned `snapshot.debian.org` suite, or a vendored `.deb`). The tag name alone is documentation, not the pin.
+- The job asserts the client version — `ssh -V` output (which carries distro/build suffixes, e.g. `OpenSSH_10.0p1 Debian-…`) must **contain** `OpenSSH_10.0p1` — then builds the release binary, runs the full test suite, and runs `tests/interop/run_openssh_client.sh` (connect → pubkey auth → `echo hello` → clean close).
 - The interop job is a **required check** for merge into `main`.
-- **OpenSSH is pinned, not floated.** An upstream OpenSSH change that alters wire behaviour never silently breaks an unrelated PR. Bumping the pinned version is its own deliberately-reviewed PR ("OpenSSH version bump"), so a wire-format shift during the ongoing PQ-KEX rollout surfaces as a reviewed event, not as a mystery red check on someone else's change.
+- **The OpenSSH bits are pinned, not floated.** With the digest + package-version pin above, an upstream OpenSSH change that alters wire behaviour never silently breaks an unrelated PR. Bumping the pin (new digest and/or package version) is its own deliberately-reviewed PR ("OpenSSH version bump"), so a wire-format shift during the ongoing PQ-KEX rollout surfaces as a reviewed event, not as a mystery red check on someone else's change. Without the digest + version pin this property does not hold — which is why the pin mechanism is part of this decision, not an implementation detail.
 
-The HARD acceptance subset this job enforces (from RFC-0003 / `claudedocs` §"Decisión 5"): `integration::openssh_smoke` (`ssh … echo hello` → `hello`, exit 0), `integration::openssh_verbose_kex` (`ssh -v` shows `kex: algorithm: mlkem768x25519-sha256`), and `integration::negative_no_hybrid` (a non-hybrid client receives `SSH_DISCONNECT_KEY_EXCHANGE_FAILED`).
+The HARD acceptance subset this job enforces (from RFC-0003 / the project's internal Phase-1 decision notes §"Decisión 5"): `integration::openssh_smoke` (`ssh … echo hello` → `hello`, exit 0), `integration::openssh_verbose_kex` (`ssh -v` shows `kex: algorithm: mlkem768x25519-sha256`), and `integration::negative_no_hybrid` (a non-hybrid client receives `SSH_DISCONNECT_KEY_EXCHANGE_FAILED`).
 
 Phase 1 deliberately does **not** add `cargo-fuzz` (nightly, CI cost; Phase 3 owns serious fuzzing); lightweight `proptest` roundtrips are the soft, non-blocking complement.
 
@@ -62,7 +63,7 @@ A viable variant, useful when a multi-version matrix (10.0/10.1/10.2) is wanted.
 
 ## Links
 
-- Decision source: [RFC-0003](../rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md) §"Acceptance criteria stay as issue #9 defines them" and resolved unresolved-question 4; analysis in [`claudedocs/phase1-open-decisions.md`](../../claudedocs/phase1-open-decisions.md) §"Decisión 5".
+- Decision source: [RFC-0003](../rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md) §"Acceptance criteria stay as issue #9 defines them" and resolved unresolved-question 4; analysis in the project's internal Phase-1 decision notes §"Decisión 5".
 - Verified runner facts: Ubuntu 24.04 LTS → OpenSSH 9.6p1; Debian trixie → 10.0p1-7 (`actions/runner-images`).
 - Configuration this decision adds: a new interop job alongside `.github/workflows/ci.yml`, plus `tests/interop/run_openssh_client.sh`, landing with the first connectable binary.
 - Related ADRs: [ADR-0011](0011-ci-guards-workspace-state.md) (CI workspace-state guards), [ADR-0019](0019-phase-1-ml-kem-crate-rustcrypto.md) (ML-KEM crate whose wire output this gate validates).
