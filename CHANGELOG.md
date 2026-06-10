@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `docs/adr/0019-phase-1-ml-kem-crate-rustcrypto.md` (Proposed)
+  selects `RustCrypto/ml-kem` 0.3.0 as the Phase 1 ML-KEM-768
+  implementation, per RFC-0003. Chosen for being pure-Rust with no
+  `unsafe` on the exposed surface (compatible with ADR-0018's
+  `forbid`), the path `russh` 0.59 itself adopted (PR #660, so the
+  stack does not diverge if RFC-0003's Option B fallback is taken),
+  Apache-2.0 OR MIT, ACVP-conformant to FIPS 203 final, `zeroize`-
+  capable, and MSRV-compatible (1.85 ≤ 1.92). Names `libcrux-ml-kem`
+  0.0.8 as the fallback under two triggers (a formal-verification
+  requirement, or OpenSSH byte-parity), with its costs pre-recorded.
+  Rejects `aws-lc-rs`, `liboqs-rust`, `pqcrypto-mlkem` (all FFI/C),
+  and `fips203` (stalled, single-contributor). Records the honest
+  residual: no Rust ML-KEM crate has an independent professional audit
+  as of mid-2026. Advances to Accepted when the first crate lands.
 - `docs/rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md` (Draft)
   proposes that Phase 1's SSH-2 transport, KEX, authentication, and
   channel layers be implemented greenfield on top of audited
