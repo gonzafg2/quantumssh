@@ -64,7 +64,7 @@ A viable variant, useful when a multi-version matrix (10.0/10.1/10.2) is wanted.
 ## Links
 
 - Decision source: [RFC-0003](../rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md) §"Acceptance criteria stay as issue #9 defines them" and resolved unresolved-question 4; analysis in the project's internal Phase-1 decision notes §"Decisión 5".
-- Verified runner facts: Ubuntu 24.04 LTS → OpenSSH 9.6p1; Debian trixie → 10.0p1-7 (`actions/runner-images`).
+- Version facts (verified 2026-05, re-check on implementation): the GitHub-hosted `ubuntu-24.04` runner ships OpenSSH 9.6p1 — source: [`actions/runner-images`](https://github.com/actions/runner-images) (which documents GitHub runner images, not Debian containers); Debian trixie's `openssh-client` is 10.0p1-7 — source: the Debian package tracker ([tracker.debian.org/pkg/openssh](https://tracker.debian.org/pkg/openssh)). Both are time-dependent; the pinned digest + package version (see "Decision") is what fixes them in CI regardless of upstream drift.
 - Configuration this decision adds: a new interop job alongside `.github/workflows/ci.yml`, plus `tests/interop/run_openssh_client.sh`, landing with the first connectable binary.
 - Related ADRs: [ADR-0011](0011-ci-guards-workspace-state.md) (CI workspace-state guards), [ADR-0019](0019-phase-1-ml-kem-crate-rustcrypto.md) (ML-KEM crate whose wire output this gate validates).
 - Roadmap: Phase 1 / Hito 1 — [`#9`](https://github.com/gonzafg2/quantumssh/issues/9).
