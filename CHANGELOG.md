@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `docs/adr/0020-phase-1-ci-openssh-interop-gate.md` (Proposed)
+  records the hard CI interop gate from RFC-0003, resolving its
+  unresolved question 4 in favour of pinning. Every PR must drive a
+  real OpenSSH 10.x client through connect/auth/exec/close against
+  `quantumssh`, run in a Debian trixie container (OpenSSH 10.0p1-7)
+  because `ubuntu-latest` ships only 9.6p1. The OpenSSH bits are
+  explicitly pinned (image referenced by digest and `openssh-client`
+  installed at an explicit version from a frozen source — the
+  `debian:trixie-slim` tag alone is mutable and would still drift): an
+  upstream wire-format change never silently reddens an unrelated PR,
+  and pin bumps land as their own reviewed "OpenSSH version bump" PR.
+  Enforces the
+  `openssh_smoke` / `openssh_verbose_kex` / `negative_no_hybrid` HARD
+  subset; defers `cargo-fuzz` to Phase 3 (lightweight `proptest` is
+  the non-blocking complement). The interop job is wired up in the
+  first-crate PR, at which point the ADR advances to Accepted.
 - `docs/adr/0019-phase-1-ml-kem-crate-rustcrypto.md` (Proposed)
   selects `RustCrypto/ml-kem` 0.3.0 as the Phase 1 ML-KEM-768
   implementation, per RFC-0003. Chosen for being pure-Rust with no
