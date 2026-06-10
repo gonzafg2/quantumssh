@@ -116,6 +116,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Implementation PR, with the signed-release mechanism itself deferred.
   Acceptance records the decision; the `docs/threat-model.md` edits
   will land in the (still TBD) Implementation PR.
+- `docs/rfcs/0002-threat-model-phase1-uid-model-and-non-goal.md`
+  advances from Draft to **Accepted** (2026-06-10, lazy consensus —
+  the 14-day comment period closed with no substantive maintainer
+  objection). The four unresolved questions are resolved at
+  acceptance: (1) §8.12 stays Phase-anchored with no calendar date,
+  the closure condition (Phase 3 privsep RFC + landing) being the
+  anchor; (2) Phase 1 documents the single-user assumption rather than
+  enforcing it with launch-time refusal heuristics; (3) the audit
+  field is named `executing_uid`, matching the merged ADR-0016; (4)
+  the `executing_uid` addition rides with this RFC and is not split
+  into its own RFC. Acceptance records the decision; the
+  `docs/threat-model.md` edits will land in the Implementation PR. This
+  unblocks ADR-0016 (operational counterpart) to advance from
+  Proposed to Accepted when Phase 1 implementation begins.
 - `README.md` §"Roadmap" no longer carries per-Phase calendar
   estimates. The previous wording — *"We expect Phase 1 to take weeks.
   Phase 2, months. Phase 3, a year or more."* — was an implicit
