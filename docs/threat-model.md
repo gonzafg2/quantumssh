@@ -1203,16 +1203,18 @@ repeating it.
 ### 6.4 Operational posture (project-side)
 
 - **Signed commits on `main`** (ADR-0006, enforced via branch
-  protection per ADR-0008). GitHub marks each commit *Verified* against
-  the committer's registered signing key. Defends §5.5.2.b against
-  commits that lack a verifiable signature (GitHub rejects merges where
-  every commit does not carry a signature GitHub marks *Verified*). Does
-  **not** pin to a specific key fingerprint (any registered-key
-  signature passes); does not defend against theft of the maintainer's
-  existing signing key or against a co-maintainer's own registered key.
-  The pinned-fingerprint guarantee is available out of band: downstream
-  consumers can construct an `allowed_signers` file from ADR-0006's
-  published key and reject unexpected fingerprints locally.
+  protection per ADR-0008). GitHub marks a commit *Verified* when its
+  SSH signature validates against any key registered to the signer's
+  GitHub account; branch protection blocks a merge if any commit in the
+  PR is not so marked. Defends §5.5.2.b against commits that carry no
+  verifiable signature. Does **not** pin to a specific key fingerprint
+  (any key registered on the signer's account passes); does not defend
+  against theft of the maintainer's signing key or against a
+  co-maintainer's own registered key. Downstream consumers who want
+  fingerprint-level pinning can build a local `allowed_signers` file
+  from the keys currently registered on the project's GitHub account
+  (see `docs/operations.md` §"Signed-commit verification") — this is a
+  consumer-side policy, not a control the project enforces centrally.
 - **Branch protection on `main`** (ADR-0008). Defends §3.2.6 against
   direct push and force-push. With zero required reviews during
   single-maintainer phases, it does not add a four-eyes constraint;
@@ -1282,8 +1284,9 @@ operators must account for. The principal items, by category, are:
   simultaneously compromised retains the ability to publish under the
   project's name through the normal PR flow. The compensating controls
   are reproducible builds (Phase 3), SBOM (Phase 3), and downstream
-  signed-commit verification against a pinned `allowed_signers` set
-  (per ADR-0006's verification recipe). The bound is not zero.
+  signed-commit verification against a locally built `allowed_signers`
+  file (see `docs/operations.md` §"Signed-commit verification").
+  The bound is not zero.
 
 The intent of listing residual risk explicitly is the same intent
 behind §8: an operator who deploys QuantumSSH should know what they
