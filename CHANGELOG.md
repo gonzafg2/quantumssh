@@ -79,6 +79,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `docs/rfcs/0001-threat-model-actor-project-maintainer-compromise.md`
+  advances from Draft to **Accepted** (2026-06-10, lazy consensus —
+  the 14-day comment period closed with no substantive maintainer
+  objection). The five unresolved questions are resolved at
+  acceptance: (1) the §5.5.2 refinement uses the a/b sub-heading
+  layout as proposed; (2) §3.2 stays qualitative with no likelihood
+  ratings; (3) the hardware-backed signing key is deferred to its own
+  future ADR; (4) reproducible builds are committed to as a Phase 3
+  direction only, with the exact form deferred to a dedicated RFC; (5)
+  the §6.4 "Signed releases and" phrase is dropped in the
+  Implementation PR, with the signed-release mechanism itself deferred.
+  Acceptance records the decision; the `docs/threat-model.md` edits
+  land in the (still TBD) Implementation PR.
 - `README.md` §"Roadmap" no longer carries per-Phase calendar
   estimates. The previous wording — *"We expect Phase 1 to take weeks.
   Phase 2, months. Phase 3, a year or more."* — was an implicit
