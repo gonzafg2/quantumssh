@@ -82,21 +82,29 @@ We are deliberately not trying to be:
 
 ## Roadmap
 
-### Phase 0 — Foundation (mostly complete)
+### Phase 0 — Foundation (complete)
 - ✅ Manifesto, README, governance model
 - ✅ Threat model document — see [`docs/threat-model.md`](./docs/threat-model.md); structural changes go through the RFC process from here.
-- 🟡 Decision on `russh` vs from scratch — tentatively `russh`; formal RFC pending alongside Phase 1 / Hito 1 ([#9](https://github.com/gonzafg2/quantumssh/issues/9))
+- ✅ SSH stack foundation decision — **greenfield on audited primitive crates**, not `russh`; decided and accepted in [RFC-0003](./docs/rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md) (2026-06-10, [#9](https://github.com/gonzafg2/quantumssh/issues/9)).
 
-Phase 0 also delivered the project's supporting infrastructure (DNS with DNSSEC, TLS with HSTS preload submission, inbound email forwarding, a published project PGP key, branch protection on `main` enforcing signed commits, and CI scaffolding with workspace-state guards that self-disable when Phase 1 lands) and a 16-ADR catalog documenting each operational choice with its rationale. See [`docs/infrastructure.md`](./docs/infrastructure.md) for the current state, [`docs/operations.md`](./docs/operations.md) for independent verification recipes, and [`docs/adr/`](./docs/adr/) for the decision records.
+Phase 0 also delivered the project's supporting infrastructure (DNS with DNSSEC, TLS with HSTS preload submission, inbound email forwarding, a published project PGP key, branch protection on `main` enforcing signed commits, and CI scaffolding with workspace-state guards that self-disable when Phase 1 lands) and a 20-ADR catalog documenting each operational choice with its rationale. See [`docs/infrastructure.md`](./docs/infrastructure.md) for the current state, [`docs/operations.md`](./docs/operations.md) for independent verification recipes, and [`docs/adr/`](./docs/adr/) for the decision records.
 
 ### Phase 1 — Walking skeleton
-Tracked in [#9](https://github.com/gonzafg2/quantumssh/issues/9).
+Tracked in [#9](https://github.com/gonzafg2/quantumssh/issues/9). Stack and tooling decisions (all ADRs are Proposed — they advance to Accepted when the first crate lands):
+
+- **Stack:** greenfield SSH-2 transport, KEX, auth, and channel layers on audited primitive crates (`ml-kem`, `x25519-dalek`, `ed25519-dalek`, `chacha20poly1305`, `aes-gcm`) — no `russh` dependency ([RFC-0003](./docs/rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md), Accepted).
+- **Workspace:** `crates/quantumssh` (binary) + `crates/quantumssh-core` (library), `unsafe_code = "forbid"` workspace-wide ([ADR-0017](./docs/adr/0017-phase-1-workspace-topology-two-crates-flat.md), [ADR-0018](./docs/adr/0018-phase-1-unsafe-code-forbid-workspace.md), Proposed).
+- **ML-KEM-768 crate:** `RustCrypto/ml-kem` 0.3.0 ([ADR-0019](./docs/adr/0019-phase-1-ml-kem-crate-rustcrypto.md), Proposed).
+- **CI interop gate:** every PR exercises a real OpenSSH 10.x client end-to-end ([ADR-0020](./docs/adr/0020-phase-1-ci-openssh-interop-gate.md), Proposed).
+
+Acceptance criteria:
 - Server listens on a port, accepts a connection
-- Hybrid PQ key exchange (ML-KEM-768 + X25519)
+- Hybrid PQ key exchange (`mlkem768x25519-sha256` — only algorithm offered)
 - Ed25519 host key
 - Public-key authentication only
 - Single-command execution
 - Structured logging via `tracing`
+- A real OpenSSH 10.x client completes connect/auth/exec/close in CI (hard gate)
 
 ### Phase 2 — Usable
 - Interactive PTY allocation
@@ -147,7 +155,7 @@ We owe the community honesty about what already exists in this space. Several pr
 
 **OpenSSH** is the mature, dominant implementation. Written in C, actively maintained, and integrating PQ key exchange (`mlkem768x25519-sha256` is the default in 10.0+). It carries 25 years of legacy by design — a feature for compatibility, a burden for security. QuantumSSH is not a replacement for OpenSSH; it is an alternative with different tradeoffs.
 
-**`russh`** is a Rust library implementing the SSH protocol, both client and server primitives. It is foundational work and a likely starting point for QuantumSSH's lower layers. We expect to be contributors and downstream users, not competitors.
+**`russh`** is a Rust library implementing the SSH protocol, both client and server primitives. QuantumSSH does not depend on `russh` as a crate — Phase 1 implements the SSH-2 protocol layers greenfield, on audited cryptographic primitive crates ([RFC-0003](./docs/rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md)). `russh` is the closest reference implementation we read while building, and that role is acknowledged in RFC-0003 §"What does not change": the project's protocol work in Rust is a teaching artifact, not a competitor.
 
 **Open Quantum Safe (`liboqs`, `liboqs-rust`)** at the University of Waterloo provides the post-quantum primitives that make this kind of project possible at all. Their `openssh` fork is research-oriented and based on older OpenSSH. We use their cryptographic libraries; we do not fork their SSH.
 
@@ -200,7 +208,7 @@ This project stands on the shoulders of:
 
 - The **OpenSSH** team, whose 25 years of careful work taught the world what a good SSH implementation looks like.
 - The **Open Quantum Safe** project at the University of Waterloo, whose `liboqs` and `liboqs-rust` libraries make post-quantum cryptography accessible to implementers.
-- The **`russh`** project, whose existing protocol work in Rust is a likely starting point for QuantumSSH's lower layers.
+- The **`russh`** project, whose protocol work in Rust is the closest reference implementation QuantumSSH reads while building its own greenfield transport layer. Its prior art on Terrapin handling, the hybrid KEX migration, and the architectural shape of session-channel handling informed the design even though QuantumSSH does not depend on the crate.
 - **ISRG / Prossimo** and the **Sovereign Tech Fund**, whose models of funding memory-safe critical infrastructure inspire our roadmap.
 - The **NIST Post-Quantum Cryptography** standardization team, whose multi-year process gave us algorithms we can build on.
 
