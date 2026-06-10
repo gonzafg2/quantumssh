@@ -9,7 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `docs/rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md` (Draft)
+- `docs/rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md` (added as
+  Draft; promoted to Accepted in the same Unreleased cycle — see
+  **Changed** below)
   proposes that Phase 1's SSH-2 transport, KEX, authentication, and
   channel layers be implemented greenfield on top of audited
   cryptographic primitive crates (`ml-kem`, `x25519-dalek`,
