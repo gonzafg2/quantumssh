@@ -9,8 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `docs/adr/0017-phase-1-workspace-topology-two-crates-flat.md`
-  (Proposed) records the Phase 1 workspace shape derived from
+- `docs/adr/0017-phase-1-workspace-topology-two-crates-flat.md` (Proposed)
+  records the Phase 1 workspace shape derived from
   RFC-0003: two crates in a flat `crates/` layout —
   `crates/quantumssh` (thin binary entrypoint) and
   `crates/quantumssh-core` (the server library). Rejects both the

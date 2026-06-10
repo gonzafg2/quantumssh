@@ -3,7 +3,7 @@
 - **Status:** Proposed
 - **Date:** TBD (advances to Accepted when the first Phase 1 crate lands)
 - **Deciders:** Project lead
-- **Related:** Implements [RFC-0003](../rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md) §"Operational dependencies of this decision"; sources [`claudedocs/phase1-open-decisions.md`](../../claudedocs/phase1-open-decisions.md) §"Decisión 2"; interacts with [ADR-0011](0011-ci-guards-workspace-state.md) (CI guards self-disable on first crate) and [ADR-0018](0018-phase-1-unsafe-code-forbid-workspace.md) (`unsafe_code = "forbid"`).
+- **Related:** Implements [RFC-0003](../rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md) §"Operational dependencies of this decision"; sources the project's internal Phase-1 decision notes §"Decisión 2"; interacts with [ADR-0011](0011-ci-guards-workspace-state.md) (CI guards self-disable on first crate) and [ADR-0018](0018-phase-1-unsafe-code-forbid-workspace.md) (`unsafe_code = "forbid"`).
 
 ## Context
 
@@ -64,7 +64,7 @@ A middle option. Rejected because Phase 1 has exactly one product (the server) a
 
 ## Links
 
-- Decision source: [RFC-0003](../rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md) §"Operational dependencies of this decision"; analysis in [`claudedocs/phase1-open-decisions.md`](../../claudedocs/phase1-open-decisions.md) §"Decisión 2".
+- Decision source: [RFC-0003](../rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md) §"Operational dependencies of this decision"; analysis in the project's internal Phase-1 decision notes §"Decisión 2".
 - Evidence: [`matklad`, *Large Rust Workspaces*](https://matklad.github.io/2021/08/22/large-rust-workspaces.html); [`russh` discussion #315](https://github.com/Eugeny/russh/discussions/315).
 - Interacts with: [ADR-0011](0011-ci-guards-workspace-state.md) (CI workspace-state guards), [ADR-0018](0018-phase-1-unsafe-code-forbid-workspace.md) (`unsafe_code = "forbid"`).
 - Roadmap: Phase 1 / Hito 1 — [`#9`](https://github.com/gonzafg2/quantumssh/issues/9).
