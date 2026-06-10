@@ -52,7 +52,7 @@ subtle            = { version = "2",     default-features = false }
 zeroize           = { version = "1",     default-features = false, features = ["zeroize_derive"] }
 ```
 
-All five crates are pure-Rust (no FFI, no C), all are Apache-2.0 or MIT, all expose `feature = "zeroize"` for the key-material hygiene that `docs/threat-model.md` §2.4 and §5.2.4 require. The selection of `RustCrypto/ml-kem` over alternatives (`libcrux-ml-kem`, `aws-lc-rs`, `liboqs-rust`, `pqcrypto-mlkem`, `fips203`) is documented in [`claudedocs/phase1-open-decisions.md`](../../claudedocs/phase1-open-decisions.md) §"Decisión 3" and will move to its own ADR when this RFC merges.
+All nine crates are pure-Rust (no FFI, no C) and all are Apache-2.0 or MIT; the three key-material crates (`ml-kem`, `x25519-dalek`, `ed25519-dalek`) enable their `zeroize` feature for the key-material hygiene that `docs/threat-model.md` §2.4 and §5.2.4 require. The selection of `RustCrypto/ml-kem` over alternatives (`libcrux-ml-kem`, `aws-lc-rs`, `liboqs-rust`, `pqcrypto-mlkem`, `fips203`) is documented in [`claudedocs/phase1-open-decisions.md`](../../claudedocs/phase1-open-decisions.md) §"Decisión 3" and will move to its own ADR when this RFC merges.
 
 The Phase 1 protocol code lives in `quantumssh-core` as modules:
 
@@ -146,7 +146,7 @@ These ADRs are deliberately *not* bundled into this RFC, per the one-decision-pe
 
 4. **Greater chance of state-machine bugs introduced by future contributors.** Type-state helps but does not eliminate the risk. A reviewer who does not understand the `Expect<Stage>` pattern could approve a PR that loosens it. Mitigation: a short contributor-facing doc (one or two pages) at `docs/contributing/transport-state-machine.md` lands alongside the first implementation PR; the doc is referenced from every PR template touching `transport.rs`.
 
-5. **Bus factor of the implementation.** The project lead is currently the only contributor; a single greenfield implementation by one author is a bus-factor risk. Mitigation: the explicit goal of [`docs/governance.md`](../../GOVERNANCE.md) (Phase 0→2 transition) is exactly this — recruit and onboard maintainers. This RFC's acceptance makes the recruitment story coherent ("come help build a careful Rust SSH stack from scratch") in a way the `russh`-wrapper story would not be.
+5. **Bus factor of the implementation.** The project lead is currently the only contributor; a single greenfield implementation by one author is a bus-factor risk. Mitigation: the explicit goal of [`GOVERNANCE.md`](../../GOVERNANCE.md) (Phase 0→2 transition) is exactly this — recruit and onboard maintainers. This RFC's acceptance makes the recruitment story coherent ("come help build a careful Rust SSH stack from scratch") in a way the `russh`-wrapper story would not be.
 
 ## Rationale and alternatives
 
