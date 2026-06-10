@@ -4,7 +4,7 @@
 - **Authors:** Gonzalo Fleming Garrido
 - **Created:** 2026-05-11
 - **Accepted:** 2026-06-10 — by lazy consensus per
-  [`docs/rfcs/README.md`](README.md#decision-rule): the 14-day comment
+  [`docs/rfcs/README.md` §"Decision rule"](README.md#decision-rule): the 14-day comment
   period closed with no substantive maintainer objection, which is
   itself acceptance (no project-lead tie-break was needed). The five
   unresolved questions are resolved at acceptance (see §"Unresolved
