@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `docs/adr/0020-phase-1-ci-openssh-interop-gate.md` (Proposed)
+  records the hard CI interop gate from RFC-0003, resolving its
+  unresolved question 4 in favour of pinning. Every PR must drive a
+  real OpenSSH 10.x client through connect/auth/exec/close against
+  `quantumssh`, run in a `debian:trixie-slim` container (OpenSSH
+  10.0p1-7) because `ubuntu-latest` ships only 9.6p1. The OpenSSH
+  version is pinned, not floated: an upstream wire-format change never
+  silently reddens an unrelated PR, and version bumps land as their
+  own reviewed "OpenSSH version bump" PR. Enforces the
+  `openssh_smoke` / `openssh_verbose_kex` / `negative_no_hybrid` HARD
+  subset; defers `cargo-fuzz` to Phase 3 (lightweight `proptest` is
+  the non-blocking complement). The interop job is wired up in the
+  first-crate PR, at which point the ADR advances to Accepted.
 - `docs/rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md` (Draft)
   proposes that Phase 1's SSH-2 transport, KEX, authentication, and
   channel layers be implemented greenfield on top of audited
