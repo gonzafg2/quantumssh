@@ -24,6 +24,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   extension. The RFC supersedes the *"tentatively `russh`"* wording
   in `README.md` §Roadmap if accepted; the README amendment is a
   follow-up PR, not bundled here.
+- `docs/adr/0016-phase-1-service-account-uid-model.md` (Proposed)
+  records the operational counterpart to RFC-0002: `quantumsshd` will
+  run in Phase 1 as a dedicated non-root service account
+  (`quantumssh:quantumssh`), never holding `root`, never calling
+  `setuid`/`setgid`/`initgroups`/`chroot`, and never integrating with
+  PAM. Commands inherit the service account's UID/GID and a sanitised
+  environment. The `executing_uid` audit field (RFC-0002 §2.7) is
+  populated by `nix::unistd::Uid::current()`; in Phase 1 the value is
+  a per-process constant, and the schema is forward-compatible with
+  the Phase 3 per-user value. The ADR depends on the merge of
+  RFC-0002 and advances from Proposed to Accepted when Phase 1
+  implementation begins.
 - `docs/rfcs/README.md` and `docs/adr/README.md` codify the project's
   one-decision-per-file convention. Each RFC addresses a single
   shape-determining decision; the implementing subsidiary decisions
@@ -52,6 +64,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `66DB5100B0700E4AE051971F9A8DFF06AFD25B24`, expires 2028-05-09).
   The `<TBD>` placeholder in `SECURITY.md` is replaced with the
   fingerprint metadata and verified-import instructions.
+- `docs/rfcs/0002-threat-model-phase1-uid-model-and-non-goal.md`
+  (Draft) proposes two coupled threat-model refinements: (a) a
+  Phase-bounded paragraph appended to §2.5 (Command execution
+  authority) clarifying that the *"authority on the host as the
+  authenticated user"* goal is the Phase 3 target, and (b) a new
+  §8.12 (Out of scope) entry naming *"Per-user UID isolation until
+  Phase 3"* as a temporary, closure-conditioned non-goal. The closure
+  condition is a follow-up Phase 3 RFC (TBD), so the non-goal is
+  auditable as temporary rather than permanent. The RFC also proposes
+  adding `executing_uid` as a first-class field of the §2.7 audit
+  record so the Phase-1 UID gap is operationally checkable in logs by
+  the operator.
 
 ### Changed
 
