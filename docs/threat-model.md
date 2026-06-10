@@ -206,9 +206,9 @@ lifecycle events, command-execution boundaries, configuration load,
 and protocol errors significant enough to indicate attack. Each
 command-execution boundary record includes the *authenticated identity*
 (the key fingerprint that authenticated) and the *executing UID*
-(`executing_uid` field, populated by `nix::unistd::Uid::current()`) as
-separate fields, so that the gap documented in §8.12 is visible to
-anyone reviewing server logs.
+(`executing_uid` field — the OS-level numeric UID under which the
+command actually runs) as separate fields, so that the gap documented
+in §8.12 is visible to anyone reviewing server logs.
 
 **Where.** Standard logging sinks under operator control (stderr,
 journald, files, log shippers).
@@ -1269,7 +1269,8 @@ occurred.
 ### 8.11 Hardening of the maintainer's personal endpoint
 
 *(Reserved by [RFC-0001](rfcs/0001-threat-model-actor-project-maintainer-compromise.md)
-§"Proposed amendments — §8". Lands in the RFC-0001 Implementation PR.)*
+§"Proposed amendments — §8". Content provided in the RFC-0001
+Implementation PR.)*
 
 ### 8.12 Per-user UID isolation until Phase 3
 
