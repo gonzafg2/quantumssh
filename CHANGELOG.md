@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `docs/rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md` (Draft)
+  proposes that Phase 1's SSH-2 transport, KEX, authentication, and
+  channel layers be implemented greenfield on top of audited
+  cryptographic primitive crates (`ml-kem`, `x25519-dalek`,
+  `ed25519-dalek`, `chacha20poly1305`, `aes-gcm`, `sha2`, `hmac`),
+  rather than depending on the `russh` crate. The choice is
+  scored against the five MANIFIESTO commitments and against
+  threat-model §3.2.6 (RFC-0001 maintainer-compromise actor). The
+  `russh`-with-maximum-mitigations path is named as Option B (a
+  documented fallback if a future constraint forces the trade), and a
+  narrow hybrid (Option C — use `ssh-key` for `authorized_keys`
+  parsing only, greenfield everything else) is named as a documented
+  extension. The RFC supersedes the *"tentatively `russh`"* wording
+  in `README.md` §Roadmap if accepted; the README amendment is a
+  follow-up PR, not bundled here.
 - `docs/adr/0016-phase-1-service-account-uid-model.md` (Proposed)
   records the operational counterpart to RFC-0002: `quantumsshd` will
   run in Phase 1 as a dedicated non-root service account
