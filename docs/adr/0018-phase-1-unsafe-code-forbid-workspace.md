@@ -3,7 +3,7 @@
 - **Status:** Proposed
 - **Date:** TBD (advances to Accepted when the first Phase 1 crate lands)
 - **Deciders:** Project lead
-- **Related:** Implements [RFC-0003](../rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md) §"Operational dependencies of this decision" and resolves its unresolved question 2; depends on [ADR-0017](0017-phase-1-workspace-topology-two-crates-flat.md) (workspace shape); touches `Cargo.toml` `[workspace.lints.rust]`.
+- **Related:** Implements [RFC-0003](../rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md) §"Operational dependencies of this decision" and records, operationally, the resolution RFC-0003 reached on its unresolved question 2 (promote immediately); depends on [ADR-0017](0017-phase-1-workspace-topology-two-crates-flat.md) (workspace shape); touches `Cargo.toml` `[workspace.lints.rust]`.
 
 ## Context
 
