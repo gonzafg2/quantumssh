@@ -11,9 +11,9 @@ We are not forking OpenSSH. We are not adding PQ algorithms as an option. We are
 
 ## Status
 
-🚧 **Pre-alpha — vision and design phase.**
+🚧 **Pre-alpha — design complete, implementation starting.**
 
-This repository currently holds the project's manifesto, roadmap, and governance commitments. Code is forthcoming. Star and watch if you want to follow the journey, or open an issue if you want to discuss the design.
+Phase 0 (foundation) is done: manifesto, governance, a substantive threat model, 20 Architecture Decision Records, and 3 accepted RFCs that settle the Phase 1 stack (greenfield, `unsafe_code = "forbid"`, `RustCrypto/ml-kem`, OpenSSH 10.x interop gate). No Rust code has landed yet — that is Phase 1, tracked in [#9](https://github.com/gonzafg2/quantumssh/issues/9).
 
 Supporting infrastructure (DNS, TLS, email, signing, repository hardening) is described in [`docs/infrastructure.md`](./docs/infrastructure.md); independent verification recipes live in [`docs/operations.md`](./docs/operations.md).
 
