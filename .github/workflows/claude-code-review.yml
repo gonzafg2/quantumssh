@@ -3,25 +3,13 @@ name: Claude Code Review
 on:
   pull_request:
     types: [opened, synchronize, ready_for_review, reopened]
-    # Optional: Only run on specific file changes
-    # paths:
-    #   - "src/**/*.ts"
-    #   - "src/**/*.tsx"
-    #   - "src/**/*.js"
-    #   - "src/**/*.jsx"
 
 jobs:
   claude-review:
-    # Optional: Filter by PR author
-    # if: |
-    #   github.event.pull_request.user.login == 'external-contributor' ||
-    #   github.event.pull_request.user.login == 'new-developer' ||
-    #   github.event.pull_request.author_association == 'FIRST_TIME_CONTRIBUTOR'
-
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pull-requests: read
+      pull-requests: write # post the review: summary body + inline comments
       issues: read
       id-token: write
 
@@ -36,9 +24,53 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'
-          plugins: 'code-review@claude-code-plugins'
-          prompt: '/code-review:code-review ${{ github.repository }}/pull/${{ github.event.pull_request.number }}'
-          # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
-          # or https://code.claude.com/docs/en/cli-reference for available options
+          claude_args: '--model claude-sonnet-4-6'
+          prompt: |
+            You are reviewing a pull request for QuantumSSH, a memory-safe,
+            post-quantum-first SSH server in Rust (pre-alpha; the first crate
+            has not landed yet). Before anything else, read CLAUDE.md at the
+            repo root — it defines the project's review criteria as hard
+            "Reject if X" rules.
 
+            Classify the PR by what it changes (look at the diff), then apply
+            the matching lens:
+
+            1. ADR or RFC (docs/adr/, docs/rfcs/) — a DESIGN DECISION, not
+               code. Do NOT report "bugs"; there is no code. Review for:
+               - Does it contradict or weaken any of the five MANIFIESTO
+                 commitments?
+               - Is the decision sound and well-justified, with real
+                 alternatives considered?
+               - Does it follow the ADR/RFC template and cite the right
+                 threat-model sections and related records?
+               - Are references to files that do not exist yet marked TBD
+                 (crates/ is still empty)?
+
+            2. Rust code (crates/) — apply the hard security rules in
+               CLAUDE.md. Flag:
+               - any first-party `unsafe`;
+               - allocation sized by an attacker-controlled length in the
+                 pre-auth path without an explicit bound;
+               - legacy crypto, or a second KEX, in the default profile;
+               - loosening the type-state transport machine to
+                 accept-and-branch;
+               - missing `authenticated_identity` / `executing_uid` on exec
+                 log events;
+               - key material that is logged, or not zeroized after use.
+               Anchor each finding to a threat-model section and the relevant
+               ADR.
+
+            3. Other (CI, config, infra docs) — light consistency review.
+
+            Post your review as a SINGLE GitHub PR review (event = COMMENT):
+            - The review BODY is a short summary: the change classification,
+              overall assessment, and a one-line verdict.
+            - Each finding is an INLINE comment anchored to its file:line.
+
+            Report only high-signal findings you are confident in (>= 80%).
+            No nitpicks, no style-only comments, no false positives — if
+            unsure, write "verify" rather than asserting. Quality over
+            quantity. Anchor every finding to the CLAUDE.md rule, threat-model
+            section, or ADR it relates to. Be concise.
+
+            PR: ${{ github.repository }}/pull/${{ github.event.pull_request.number }}
