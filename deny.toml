@@ -34,12 +34,15 @@ allow = [
 # License clarifications: dependencies that are correctly licensed but
 # whose metadata cargo-deny cannot infer automatically. Add entries here
 # only with justification.
-[[licenses.clarify]]
-name       = "ring"
-expression = "ISC AND MIT AND OpenSSL"
-license-files = [
-    { path = "LICENSE", hash = 0xbd0eed23 },
-]
+#
+# There are currently no clarifications. The Phase 1 stack chosen in
+# RFC-0003 is built entirely on pure-Rust RustCrypto/dalek primitive
+# crates (ml-kem, x25519-dalek, ed25519-dalek, chacha20poly1305,
+# aes-gcm, sha2, hmac, subtle, zeroize), none of which pull in `ring`.
+# A `ring` clarification used to live here as a pre-RFC-0003 placeholder;
+# it was removed so that, if `ring` ever enters the tree as a transitive
+# dependency, cargo-deny surfaces its compound ISC AND MIT AND OpenSSL
+# licence as a deliberate review event instead of accepting it silently.
 
 [bans]
 # Multiple versions of the same crate inflate binary size, expand the
