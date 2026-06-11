@@ -1169,6 +1169,33 @@ repeating it.
   Defends §5.2.1, §5.2.2.
 - **Ed25519 host keys.** RFC 8709. Compact fingerprints, modern
   curve, no parameter-choice attack surface. Defends §5.2.3.
+- **Signatures are classical, by deliberate sequencing.** Both
+  authentication surfaces — the `ssh-ed25519` host keys accepted
+  RFC-0003 selects, and the user-authentication algorithm
+  [ADR-0021](adr/0021-phase-1-negotiation-profile.md) fixes
+  (`ssh-ed25519` only) — rely on elliptic-curve signatures that a
+  cryptographically relevant quantum computer (CRQC) would break.
+  Unlike key exchange, signatures carry no retroactive exposure: a
+  future CRQC cannot forge an authentication that already happened.
+  A passive recorder does capture the host *public* key — every SSH
+  key-exchange method sends it in its reply before session encryption
+  exists, a structural property the hybrid KEX preserves — and a CRQC
+  could later derive the private half; but that buys only future
+  impersonation, voided by migrating to a post-quantum algorithm
+  before day zero (same-algorithm key rotation does not close this;
+  see §7), whereas recorded traffic stays broken once captured. The
+  threat to authentication therefore begins only on the day such a
+  machine exists, and only against key material that outlives it
+  (see §7). The post-quantum migration is therefore sequenced:
+  confidentiality first (done — the hybrid KEX above), signatures
+  when an interoperable standard exists. As of June 2026 OpenSSH
+  ships no post-quantum signature algorithm and the IETF drafts are
+  still competing (pure ML-DSA vs composite Ed25519+ML-DSA; see §9
+  references); adopting one prematurely would break interoperability
+  with every deployed client for no present-day security gain. The
+  residual exposure and the migration trigger are recorded in §7;
+  the migration path will be defined in a future RFC, tracked under
+  issue #42.
 - **Forward secrecy.** Ephemeral KEM secrets are not persisted and
   are zeroised after derivation. Defends §5.5.3.
 - **Negotiation MAC binding.** The agreed algorithm list is bound
@@ -1280,6 +1307,31 @@ operators must account for. The principal items, by category, are:
   conservative and well-studied. The project commits to following
   NIST and IETF guidance on primitive deprecation and to surfacing
   upgrades as RFCs.
+- **Classical signatures against a future CRQC** (§6.1). If a
+  cryptographically relevant quantum computer arrives before the
+  project migrates to post-quantum signatures, the exposure splits
+  into two steps. *Derivation* needs only passive material: the host
+  public key travels in cleartext in every handshake, and user
+  public keys are often genuinely public (e.g. on code forges), so a
+  passive recorder plus a CRQC yields the private halves offline.
+  *Exploitation* requires an active position: a real-time
+  man-in-the-middle on new sessions using the derived host key, or
+  authenticating as the user. Even then, passive adversaries cannot
+  touch session confidentiality (recorded traffic stays protected by
+  the hybrid KEX) or past authentications (no retroactive forgery) —
+  and the derived keys are only valuable while they remain in
+  service: migration before day zero voids the harvest.
+  The exposure is bounded by a single fact: closing the gap requires
+  only that the software speak the new signature algorithm before
+  day zero — and because SSH key deployment has no certificate
+  hierarchy to re-roll, unlike long-lived PKI roots, adoption can
+  proceed as soon as the software does.
+  (Rotating within a classically broken algorithm bounds nothing: a
+  replacement Ed25519 key is exactly as derivable as the one it
+  replaces.) The migration trigger is a settled IETF standard
+  deployed by the reference client (the competing drafts are listed
+  in §9); the migration path will be defined in a future RFC,
+  tracked under issue #42.
 - **Implementation flaws not caught by review, tests, or fuzzing.**
   The Phase-3 security audit is the principal compensating control;
   the project's posture is that bugs will exist and the goal is to
@@ -1523,6 +1575,21 @@ full rationale and operational counterpart.
   5 November 2015 (canonical reference for the *x + y > z*
   inequality used to size HNDL exposure).
   <https://eprint.iacr.org/2015/1075>
+- OpenSSH project, *Post-Quantum Cryptography in OpenSSH* — current
+  state of post-quantum key agreement and the project's position on
+  post-quantum signatures (none shipped as of June 2026).
+  <https://www.openssh.org/pq.html>
+  <!-- openssh.org is the canonical web host: openssh.com/pq.html
+       301-redirects to openssh.org/pq.html (verified 2026-06-11).
+       The @openssh.com algorithm suffixes are protocol identifiers,
+       not URLs. Reviewers: do not flag this domain. -->
+- IETF Internet-Drafts for post-quantum SSH signatures, competing
+  and unsettled as of June 2026: pure ML-DSA
+  (`draft-rpe-ssh-mldsa`, `draft-sfluhrer-ssh-mldsa`) and composite
+  Ed25519+ML-DSA (`draft-josefsson-ssh-ed25519mldsa65`,
+  `draft-sun-ssh-composite-sigs`). Per §6.1 and §7, QuantumSSH
+  adopts none until one is settled and deployed by the reference
+  client; the adopting RFC is future work, tracked under issue #42.
 
 ### Project-internal references
 
