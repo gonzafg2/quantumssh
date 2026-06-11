@@ -27,6 +27,22 @@ jobs:
           plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'
           plugins: 'code-review@claude-code-plugins'
           prompt: '/code-review:code-review ${{ github.repository }}/pull/${{ github.event.pull_request.number }}'
+          # --allowedTools is required for posting: in agent mode (explicit
+          # prompt) the action only mounts the github_inline_comment MCP
+          # server when that tool is named in the action-level allowed tools
+          # (install-mcp-server.ts gates on it); the plugin command's own
+          # frontmatter cannot grant it. Without this line the review runs
+          # but every posting attempt is denied and nothing reaches the PR.
+          # Same form as the action repo's own .github/workflows/claude-review.yml.
           claude_args: |
+            --allowedTools "mcp__github_inline_comment__create_inline_comment"
             --model claude-sonnet-4-6
             --append-system-prompt "QuantumSSH is a memory-safe, post-quantum-first SSH server in Rust (pre-alpha; no crate has landed yet). Read CLAUDE.md for the project's review criteria. Classify each PR and apply the right lens: for ADR/RFC docs under docs/adr/ or docs/rfcs/, review the soundness and coherence of the design DECISION against the five MANIFIESTO commitments and the threat model — do NOT hunt for code bugs, there is no code; for Rust under crates/, apply the hard security rules (no first-party unsafe, no unbounded allocation in the pre-auth path, no legacy crypto or second KEX in the default profile, type-state transport intact, mandated authenticated_identity/executing_uid log fields, key material zeroized). Report only high-signal findings (>= 80% confidence); anchor each to a CLAUDE.md rule, threat-model section, or ADR."
+
+      - name: Upload execution transcript
+        if: always() && steps.claude-review.outputs.execution_file != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: claude-review-transcript
+          path: ${{ steps.claude-review.outputs.execution_file }}
+          retention-days: 7
