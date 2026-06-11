@@ -1181,8 +1181,9 @@ repeating it.
   key-exchange method sends it in its reply before session encryption
   exists, a structural property the hybrid KEX preserves — and a CRQC
   could later derive the private half; but that buys only future
-  impersonation, voided by rotating or migrating the key before day
-  zero, whereas recorded traffic stays broken once captured. The
+  impersonation, voided by migrating to a post-quantum algorithm
+  before day zero (same-algorithm key rotation does not close this;
+  see §7), whereas recorded traffic stays broken once captured. The
   threat to authentication therefore begins only on the day such a
   machine exists, and only against key material that outlives it
   (see §7). The post-quantum migration is therefore sequenced:
@@ -1319,7 +1320,7 @@ operators must account for. The principal items, by category, are:
   touch session confidentiality (recorded traffic stays protected by
   the hybrid KEX) or past authentications (no retroactive forgery) —
   and the derived keys are only valuable while they remain in
-  service: rotation or migration before day zero voids the harvest.
+  service: migration before day zero voids the harvest.
   The exposure is bounded by a single fact: closing the gap requires
   only that the software speak the new signature algorithm before
   day zero — and because SSH key deployment has no certificate
