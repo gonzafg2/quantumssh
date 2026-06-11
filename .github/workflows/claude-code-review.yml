@@ -26,7 +26,11 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'
           plugins: 'code-review@claude-code-plugins'
-          prompt: '/code-review:code-review ${{ github.repository }}/pull/${{ github.event.pull_request.number }}'
+          # --comment is the plugin's posting switch: its step 7 reads "If
+          # --comment argument was NOT provided, stop here. Do not post any
+          # GitHub comments." Without it the review runs fully and prints its
+          # findings to the job log only.
+          prompt: '/code-review:code-review ${{ github.repository }}/pull/${{ github.event.pull_request.number }} --comment'
           # --allowedTools is required for posting: in agent mode (explicit
           # prompt) the action only mounts the github_inline_comment MCP
           # server when that tool is named in the action-level allowed tools
