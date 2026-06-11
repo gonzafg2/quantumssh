@@ -1,0 +1,141 @@
+# CLAUDE.md — guidance for Claude Code and automated reviewers
+
+This file is read by Claude Code (and the `claude-code-action` CI reviewer)
+when working in this repository. It encodes how QuantumSSH wants changes
+reviewed and made. It is **project guidance**, public and Apache-2.0 like
+the rest of the repo, and is also useful onboarding for human contributors.
+
+Authoritative documents this file points at rather than duplicates:
+[`README.md`](README.md) (vision), [`MANIFIESTO.es.md`](MANIFIESTO.es.md)
+(why, in Spanish), [`docs/threat-model.md`](docs/threat-model.md)
+(defensive posture), [`docs/adr/`](docs/adr/) and [`docs/rfcs/`](docs/rfcs/)
+(decisions and process).
+
+## What this is
+
+QuantumSSH is a memory-safe, post-quantum-first SSH server written in Rust.
+It is built greenfield on audited cryptographic primitive crates — it does
+**not** depend on `russh` ([RFC-0003](docs/rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md)).
+
+**Status: pre-alpha.** Phase 0 (foundation: manifesto, governance, threat
+model, ADR/RFC catalog, supporting infrastructure) is complete. Phase 1
+(the first crate — a walking-skeleton server) has not landed yet, so **there
+is no Rust code in the repository today**. Phase 1 is tracked in
+[issue #9](https://github.com/gonzafg2/quantumssh/issues/9).
+
+## The five commitments, as review criteria
+
+Every change is measured against the five MANIFIESTO commitments. Stated as
+hard review rules:
+
+1. **Memory-safe by construction.** *Reject* any first-party `unsafe`. The
+   workspace is `unsafe_code = "forbid"` ([ADR-0018](docs/adr/0018-phase-1-unsafe-code-forbid-workspace.md));
+   there is no `#[allow]` escape. Dependencies may contain `unsafe`; that is
+   the audited primitive layer.
+2. **Post-quantum by default, not by opt-in.** *Reject* any non-hybrid or
+   classical-only key exchange in the default profile. `mlkem768x25519-sha256`
+   is the only KEX offered ([ADR-0021](docs/adr/0021-phase-1-negotiation-profile.md)).
+   Failure of either hybrid half must abort, never silently fall back.
+3. **Zero legacy.** *Reject* SSH-1, RSA, DSA, ECDSA-NIST, CBC modes,
+   `diffie-hellman-group1/14-sha1`, `ssh-rsa`, password authentication, and
+   compression. None of these may be compiled in, not merely configured off.
+4. **Small surface, sharp edges.** *Reject* features beyond the current
+   phase's scope unless they are opt-in behind an explicit flag. *Reject* any
+   new dependency that is not justified in the PR and does not pass
+   `cargo deny`.
+5. **Permanently open.** *Reject* anything that narrows the Apache-2.0
+   posture (source-available terms, relicensing, an enterprise fork).
+
+## Hard security rules
+
+The threat model ([`docs/threat-model.md`](docs/threat-model.md)) is the
+authoritative reference; the operative rules a reviewer applies:
+
+- **The pre-authentication path is the highest-trust surface** (§4.1). No
+  `unsafe`, no allocation sized by an attacker-controlled length without an
+  explicit bound, and it must be fuzzable. Parser changes get extra scrutiny.
+- **Fail closed.** A peer that does not offer the hybrid PQ KEX, or does not
+  negotiate strict-kex, is rejected (`SSH_DISCONNECT_KEY_EXCHANGE_FAILED`).
+  No downgrade path may exist.
+- **Strict-kex is required** (Terrapin / CVE-2023-48795 defence), AEAD-only
+  ciphers, no negotiated-MAC path in the default profile ([ADR-0021](docs/adr/0021-phase-1-negotiation-profile.md)).
+- **Public-key authentication only.** The server **reads** `authorized_keys`;
+  it never writes it.
+- **Key material is zeroized after use, never logged, never in error or panic
+  output** (§4.3).
+- **The transport is a type-state machine** ([RFC-0003](docs/rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md)):
+  an `Expect<Stage>` exposes only the messages valid in that stage. Do not
+  loosen this to "accept and branch" — that is the Terrapin bug class.
+- **Audit log fields are mandated** ([ADR-0024](docs/adr/0024-phase-1-log-event-schema.md)):
+  `authenticated_identity` and `executing_uid` are separate first-class
+  fields on every `exec.*` event; `command` is a structured field, never
+  interpolated into a message string.
+
+## RFC vs ADR vs plain PR
+
+- **RFC** ([`docs/rfcs/`](docs/rfcs/)) — a shape-determining decision: a
+  protocol extension, a change to default cryptographic algorithms, a new
+  public API, a dependency that materially expands the trust base, or anything
+  that contradicts or refines a `README.md` / `MANIFIESTO.es.md` commitment.
+- **ADR** ([`docs/adr/`](docs/adr/)) — records a decision taken, often
+  implementing an accepted RFC, or a smaller locked-in operational choice.
+  One decision per file. Accepted ADRs are immutable except Status and errata
+  ([ADR-0015](docs/adr/0015-permit-annotated-errata-in-adrs.md)).
+- **Plain PR or issue** — bug fixes, refactors with no behaviour change,
+  docs, tests. When unsure which lane a change belongs in, open an issue and
+  ask.
+
+## Contribution conventions
+
+- **Conventional Commits** for messages (`feat`, `fix`, `docs`, `chore`,
+  `ci`, `refactor`, …) with a scope where it helps.
+- **DCO sign-off** on every commit: `git commit -s`.
+- **Signed commits are required.** `main` enforces verified signatures via
+  branch protection; sign with `git commit -S`. A commit that lands unsigned
+  (e.g. from a GitHub App) must be re-signed before it can merge.
+- **Never push to `main`.** Open a pull request from a branch.
+- **Spanish and English are both first-class** in issues, PRs, and docs.
+
+## Repo map
+
+| Path | What |
+|---|---|
+| [`README.md`](README.md), [`MANIFIESTO.es.md`](MANIFIESTO.es.md) | Vision (EN) and manifesto (ES) |
+| [`docs/threat-model.md`](docs/threat-model.md) | Defensive posture — authoritative |
+| [`docs/adr/`](docs/adr/) | Architecture Decision Records + their README |
+| [`docs/rfcs/`](docs/rfcs/) | RFCs + the lightweight RFC process |
+| [`docs/infrastructure.md`](docs/infrastructure.md), [`docs/operations.md`](docs/operations.md) | Ops topology and verification recipes |
+| `deny.toml`, `clippy.toml`, `rust-toolchain.toml`, `Cargo.toml` | Tooling and workspace config |
+| `crates/` | Workspace members — **lands in Phase 1; does not exist yet** |
+| `.github/workflows/` | CI: `ci`, `audit`, `deny`, and the Claude reviewers |
+
+## Key commands
+
+The toolchain is pinned in `rust-toolchain.toml` (stable channel, MSRV 1.92,
+edition 2024). Once the first crate lands, the validation loop is:
+
+```sh
+cargo fmt --all                                              # format
+cargo clippy --workspace --all-targets -- -D warnings        # lint, warnings = errors
+cargo deny check                                             # licences, advisories, sources
+cargo test --workspace                                       # unit + integration
+```
+
+Until the first crate lands, the CI workspace-state guards self-disable
+([ADR-0011](docs/adr/0011-ci-guards-workspace-state.md)); these commands
+become load-bearing with the first crate.
+
+## What not to do
+
+- Do not add `unsafe` anywhere in first-party code.
+- Do not introduce legacy crypto, or a second KEX, into the default profile.
+- Do not add a dependency without justifying it in the PR and passing
+  `cargo deny`.
+- Do not write mock, stub, or placeholder code — everything committed must be
+  functional. No "not implemented yet" left in a merged path.
+- Do not reference files or paths that do not exist yet as if they do; mark
+  planned work as TBD (the ADRs do this deliberately while `crates/` is empty).
+- Do not edit an accepted ADR in place except its Status field or annotated
+  errata ([ADR-0015](docs/adr/0015-permit-annotated-errata-in-adrs.md)); to
+  change a decision, write a superseding ADR.
+- Do not loosen the type-state transport machine to accept-and-branch.
