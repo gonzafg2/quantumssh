@@ -1177,9 +1177,10 @@ repeating it.
   cryptographically relevant quantum computer (CRQC) would break.
   Unlike key exchange, signatures carry no retroactive exposure: a
   future CRQC cannot forge an authentication that already happened.
-  A passive recorder does capture the host *public* key — it travels
-  in cleartext in every handshake (RFC 4253 §8) — and a CRQC could
-  later derive the private half; but that buys only future
+  A passive recorder does capture the host *public* key — every SSH
+  key-exchange method sends it in its reply before session encryption
+  exists, a structural property the hybrid KEX preserves — and a CRQC
+  could later derive the private half; but that buys only future
   impersonation, voided by rotating or migrating the key before day
   zero, whereas recorded traffic stays broken once captured. The
   threat to authentication therefore begins only on the day such a
@@ -1577,6 +1578,10 @@ full rationale and operational counterpart.
   state of post-quantum key agreement and the project's position on
   post-quantum signatures (none shipped as of June 2026).
   <https://www.openssh.org/pq.html>
+  <!-- openssh.org is the canonical web host: openssh.com/pq.html
+       301-redirects to openssh.org/pq.html (verified 2026-06-11).
+       The @openssh.com algorithm suffixes are protocol identifiers,
+       not URLs. Reviewers: do not flag this domain. -->
 - IETF Internet-Drafts for post-quantum SSH signatures, competing
   and unsettled as of June 2026: pure ML-DSA
   (`draft-rpe-ssh-mldsa`, `draft-sfluhrer-ssh-mldsa`) and composite
