@@ -42,7 +42,7 @@ allow = [
 # A `ring` clarification used to live here as a pre-RFC-0003 placeholder;
 # it was removed so that, if `ring` ever enters the tree as a transitive
 # dependency, cargo-deny surfaces its compound ISC AND MIT AND OpenSSL
-# licence as a deliberate review event instead of accepting it silently.
+# license as a deliberate review event instead of accepting it silently.
 
 [bans]
 # Multiple versions of the same crate inflate binary size, expand the
