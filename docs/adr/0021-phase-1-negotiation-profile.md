@@ -3,7 +3,7 @@
 - **Status:** Proposed
 - **Date:** TBD (advances to Accepted when the first Phase 1 crate lands)
 - **Deciders:** Project lead
-- **Related:** Implements [RFC-0003](../rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md) (greenfield stack) at the wire level; consumes [ADR-0019](0019-phase-1-ml-kem-crate-rustcrypto.md) (ML-KEM crate); realises `docs/threat-model.md` §6.1 (cryptographic posture) and §5.2 (key-exchange attack vectors); enforced end-to-end by [ADR-0020](0020-phase-1-ci-openssh-interop-gate.md) (OpenSSH interop gate). Touches `crates/quantumssh-core/src/kex.rs` and `transport.rs`.
+- **Related:** Implements [RFC-0003](../rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md) (greenfield stack) at the wire level; consumes [ADR-0019](0019-phase-1-ml-kem-crate-rustcrypto.md) (ML-KEM crate); realises `docs/threat-model.md` §6.1 (cryptographic posture) and §5.2 (key-exchange attack vectors); enforced end-to-end by [ADR-0020](0020-phase-1-ci-openssh-interop-gate.md) (OpenSSH interop gate). Planned implementation (TBD): the `kex` and `transport` modules of `quantumssh-core`, which do not exist yet — the first crate has not landed.
 
 ## Context
 
@@ -11,7 +11,7 @@
 
 RFC-0003, the README, and `docs/threat-model.md` §6.1 each state pieces of the intended profile (hybrid PQ KEX only, Ed25519 host keys, AEAD ciphers, no legacy, strict-kex required) but none assembles the *complete* set of ten name-lists an implementer must hard-code into `kex.rs`. This ADR is that assembly. It does not re-open any algorithm choice RFC-0003 already made; it fixes the exact strings, their order, and the failure behaviour, so the implementation and the ADR-0020 interop tests have one authoritative reference.
 
-A specific subtlety this ADR must settle: SSH AEAD ciphers (`chacha20-poly1305@openssh.com`, `aes256-gcm@openssh.com`) provide integrity inherently, and when one is negotiated as the encryption algorithm the `mac_algorithms` negotiation is **skipped entirely** (per the chacha20-poly1305@openssh.com and OpenSSH AES-GCM specifications). Because QuantumSSH offers AEAD ciphers *only*, the MAC name-list is never exercised. The decision below states what nonetheless goes in that field and what that means for the dependency set.
+A specific subtlety this ADR must settle: SSH AEAD ciphers (`chacha20-poly1305@openssh.com`, `aes256-gcm@openssh.com`) provide integrity inherently. The `mac_algorithms` name-lists are still sent in `SSH_MSG_KEXINIT`, but when an AEAD cipher is the negotiated encryption algorithm the **result of the MAC negotiation is discarded** — no separate MAC is computed or applied (per the chacha20-poly1305@openssh.com and OpenSSH AES-GCM specifications). Because QuantumSSH offers AEAD ciphers *only*, the negotiated MAC is never exercised in any session. The decision below states what nonetheless goes in that field and what that means for the dependency set.
 
 ## Decision
 
@@ -99,7 +99,7 @@ Since the MAC is never used, the field could be left empty. Rejected: an empty M
 
 ## Links
 
-- Code that implements this decision: `crates/quantumssh-core/src/kex.rs`, `transport.rs` (KEXINIT construction and negotiation).
+- Implementation: TBD — when the first crate lands, the KEXINIT construction and negotiation will live in the `kex` and `transport` modules of `quantumssh-core`. These paths do not exist in the repository yet (same posture as ADR-0020's "Implementation: TBD").
 - Interop assertions: ADR-0020 `integration::openssh_verbose_kex` (asserts `kex: algorithm: mlkem768x25519-sha256`) and `integration::negative_no_hybrid` (asserts `SSH_DISCONNECT_KEY_EXCHANGE_FAILED`).
 - Related ADRs: [ADR-0019](0019-phase-1-ml-kem-crate-rustcrypto.md) (ML-KEM crate), [ADR-0020](0020-phase-1-ci-openssh-interop-gate.md) (interop gate), [ADR-0018](0018-phase-1-unsafe-code-forbid-workspace.md) (`unsafe_code = "forbid"`).
 - Standards: RFC 4253 §7.1 (KEXINIT), RFC 8308 (`ext-info-s`, `server-sig-algs`), RFC 8709 (`ssh-ed25519`), `draft-ietf-sshm-mlkem-hybrid-kex-10` (`mlkem768x25519-sha256`), the `kex-strict-{c,s}-v00@openssh.com` extension (CVE-2023-48795 / Terrapin).
