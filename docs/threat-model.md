@@ -1170,14 +1170,21 @@ repeating it.
 - **Ed25519 host keys.** RFC 8709. Compact fingerprints, modern
   curve, no parameter-choice attack surface. Defends §5.2.3.
 - **Signatures are classical, by deliberate sequencing.** Both
-  authentication surfaces — the `ssh-ed25519` host keys and user
-  public keys that accepted RFC-0003 selects — rely on
-  elliptic-curve signatures that a cryptographically relevant
-  quantum computer (CRQC) would break. Unlike key exchange,
-  signatures carry no harvest-now-decrypt-later exposure: a future
-  CRQC cannot retroactively forge an authentication that already
-  happened, so the threat begins only on the day such a machine
-  exists. The post-quantum migration is therefore sequenced:
+  authentication surfaces — the `ssh-ed25519` host keys accepted
+  RFC-0003 selects, and the user-authentication algorithm
+  [ADR-0021](adr/0021-phase-1-negotiation-profile.md) fixes
+  (`ssh-ed25519` only) — rely on elliptic-curve signatures that a
+  cryptographically relevant quantum computer (CRQC) would break.
+  Unlike key exchange, signatures carry no retroactive exposure: a
+  future CRQC cannot forge an authentication that already happened.
+  A passive recorder does capture the host *public* key — it travels
+  in cleartext in every handshake (RFC 4253 §8) — and a CRQC could
+  later derive the private half; but that buys only future
+  impersonation, voided by rotating or migrating the key before day
+  zero, whereas recorded traffic stays broken once captured. The
+  threat to authentication therefore begins only on the day such a
+  machine exists, and only against key material that outlives it
+  (see §7). The post-quantum migration is therefore sequenced:
   confidentiality first (done — the hybrid KEX above), signatures
   when an interoperable standard exists. As of June 2026 OpenSSH
   ships no post-quantum signature algorithm and the IETF drafts are
@@ -1300,18 +1307,23 @@ operators must account for. The principal items, by category, are:
   upgrades as RFCs.
 - **Classical signatures against a future CRQC** (§6.1). If a
   cryptographically relevant quantum computer arrives before the
-  project migrates to post-quantum signatures, an *active* adversary
-  could derive the host's private key from its public half and mount
-  man-in-the-middle attacks on new sessions, and could derive a
-  user's private key wherever the public half is known (user public
-  keys are often genuinely public, e.g. on code forges). Passive
-  adversaries remain defeated even then: recorded traffic stays
-  confidential under the hybrid KEX, and past authentications cannot
-  be forged retroactively. The exposure is bounded by a single
-  fact: closing the gap requires only that the software speak the
-  new signature algorithm before day zero — and because SSH key
-  material rotates in minutes, unlike long-lived certificate
-  hierarchies, adoption can be immediate once the software does.
+  project migrates to post-quantum signatures, the exposure splits
+  into two steps. *Derivation* needs only passive material: the host
+  public key travels in cleartext in every handshake, and user
+  public keys are often genuinely public (e.g. on code forges), so a
+  passive recorder plus a CRQC yields the private halves offline.
+  *Exploitation* requires an active position: a real-time
+  man-in-the-middle on new sessions using the derived host key, or
+  authenticating as the user. Even then, passive adversaries cannot
+  touch session confidentiality (recorded traffic stays protected by
+  the hybrid KEX) or past authentications (no retroactive forgery) —
+  and the derived keys are only valuable while they remain in
+  service: rotation or migration before day zero voids the harvest.
+  The exposure is bounded by a single fact: closing the gap requires
+  only that the software speak the new signature algorithm before
+  day zero — and because SSH key deployment has no certificate
+  hierarchy to re-roll, unlike long-lived PKI roots, adoption can
+  proceed as soon as the software does.
   (Rotating within a classically broken algorithm bounds nothing: a
   replacement Ed25519 key is exactly as derivable as the one it
   replaces.) The migration trigger is a settled IETF standard
