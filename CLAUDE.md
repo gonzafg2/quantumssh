@@ -58,7 +58,8 @@ authoritative reference; the operative rules a reviewer applies:
   negotiate strict-kex, is rejected (`SSH_DISCONNECT_KEY_EXCHANGE_FAILED`).
   No downgrade path may exist.
 - **Strict-kex is required** (Terrapin / CVE-2023-48795 defence), AEAD-only
-  ciphers, no negotiated-MAC path in the default profile ([ADR-0021](docs/adr/0021-phase-1-negotiation-profile.md)).
+  ciphers, no exercised MAC path in the default profile — the MAC name-list
+  is nominal and never used under AEAD ([ADR-0021](docs/adr/0021-phase-1-negotiation-profile.md)).
 - **Public-key authentication only.** The server **reads** `authorized_keys`;
   it never writes it.
 - **Key material is zeroized after use, never logged, never in error or panic
