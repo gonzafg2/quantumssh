@@ -62,10 +62,13 @@ jobs:
 
             3. Other (CI, config, infra docs) — light consistency review.
 
-            Post your review as a SINGLE GitHub PR review (event = COMMENT):
-            - The review BODY is a short summary: the change classification,
-              overall assessment, and a one-line verdict.
-            - Each finding is an INLINE comment anchored to its file:line.
+            Leave each finding as an inline review comment on the relevant
+            line — the action buffers and posts them for you. Do NOT use gh,
+            git, or any shell command to post; just create the review
+            comments. Also give a short overall summary: the change
+            classification, overall assessment, and a one-line verdict. If
+            nothing reaches >= 80% confidence, say so in the summary and leave
+            no inline comments.
 
             Report only high-signal findings you are confident in (>= 80%).
             No nitpicks, no style-only comments, no false positives — if
