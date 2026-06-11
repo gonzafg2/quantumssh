@@ -1170,9 +1170,10 @@ repeating it.
 - **Ed25519 host keys.** RFC 8709. Compact fingerprints, modern
   curve, no parameter-choice attack surface. Defends §5.2.3.
 - **Signatures are classical, by deliberate sequencing.** Both
-  authentication surfaces — `ssh-ed25519` host keys and user public
-  keys — rely on elliptic-curve signatures that a cryptographically
-  relevant quantum computer (CRQC) would break. Unlike key exchange,
+  authentication surfaces — the `ssh-ed25519` host keys and user
+  public keys that accepted RFC-0003 selects — rely on
+  elliptic-curve signatures that a cryptographically relevant
+  quantum computer (CRQC) would break. Unlike key exchange,
   signatures carry no harvest-now-decrypt-later exposure: a future
   CRQC cannot retroactively forge an authentication that already
   happened, so the threat begins only on the day such a machine
@@ -1184,7 +1185,8 @@ repeating it.
   references); adopting one prematurely would break interoperability
   with every deployed client for no present-day security gain. The
   residual exposure and the migration trigger are recorded in §7;
-  the lane is an RFC under issue #42's agility mechanism.
+  the migration path will be defined in a future RFC, tracked under
+  issue #42.
 - **Forward secrecy.** Ephemeral KEM secrets are not persisted and
   are zeroised after derivation. Defends §5.5.3.
 - **Negotiation MAC binding.** The agreed algorithm list is bound
@@ -1305,13 +1307,17 @@ operators must account for. The principal items, by category, are:
   keys are often genuinely public, e.g. on code forges). Passive
   adversaries remain defeated even then: recorded traffic stays
   confidential under the hybrid KEX, and past authentications cannot
-  be forged retroactively. The exposure is bounded by two facts —
-  SSH keys rotate in minutes, unlike long-lived certificate
-  hierarchies, and closing the gap requires only that the software
-  speak the new algorithm before day zero. The migration trigger is
-  a settled IETF standard deployed by the reference client (the
-  competing drafts are listed in §9); the lane is an RFC under
-  issue #42's agility mechanism.
+  be forged retroactively. The exposure is bounded by a single
+  fact: closing the gap requires only that the software speak the
+  new signature algorithm before day zero — and because SSH key
+  material rotates in minutes, unlike long-lived certificate
+  hierarchies, adoption can be immediate once the software does.
+  (Rotating within a classically broken algorithm bounds nothing: a
+  replacement Ed25519 key is exactly as derivable as the one it
+  replaces.) The migration trigger is a settled IETF standard
+  deployed by the reference client (the competing drafts are listed
+  in §9); the migration path will be defined in a future RFC,
+  tracked under issue #42.
 - **Implementation flaws not caught by review, tests, or fuzzing.**
   The Phase-3 security audit is the principal compensating control;
   the project's posture is that bugs will exist and the goal is to
@@ -1565,7 +1571,7 @@ full rationale and operational counterpart.
   Ed25519+ML-DSA (`draft-josefsson-ssh-ed25519mldsa65`,
   `draft-sun-ssh-composite-sigs`). Per §6.1 and §7, QuantumSSH
   adopts none until one is settled and deployed by the reference
-  client; adoption is RFC-gated under issue #42.
+  client; the adopting RFC is future work, tracked under issue #42.
 
 ### Project-internal references
 
