@@ -13,7 +13,7 @@ What does not yet exist is the concrete event list: which events Phase 1 emits, 
 
 ## Decision
 
-Phase 1 emits the following events via `tracing`. Each connection is wrapped in a `tracing` **span** carrying `peer_addr`, so every event below inherits `peer_addr` from its span rather than repeating it as a field.
+We will emit the following structured events via `tracing`. Each connection is wrapped in a `tracing` **span** carrying `peer_addr`, so every event below inherits `peer_addr` from its span rather than repeating it as a field.
 
 **Connection-scoped span:** `connection` with field `peer_addr: SocketAddr`.
 
