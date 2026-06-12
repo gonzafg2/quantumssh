@@ -7,12 +7,16 @@ use std::net::SocketAddr;
 use std::process::ExitCode;
 use std::time::Duration;
 
+use std::sync::Arc;
+
+use quantumssh_core::host_key::HostKey;
 use quantumssh_core::server::{Config, Server};
 use tracing::error;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{EnvFilter, Layer};
+use zeroize::Zeroizing;
 
 const DEFAULT_LISTEN: &str = "127.0.0.1:2222";
 const DEFAULT_HANDSHAKE_TIMEOUT_SECS: u64 = 30;
@@ -25,6 +29,9 @@ USAGE:
 
 OPTIONS:
     --listen <ADDR>               Address to bind (default: 127.0.0.1:2222)
+    --host-key <PATH>             Ed25519 host key file (openssh-key-v1,
+                                  unencrypted; ssh-keygen -t ed25519).
+                                  Required.
     --handshake-timeout <SECS>    Budget from TCP accept to handshake
                                   completion (default: 30; ADR-0022)
     --log-format <FORMAT>         'json' or 'human' (default: json when
@@ -46,6 +53,7 @@ enum LogFormat {
 #[derive(Debug)]
 struct Cli {
     listen: SocketAddr,
+    host_key_path: Option<String>,
     handshake_timeout: Duration,
     log_format: LogFormat,
 }
@@ -59,6 +67,7 @@ fn parse_cli(args: &[String]) -> Result<CliOutcome, String> {
     let mut listen: SocketAddr = DEFAULT_LISTEN
         .parse()
         .map_err(|e| format!("internal default listen address invalid: {e}"))?;
+    let mut host_key_path: Option<String> = None;
     let mut handshake_timeout = Duration::from_secs(DEFAULT_HANDSHAKE_TIMEOUT_SECS);
     let mut log_format = if std::io::stderr().is_terminal() {
         LogFormat::Human
@@ -74,6 +83,10 @@ fn parse_cli(args: &[String]) -> Result<CliOutcome, String> {
                 listen = value
                     .parse()
                     .map_err(|e| format!("invalid --listen address '{value}': {e}"))?;
+            }
+            "--host-key" => {
+                let value = it.next().ok_or("--host-key requires a path")?;
+                host_key_path = Some(value.clone());
             }
             "--handshake-timeout" => {
                 let value = it.next().ok_or("--handshake-timeout requires seconds")?;
@@ -107,6 +120,7 @@ fn parse_cli(args: &[String]) -> Result<CliOutcome, String> {
 
     Ok(CliOutcome::Run(Cli {
         listen,
+        host_key_path,
         handshake_timeout,
         log_format,
     }))
@@ -169,9 +183,35 @@ async fn main() -> ExitCode {
 
     init_logging(cli.log_format);
 
+    // Host key: read once at startup with std::fs (ADR-0022's
+    // deliberate non-async file I/O).
+    let Some(host_key_path) = cli.host_key_path else {
+        error!(message = "--host-key is required", "server.config_error");
+        return ExitCode::FAILURE;
+    };
+    // Zeroizing: the PEM holds the private seed; erase the buffer on
+    // drop instead of leaving it readable for the process lifetime
+    // (threat model §4.3).
+    let pem = match std::fs::read_to_string(&host_key_path) {
+        Ok(pem) => Zeroizing::new(pem),
+        Err(e) => {
+            error!(message = %format!("cannot read host key {host_key_path}: {e}"), "server.config_error");
+            return ExitCode::FAILURE;
+        }
+    };
+    let host_key = match HostKey::from_openssh_pem(&pem) {
+        Ok(k) => Arc::new(k),
+        Err(e) => {
+            error!(message = %format!("cannot load host key {host_key_path}: {e}"), "server.config_error");
+            return ExitCode::FAILURE;
+        }
+    };
+    drop(pem);
+
     let config = Config {
         listen: cli.listen,
         handshake_timeout: cli.handshake_timeout,
+        host_key,
     };
     let server = match Server::bind(&config).await {
         Ok(server) => server,

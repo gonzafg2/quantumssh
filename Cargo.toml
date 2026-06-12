@@ -29,6 +29,15 @@ tracing            = { version = "0.1", default-features = false }  # ADR-0024: 
 tracing-subscriber = { version = "0.3", default-features = false }  # ADR-0024: constructed only by the binary
 getrandom          = { version = "0.3", default-features = false }  # OS randomness: BPP padding (RFC 4253 §6), KEXINIT cookie (M2)
 
+# Cryptographic primitive layer — pinned by RFC-0003 §"Guide-level
+# explanation" and ADR-0019. All pure-Rust, no FFI; `hmac` is
+# deliberately absent (ADR-0021: AEAD-only, no exercised MAC path).
+ml-kem        = { version = "0.3.0", default-features = false, features = ["zeroize"] }            # ADR-0019
+x25519-dalek  = { version = "2.0.1", default-features = false, features = ["static_secrets", "zeroize"] }
+ed25519-dalek = { version = "2", default-features = false, features = ["std", "rand_core", "zeroize"] }
+sha2          = { version = "0.10", default-features = false }
+zeroize       = { version = "1", default-features = false, features = ["zeroize_derive"] }
+
 # Lints applied to every crate in the workspace via
 # `lints.workspace = true` in each crate's manifest.
 #

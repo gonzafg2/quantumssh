@@ -13,5 +13,7 @@
 //! machine, authentication, channels) land milestone by milestone;
 //! only functional code is merged — the project forbids stubs.
 
+pub mod host_key;
+pub mod kex;
 pub mod server;
 pub mod wire;
