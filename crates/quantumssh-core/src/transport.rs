@@ -510,15 +510,28 @@ where
         Ok(())
     }
 
-    /// Emits the `kex.failed` audit event, sends the plaintext
-    /// DISCONNECT, and consumes the machine.
+    /// Sends the plaintext DISCONNECT and consumes the machine.
+    ///
+    /// The `kex.failed` audit event fires only for ADR-0021's
+    /// negotiation rejections — the paths ADR-0024 scopes it to,
+    /// always `SSH_DISCONNECT_KEY_EXCHANGE_FAILED` (3). Wire-level
+    /// protocol violations (code 2) log on the general tier; the
+    /// schema's `connection.closed` carries their reason.
     async fn reject_plain(mut self, rejection: Rejection) -> TransportError {
-        warn!(
-            target: "audit",
-            reason = rejection.reason,
-            disconnect_code = rejection.disconnect_code,
-            "kex.failed"
-        );
+        if rejection.disconnect_code == kex::DISCONNECT_KEY_EXCHANGE_FAILED {
+            warn!(
+                target: "audit",
+                reason = rejection.reason,
+                disconnect_code = rejection.disconnect_code,
+                "kex.failed"
+            );
+        } else {
+            warn!(
+                reason = rejection.reason,
+                disconnect_code = rejection.disconnect_code,
+                "kex protocol violation"
+            );
+        }
         if let Err(e) = self.write_plain(&disconnect_payload(&rejection)).await {
             debug!(error = %e, "disconnect write failed");
         }
