@@ -504,3 +504,368 @@ mod tests {
         assert!(parse_kexinit(&ok).is_err());
     }
 }
+
+// ---------------------------------------------------------------------------
+// Hybrid key exchange (draft-ietf-sshm-mlkem-hybrid-kex)
+// ---------------------------------------------------------------------------
+
+use ml_kem::{B32, EncapsulationKey, MlKem768};
+use sha2::{Digest, Sha256};
+use x25519_dalek::{PublicKey as X25519Public, StaticSecret as X25519Secret};
+use zeroize::Zeroizing;
+
+/// ML-KEM-768 encapsulation-key encoding length (FIPS 203).
+pub const MLKEM_EK_LEN: usize = 1184;
+/// ML-KEM-768 ciphertext length (FIPS 203).
+pub const MLKEM_CT_LEN: usize = 1088;
+/// X25519 public-key length (RFC 7748).
+pub const X25519_LEN: usize = 32;
+/// `C_INIT`: client's concatenated `EK_PQ ‖ PK_CL` (draft §3).
+pub const CLIENT_INIT_LEN: usize = MLKEM_EK_LEN + X25519_LEN;
+/// `S_REPLY`: server's concatenated `CT_PQ ‖ PK_CL` (draft §3).
+pub const SERVER_REPLY_LEN: usize = MLKEM_CT_LEN + X25519_LEN;
+
+/// Outcome of the server side of the hybrid exchange.
+pub struct HybridOutcome {
+    /// `CT_PQ ‖ S_CL` — sent back in `SSH_MSG_KEX_HYBRID_REPLY`.
+    pub server_reply: Vec<u8>,
+    /// `K = SHA-256(K_PQ ‖ K_CL)` — the draft encodes the combined
+    /// secret as a **fixed-length byte string**, not an mpint
+    /// (the encoding ADR-0019 mandates an explicit test for).
+    pub shared_secret: Zeroizing<[u8; 32]>,
+}
+
+impl std::fmt::Debug for HybridOutcome {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Never expose secrets through Debug (threat model §4.3).
+        f.debug_struct("HybridOutcome").finish_non_exhaustive()
+    }
+}
+
+/// Runs the server side of `mlkem768x25519-sha256` over the client's
+/// `C_INIT` bytes.
+///
+/// Both hybrid halves are validated and **failure of either half
+/// aborts** (ADR-0021; threat model §5.2.1): the ML-KEM key is
+/// validated per FIPS 203 §7.2 during decoding (ADR-0019), and a
+/// low-order X25519 point — a non-contributory exchange — is
+/// rejected rather than silently producing a known shared secret.
+///
+/// # Errors
+///
+/// [`KexError::Rejected`] with `SSH_DISCONNECT_KEY_EXCHANGE_FAILED`
+/// on wrong length, an invalid ML-KEM key, a non-contributory X25519
+/// exchange, or OS randomness failure.
+pub fn hybrid_exchange(client_init: &[u8]) -> Result<HybridOutcome, KexError> {
+    if client_init.len() != CLIENT_INIT_LEN {
+        return Err(KexError::Rejected(Rejection::kex_failed(
+            "bad-hybrid-init-length",
+        )));
+    }
+    let (ek_bytes, client_x25519) = client_init.split_at(MLKEM_EK_LEN);
+
+    // PQ half — FIPS 203 §7.2 input validation happens inside
+    // EncapsulationKey::new (ADR-0019's mandated check).
+    let ek_array = ml_kem::Key::<EncapsulationKey<MlKem768>>::try_from(ek_bytes)
+        .map_err(|_| KexError::Rejected(Rejection::kex_failed("bad-hybrid-init-length")))?;
+    let ek = EncapsulationKey::<MlKem768>::new(&ek_array)
+        .map_err(|_| KexError::Rejected(Rejection::kex_failed("invalid-mlkem-key")))?;
+    let mut m = B32::default();
+    getrandom::fill(m.as_mut_slice())
+        .map_err(|_| KexError::Rejected(Rejection::kex_failed("rng-failure")))?;
+    let (ct, k_pq) = ek.encapsulate_deterministic(&m);
+
+    // Classical half.
+    let client_pk: [u8; 32] = client_x25519
+        .try_into()
+        .map_err(|_| KexError::Rejected(Rejection::kex_failed("bad-hybrid-init-length")))?;
+    let mut secret_bytes = Zeroizing::new([0u8; 32]);
+    getrandom::fill(secret_bytes.as_mut())
+        .map_err(|_| KexError::Rejected(Rejection::kex_failed("rng-failure")))?;
+    let server_secret = X25519Secret::from(*secret_bytes);
+    let server_public = X25519Public::from(&server_secret);
+    let k_cl = server_secret.diffie_hellman(&X25519Public::from(client_pk));
+    if !k_cl.was_contributory() {
+        return Err(KexError::Rejected(Rejection::kex_failed(
+            "invalid-x25519-key",
+        )));
+    }
+
+    // K = SHA-256(K_PQ ‖ K_CL): raw byte-array concatenation — K_CL is
+    // NOT an mpint here (the OpenSSH big-endian bug class ADR-0019
+    // cites).
+    let mut hasher = Sha256::new();
+    hasher.update(k_pq.as_slice());
+    hasher.update(k_cl.as_bytes());
+    let shared_secret = Zeroizing::new(hasher.finalize().into());
+
+    let mut server_reply = Vec::with_capacity(SERVER_REPLY_LEN);
+    server_reply.extend_from_slice(ct.as_slice());
+    server_reply.extend_from_slice(server_public.as_bytes());
+
+    Ok(HybridOutcome {
+        server_reply,
+        shared_secret,
+    })
+}
+
+/// Inputs to the exchange hash `H` (draft-ietf-sshm-mlkem-hybrid-kex,
+/// following the RFC 4253 §8 pattern with `K` as a string).
+#[derive(Debug)]
+pub struct ExchangeHashInputs<'a> {
+    /// Client identification line, without CRLF.
+    pub client_id: &'a [u8],
+    /// Server identification line, without CRLF.
+    pub server_id: &'a [u8],
+    /// Client's full KEXINIT payload (`I_C`).
+    pub client_kexinit: &'a [u8],
+    /// Server's full KEXINIT payload (`I_S`).
+    pub server_kexinit: &'a [u8],
+    /// Server host key blob (`K_S`).
+    pub host_key_blob: &'a [u8],
+    /// Client's `C_INIT`.
+    pub client_init: &'a [u8],
+    /// Server's `S_REPLY` data.
+    pub server_reply: &'a [u8],
+    /// The combined shared secret `K`.
+    pub shared_secret: &'a [u8; 32],
+}
+
+/// Computes the exchange hash `H`.
+///
+/// The full `I_C`/`I_S` KEXINIT payloads are bound into the hash —
+/// the anti-downgrade binding the threat model §5.2.2 mandates a
+/// mutation test for. `K` enters as a **string**, per the hybrid
+/// draft (unlike classical DH's mpint).
+#[must_use]
+pub fn exchange_hash(inputs: &ExchangeHashInputs<'_>) -> [u8; 32] {
+    let mut w = Writer::new();
+    w.put_string(inputs.client_id);
+    w.put_string(inputs.server_id);
+    w.put_string(inputs.client_kexinit);
+    w.put_string(inputs.server_kexinit);
+    w.put_string(inputs.host_key_blob);
+    w.put_string(inputs.client_init);
+    w.put_string(inputs.server_reply);
+    w.put_string(inputs.shared_secret);
+    Sha256::digest(w.into_bytes()).into()
+}
+
+/// Derives key material per RFC 4253 §7.2 with `HASH = SHA-256` and
+/// `K` encoded as a string (hybrid draft).
+///
+/// `letter` selects the key class (`b'A'`–`b'F'`); output is extended
+/// (`K2 = HASH(K ‖ H ‖ K1)`, …) until `needed` bytes are available.
+#[must_use]
+pub fn derive_key(
+    shared_secret: &[u8; 32],
+    exchange_hash: &[u8; 32],
+    letter: u8,
+    session_id: &[u8; 32],
+    needed: usize,
+) -> Zeroizing<Vec<u8>> {
+    let mut k_string = Writer::new();
+    k_string.put_string(shared_secret);
+    let k_string = k_string.into_bytes();
+
+    let mut out = Zeroizing::new(Vec::with_capacity(needed + 32));
+    let mut hasher = Sha256::new();
+    hasher.update(&k_string);
+    hasher.update(exchange_hash);
+    hasher.update([letter]);
+    hasher.update(session_id);
+    out.extend_from_slice(&hasher.finalize());
+
+    while out.len() < needed {
+        let mut hasher = Sha256::new();
+        hasher.update(&k_string);
+        hasher.update(exchange_hash);
+        hasher.update(&out[..]);
+        let block: [u8; 32] = hasher.finalize().into();
+        out.extend_from_slice(&block);
+    }
+    out.truncate(needed);
+    out
+}
+
+#[cfg(test)]
+mod hybrid_tests {
+    use super::*;
+    use ml_kem::kem::{Decapsulate as _, FromSeed as _, KeyExport as _};
+
+    /// A deterministic test client: ML-KEM keypair from a fixed seed
+    /// plus a fixed X25519 secret. Returns (`C_INIT`, decapsulation
+    /// closure inputs).
+    fn test_client() -> (
+        Vec<u8>,
+        ml_kem::kem::DecapsulationKey<MlKem768>,
+        X25519Secret,
+    ) {
+        let seed = ml_kem::Seed::try_from(&[42u8; 64][..]).unwrap();
+        let (dk, ek) = MlKem768::from_seed(&seed);
+        let x_secret = X25519Secret::from([7u8; 32]);
+        let x_public = X25519Public::from(&x_secret);
+
+        let mut c_init = Vec::with_capacity(CLIENT_INIT_LEN);
+        c_init.extend_from_slice(ek.to_bytes().as_slice());
+        c_init.extend_from_slice(x_public.as_bytes());
+        (c_init, dk, x_secret)
+    }
+
+    #[test]
+    fn hybrid_exchange_agrees_with_the_client_side() {
+        let (c_init, dk, x_secret) = test_client();
+        let outcome = hybrid_exchange(&c_init).unwrap();
+        assert_eq!(outcome.server_reply.len(), SERVER_REPLY_LEN);
+
+        // Client side: decapsulate CT_PQ, DH against S_CL.
+        let (ct_bytes, server_x) = outcome.server_reply.split_at(MLKEM_CT_LEN);
+        let ct = ml_kem::Ciphertext::<MlKem768>::try_from(ct_bytes).unwrap();
+        let k_pq = dk.decapsulate(&ct);
+        let server_pk: [u8; 32] = server_x.try_into().unwrap();
+        let k_cl = x_secret.diffie_hellman(&X25519Public::from(server_pk));
+
+        // K = SHA-256(K_PQ ‖ K_CL) as RAW concatenation — the ADR-0019
+        // encoding test: no mpint, no length prefixes.
+        let mut h = Sha256::new();
+        h.update(k_pq.as_slice());
+        h.update(k_cl.as_bytes());
+        let client_k: [u8; 32] = h.finalize().into();
+        assert_eq!(*outcome.shared_secret, client_k);
+    }
+
+    #[test]
+    fn corrupted_mlkem_key_is_rejected_by_fips_validation() {
+        let (mut c_init, _, _) = test_client();
+        // Saturate a coefficient region: fails the FIPS 203 §7.2
+        // modulus check inside EncapsulationKey::new.
+        for b in &mut c_init[..64] {
+            *b = 0xFF;
+        }
+        let err = hybrid_exchange(&c_init).unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                KexError::Rejected(r) if r.reason == "invalid-mlkem-key"
+                    && r.disconnect_code == DISCONNECT_KEY_EXCHANGE_FAILED
+            ),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn low_order_x25519_point_aborts_the_exchange() {
+        // All-zero public key: the canonical low-order point. The
+        // classical half must abort, never fall back to the PQ half
+        // alone (ADR-0021: failure of either half aborts).
+        let (mut c_init, _, _) = test_client();
+        for b in &mut c_init[MLKEM_EK_LEN..] {
+            *b = 0;
+        }
+        let err = hybrid_exchange(&c_init).unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                KexError::Rejected(r) if r.reason == "invalid-x25519-key"
+            ),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn wrong_length_client_init_is_rejected() {
+        for len in [0, 1, CLIENT_INIT_LEN - 1, CLIENT_INIT_LEN + 1] {
+            let err = hybrid_exchange(&vec![1u8; len]).unwrap_err();
+            assert!(matches!(&err, KexError::Rejected(_)), "len {len}");
+        }
+    }
+
+    #[test]
+    fn x25519_matches_rfc_7748_section_6_1() {
+        // RFC 7748 §6.1 test vectors: Alice/Bob key agreement.
+        let alice_priv: [u8; 32] =
+            hex("77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a");
+        let bob_pub: [u8; 32] =
+            hex("de9edb7d7b7dc1b4d35b61c2ece435373f8343c85b78674dadfc7e146f882b4f");
+        let expected_shared: [u8; 32] =
+            hex("4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742");
+        let alice = X25519Secret::from(alice_priv);
+        let shared = alice.diffie_hellman(&X25519Public::from(bob_pub));
+        assert_eq!(shared.as_bytes(), &expected_shared);
+
+        // And Alice's derived public key matches the RFC.
+        let alice_pub_expected: [u8; 32] =
+            hex("8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a");
+        assert_eq!(X25519Public::from(&alice).as_bytes(), &alice_pub_expected);
+    }
+
+    #[test]
+    fn exchange_hash_binds_every_input() {
+        let base = ExchangeHashInputs {
+            client_id: b"SSH-2.0-OpenSSH_10.0p1",
+            server_id: b"SSH-2.0-quantumssh_0.0.1",
+            client_kexinit: b"I_C payload",
+            server_kexinit: b"I_S payload",
+            host_key_blob: b"host key blob",
+            client_init: b"c_init bytes",
+            server_reply: b"s_reply bytes",
+            shared_secret: &[9u8; 32],
+        };
+        let h0 = exchange_hash(&base);
+        assert_eq!(h0, exchange_hash(&base), "deterministic");
+
+        // Threat model §5.2.2: mutating either KEXINIT must change H —
+        // the anti-downgrade binding.
+        let mutated_client_init = ExchangeHashInputs {
+            client_kexinit: b"I_C payloaD",
+            ..base
+        };
+        assert_ne!(h0, exchange_hash(&mutated_client_init));
+        let mutated_server_init = ExchangeHashInputs {
+            server_kexinit: b"I_S payloaD",
+            ..base
+        };
+        assert_ne!(h0, exchange_hash(&mutated_server_init));
+        let mutated_k = ExchangeHashInputs {
+            shared_secret: &[10u8; 32],
+            ..base
+        };
+        assert_ne!(h0, exchange_hash(&mutated_k));
+    }
+
+    #[test]
+    fn key_derivation_extends_and_separates() {
+        let k = [1u8; 32];
+        let h = [2u8; 32];
+        let sid = [3u8; 32];
+
+        // chacha20-poly1305@openssh.com needs 64 bytes — two rounds.
+        let key_c = derive_key(&k, &h, b'C', &sid, 64);
+        assert_eq!(key_c.len(), 64);
+        // Extension is deterministic and prefix-consistent.
+        let key_c_short = derive_key(&k, &h, b'C', &sid, 32);
+        assert_eq!(&key_c[..32], &key_c_short[..]);
+        // Different letters diverge.
+        let key_d = derive_key(&k, &h, b'D', &sid, 64);
+        assert_ne!(&key_c[..], &key_d[..]);
+        // RFC 4253 §7.2 first block, computed independently:
+        // K1 = HASH(string K ‖ H ‖ letter ‖ session_id).
+        let mut w = Writer::new();
+        w.put_string(&k);
+        let mut hasher = Sha256::new();
+        hasher.update(w.into_bytes());
+        hasher.update(h);
+        hasher.update([b'C']);
+        hasher.update(sid);
+        let expected: [u8; 32] = hasher.finalize().into();
+        assert_eq!(&key_c[..32], &expected);
+    }
+
+    fn hex<const N: usize>(s: &str) -> [u8; N] {
+        let mut out = [0u8; N];
+        for (i, byte) in out.iter_mut().enumerate() {
+            *byte = u8::from_str_radix(&s[i * 2..i * 2 + 2], 16).unwrap();
+        }
+        out
+    }
+}
