@@ -1,13 +1,12 @@
 # QuantumSSH workspace root.
 #
-# This is a virtual manifest: there are no source files yet, only the
-# scaffolding for what will become a multi-crate workspace.
-#
-# When the first crate is added, list it under `members` below.
+# Two crates, flat layout (ADR-0017): `quantumssh` is the thin binary
+# entrypoint; `quantumssh-core` is the library where all server logic
+# lives so integration tests can exercise it without the binary.
 
 [workspace]
 resolver = "3"
-members  = []
+members  = ["crates/quantumssh", "crates/quantumssh-core"]
 
 # Default values inherited by every crate that opts in via
 # `package.<field>.workspace = true`.
@@ -19,27 +18,26 @@ repository   = "https://github.com/gonzafg2/quantumssh"
 homepage     = "https://quantumssh.org"
 rust-version = "1.92"
 
-# Centralised dependency versions. Each crate in the workspace then
-# declares `<dep>.workspace = true` to inherit the version pinned here.
-# All entries are commented placeholders for now: the workspace has no
-# members yet, and we will add real version pins as crates are introduced.
+# Centralised dependency versions. Each crate declares
+# `<dep>.workspace = true` (adding the features it needs) to inherit
+# the version pinned here. Pins are added the milestone they are first
+# used, each justified in its PR; the cryptographic pins are fixed by
+# RFC-0003/ADR-0019 and land with the kex milestone.
 [workspace.dependencies]
-# russh                = "0.46"   # SSH protocol primitives, server + client
-# tokio                = { version = "1", features = ["full"] }
-# tracing              = "0.1"
-# tracing-subscriber   = { version = "0.3", features = ["env-filter"] }
-# anyhow               = "1"
-# thiserror            = "2"
-# clap                 = { version = "4", features = ["derive"] }
-# serde                = { version = "1", features = ["derive"] }
-# toml                 = "0.8"
+tokio              = { version = "~1.51", default-features = false } # ADR-0022 (RFC-0004): tilde keeps us on the 1.51.x LTS line, per Tokio's own LTS guidance
+tracing            = { version = "0.1", default-features = false }  # ADR-0024: the facade the library emits through
+tracing-subscriber = { version = "0.3", default-features = false }  # ADR-0024: constructed only by the binary
 
 # Lints applied to every crate in the workspace via
 # `lints.workspace = true` in each crate's manifest.
+#
+# `unsafe_code = "forbid"` (ADR-0018): no first-party `unsafe`, no
+# `#[allow]` escape hatch, promoted from "deny" in the same PR that
+# adds the first crate — exactly as the ADR requires.
 [workspace.lints.rust]
-unsafe_code  = "deny"
+unsafe_code  = "forbid"
 missing_docs = "warn"
-unused       = "warn"
+unused       = { level = "warn", priority = -1 } # lint group: lower priority so individual lints can override
 
 [workspace.lints.clippy]
 all      = { level = "warn", priority = -1 }
