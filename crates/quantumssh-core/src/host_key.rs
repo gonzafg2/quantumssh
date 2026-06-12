@@ -133,6 +133,18 @@ impl HostKey {
         Ok(Self { signing })
     }
 
+    /// Builds a host key directly from an Ed25519 seed.
+    ///
+    /// For tests and fixed-RNG golden-vector fixtures (RFC-0003's KAT
+    /// plan); production keys load from `openssh-key-v1` files via
+    /// [`HostKey::from_openssh_pem`].
+    #[must_use]
+    pub fn from_seed(seed: [u8; 32]) -> Self {
+        Self {
+            signing: SigningKey::from_bytes(&seed),
+        }
+    }
+
     /// The `ssh-ed25519` public-key blob (RFC 8709 §4):
     /// `string "ssh-ed25519" ‖ string key`.
     #[must_use]

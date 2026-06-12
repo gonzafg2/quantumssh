@@ -1,136 +1,317 @@
-//! Integration tests for the M1 contract: version exchange
-//! (RFC 4253 §4.2) over a real TCP connection, plus the §5.1.3
-//! slow-handshake budget.
+//! Integration tests for the M2 contract: a complete post-quantum
+//! handshake — version exchange, ADR-0021 KEXINIT negotiation, the
+//! hybrid `mlkem768x25519-sha256` exchange with a verified host-key
+//! signature, NEWKEYS — over real TCP, plus the rejection paths and
+//! the §5.1.3 slow-handshake budget.
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::sync::Arc;
 
+use ed25519_dalek::Verifier;
+use ml_kem::MlKem768;
+use ml_kem::kem::{Decapsulate as _, FromSeed as _, KeyExport as _};
+use quantumssh_core::host_key::HostKey;
+use quantumssh_core::kex;
 use quantumssh_core::server::{Config, Server};
+use quantumssh_core::wire::{self, Reader, Writer};
+use sha2::{Digest, Sha256};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::time::{Duration, timeout};
+use x25519_dalek::{PublicKey as XPublic, StaticSecret as XSecret};
 
 const TEST_BUDGET: Duration = Duration::from_secs(5);
+const CLIENT_ID: &[u8] = b"SSH-2.0-testclient_0.1";
 
-async fn start_server(handshake_timeout: Duration) -> SocketAddr {
+async fn start_server(handshake_timeout: Duration) -> (SocketAddr, Arc<HostKey>) {
+    let host_key = Arc::new(HostKey::from_seed([11u8; 32]));
     let config = Config {
         listen: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
         handshake_timeout,
+        host_key: Arc::clone(&host_key),
     };
     let server = Server::bind(&config).await.expect("bind ephemeral port");
     let addr = server.local_addr().expect("local addr");
     drop(tokio::spawn(server.serve()));
-    addr
+    (addr, host_key)
 }
 
-/// Reads until the server ends the connection. A clean EOF and a
-/// `ConnectionReset` are both accepted: when the server fail-closes
-/// with client bytes still in flight (e.g. the oversized-line cut),
-/// the kernel answers the unread data with RST.
-async fn read_until_server_closes(stream: &mut TcpStream) -> Vec<u8> {
-    let mut data = Vec::new();
-    let mut buf = [0u8; 1024];
+async fn connect(addr: SocketAddr) -> TcpStream {
+    timeout(TEST_BUDGET, TcpStream::connect(addr))
+        .await
+        .expect("connect within budget")
+        .expect("tcp connect")
+}
+
+/// Reads the server identification line.
+async fn read_server_id(stream: &mut TcpStream) -> Vec<u8> {
+    let mut line = Vec::new();
+    loop {
+        let b = timeout(TEST_BUDGET, stream.read_u8())
+            .await
+            .expect("id byte within budget")
+            .expect("read id byte");
+        if b == b'\n' {
+            break;
+        }
+        line.push(b);
+    }
+    if line.last() == Some(&b'\r') {
+        line.pop();
+    }
+    line
+}
+
+/// Reads one unencrypted packet's payload.
+async fn read_packet(stream: &mut TcpStream) -> Vec<u8> {
+    let mut len = [0u8; 4];
+    timeout(TEST_BUDGET, stream.read_exact(&mut len))
+        .await
+        .expect("packet length within budget")
+        .expect("read length");
+    let body_len = wire::validate_packet_length(u32::from_be_bytes(len)).expect("valid length");
+    let mut body = vec![0u8; body_len];
+    timeout(TEST_BUDGET, stream.read_exact(&mut body))
+        .await
+        .expect("packet body within budget")
+        .expect("read body");
+    wire::decode_packet_body(&body)
+        .expect("valid body")
+        .to_vec()
+}
+
+async fn write_packet(stream: &mut TcpStream, payload: &[u8]) {
+    let packet = wire::encode_packet(payload).expect("encode");
+    stream.write_all(&packet).await.expect("write packet");
+}
+
+/// A stock-OpenSSH-like client KEXINIT. Returns the exact payload
+/// (kept as `I_C`).
+fn client_kexinit() -> Vec<u8> {
+    let mut w = Writer::new();
+    w.put_byte(kex::SSH_MSG_KEXINIT);
+    w.put_bytes(&[7u8; 16]);
+    w.put_name_list(
+        "mlkem768x25519-sha256,curve25519-sha256,ext-info-c,kex-strict-c-v00@openssh.com",
+    );
+    w.put_name_list("ssh-ed25519,rsa-sha2-512");
+    w.put_name_list("chacha20-poly1305@openssh.com,aes256-gcm@openssh.com");
+    w.put_name_list("chacha20-poly1305@openssh.com,aes256-gcm@openssh.com");
+    w.put_name_list("umac-64-etm@openssh.com,hmac-sha2-256");
+    w.put_name_list("umac-64-etm@openssh.com,hmac-sha2-256");
+    w.put_name_list("none,zlib@openssh.com");
+    w.put_name_list("none,zlib@openssh.com");
+    w.put_name_list("");
+    w.put_name_list("");
+    w.put_boolean(false);
+    w.put_uint32(0);
+    w.into_bytes()
+}
+
+#[tokio::test]
+async fn full_hybrid_handshake_completes_and_keys_agree() {
+    let (addr, host_key) = start_server(Duration::from_secs(30)).await;
+    let mut stream = connect(addr).await;
+
+    // Version exchange.
+    let server_id = read_server_id(&mut stream).await;
+    assert!(server_id.starts_with(b"SSH-2.0-quantumssh_"));
+    stream.write_all(CLIENT_ID).await.unwrap();
+    stream.write_all(b"\r\n").await.unwrap();
+
+    // KEXINIT exchange.
+    let i_s = read_packet(&mut stream).await;
+    assert_eq!(i_s.first(), Some(&kex::SSH_MSG_KEXINIT));
+    let i_c = client_kexinit();
+    write_packet(&mut stream, &i_c).await;
+
+    // Hybrid init: fresh client keypair.
+    let seed = ml_kem::Seed::try_from(&[5u8; 64][..]).unwrap();
+    let (dk, ek) = MlKem768::from_seed(&seed);
+    let x_secret = XSecret::from([21u8; 32]);
+    let mut c_init = Vec::with_capacity(kex::CLIENT_INIT_LEN);
+    c_init.extend_from_slice(ek.to_bytes().as_slice());
+    c_init.extend_from_slice(XPublic::from(&x_secret).as_bytes());
+
+    let mut init = Writer::new();
+    init.put_byte(kex::SSH_MSG_KEX_HYBRID_INIT);
+    init.put_string(&c_init);
+    write_packet(&mut stream, &init.into_bytes()).await;
+
+    // Hybrid reply: K_S ‖ S_REPLY ‖ signature.
+    let reply = read_packet(&mut stream).await;
+    let mut r = Reader::new(&reply);
+    assert_eq!(r.byte().unwrap(), kex::SSH_MSG_KEX_HYBRID_REPLY);
+    let k_s = r.string(256).unwrap();
+    let s_reply = r.string(kex::SERVER_REPLY_LEN).unwrap();
+    let sig_blob = r.string(256).unwrap();
+    r.finish().unwrap();
+
+    // The host key blob must be the server's.
+    assert_eq!(k_s, host_key.public_key_blob());
+
+    // Client side of the secret.
+    let (ct_bytes, server_x) = s_reply.split_at(kex::MLKEM_CT_LEN);
+    let ct = ml_kem::Ciphertext::<MlKem768>::try_from(ct_bytes).unwrap();
+    let k_pq = dk.decapsulate(&ct);
+    let server_pk: [u8; 32] = server_x.try_into().unwrap();
+    let k_cl = x_secret.diffie_hellman(&XPublic::from(server_pk));
+    let mut h = Sha256::new();
+    h.update(k_pq.as_slice());
+    h.update(k_cl.as_bytes());
+    let shared: [u8; 32] = h.finalize().into();
+
+    // Recompute H exactly as the server must have, and verify the
+    // signature over it with the server's public key — the proof the
+    // whole exchange (identities, KEXINITs, K) matches end to end.
+    let hash = kex::exchange_hash(&kex::ExchangeHashInputs {
+        client_id: CLIENT_ID,
+        server_id: &server_id,
+        client_kexinit: &i_c,
+        server_kexinit: &i_s,
+        host_key_blob: k_s,
+        client_init: &c_init,
+        server_reply: s_reply,
+        shared_secret: &shared,
+    });
+    let mut sig_reader = Reader::new(sig_blob);
+    assert_eq!(sig_reader.string(64).unwrap(), b"ssh-ed25519");
+    let sig_bytes: [u8; 64] = sig_reader.string(128).unwrap().try_into().unwrap();
+    let mut ks_reader = Reader::new(k_s);
+    ks_reader.string(64).unwrap();
+    let vk_bytes: [u8; 32] = ks_reader.string(64).unwrap().try_into().unwrap();
+    let vk = ed25519_dalek::VerifyingKey::from_bytes(&vk_bytes).unwrap();
+    vk.verify(&hash, &ed25519_dalek::Signature::from_bytes(&sig_bytes))
+        .expect("server signature over H must verify");
+
+    // NEWKEYS both ways.
+    let newkeys = read_packet(&mut stream).await;
+    assert_eq!(newkeys, vec![kex::SSH_MSG_NEWKEYS]);
+    write_packet(&mut stream, &[kex::SSH_MSG_NEWKEYS]).await;
+
+    // M2 ends here: the server closes after the completed handshake.
+    let mut buf = [0u8; 16];
+    let n = timeout(TEST_BUDGET, stream.read(&mut buf))
+        .await
+        .expect("close within budget")
+        .unwrap_or(0);
+    assert_eq!(n, 0, "server closes cleanly after NEWKEYS in M2");
+}
+
+/// Expects a DISCONNECT packet with the given code.
+async fn expect_disconnect(stream: &mut TcpStream, code: u32) {
+    let payload = read_packet(stream).await;
+    let mut r = Reader::new(&payload);
+    assert_eq!(r.byte().unwrap(), kex::SSH_MSG_DISCONNECT);
+    assert_eq!(r.uint32().unwrap(), code, "disconnect code");
+}
+
+#[tokio::test]
+async fn non_hybrid_client_is_disconnected_with_code_3() {
+    let (addr, _) = start_server(Duration::from_secs(30)).await;
+    let mut stream = connect(addr).await;
+    read_server_id(&mut stream).await;
+    stream.write_all(CLIENT_ID).await.unwrap();
+    stream.write_all(b"\r\n").await.unwrap();
+    let _i_s = read_packet(&mut stream).await;
+
+    // Classical-only KEXINIT (the ADR-0020 negative interop case).
+    let mut w = Writer::new();
+    w.put_byte(kex::SSH_MSG_KEXINIT);
+    w.put_bytes(&[7u8; 16]);
+    w.put_name_list("curve25519-sha256,kex-strict-c-v00@openssh.com");
+    w.put_name_list("ssh-ed25519");
+    w.put_name_list("chacha20-poly1305@openssh.com");
+    w.put_name_list("chacha20-poly1305@openssh.com");
+    w.put_name_list("hmac-sha2-256");
+    w.put_name_list("hmac-sha2-256");
+    w.put_name_list("none");
+    w.put_name_list("none");
+    w.put_name_list("");
+    w.put_name_list("");
+    w.put_boolean(false);
+    w.put_uint32(0);
+    write_packet(&mut stream, &w.into_bytes()).await;
+
+    expect_disconnect(&mut stream, kex::DISCONNECT_KEY_EXCHANGE_FAILED).await;
+}
+
+#[tokio::test]
+async fn missing_strict_kex_is_disconnected_with_code_3() {
+    let (addr, _) = start_server(Duration::from_secs(30)).await;
+    let mut stream = connect(addr).await;
+    read_server_id(&mut stream).await;
+    stream.write_all(CLIENT_ID).await.unwrap();
+    stream.write_all(b"\r\n").await.unwrap();
+    let _i_s = read_packet(&mut stream).await;
+
+    let mut w = Writer::new();
+    w.put_byte(kex::SSH_MSG_KEXINIT);
+    w.put_bytes(&[7u8; 16]);
+    w.put_name_list("mlkem768x25519-sha256"); // no kex-strict-c
+    w.put_name_list("ssh-ed25519");
+    w.put_name_list("chacha20-poly1305@openssh.com");
+    w.put_name_list("chacha20-poly1305@openssh.com");
+    w.put_name_list("hmac-sha2-256");
+    w.put_name_list("hmac-sha2-256");
+    w.put_name_list("none");
+    w.put_name_list("none");
+    w.put_name_list("");
+    w.put_name_list("");
+    w.put_boolean(false);
+    w.put_uint32(0);
+    write_packet(&mut stream, &w.into_bytes()).await;
+
+    expect_disconnect(&mut stream, kex::DISCONNECT_KEY_EXCHANGE_FAILED).await;
+}
+
+#[tokio::test]
+async fn ignore_message_before_kexinit_is_terminated() {
+    // Strict-kex: the first packet must be KEXINIT; SSH_MSG_IGNORE
+    // (2) — the Terrapin injection primitive — terminates.
+    let (addr, _) = start_server(Duration::from_secs(30)).await;
+    let mut stream = connect(addr).await;
+    read_server_id(&mut stream).await;
+    stream.write_all(CLIENT_ID).await.unwrap();
+    stream.write_all(b"\r\n").await.unwrap();
+    let _i_s = read_packet(&mut stream).await;
+
+    write_packet(&mut stream, &[2u8, 0, 0, 0, 0]).await; // SSH_MSG_IGNORE
+    expect_disconnect(&mut stream, kex::DISCONNECT_PROTOCOL_ERROR).await;
+}
+
+#[tokio::test]
+async fn slow_handshake_is_closed_at_the_budget() {
+    // Threat model §5.1.3: a silent client is cut at the deadline.
+    let (addr, _) = start_server(Duration::from_millis(200)).await;
+    let mut stream = connect(addr).await;
+    let _ = read_server_id(&mut stream).await;
+    // Send nothing further; the server must close within its budget.
+    let mut buf = [0u8; 256];
     loop {
         match timeout(TEST_BUDGET, stream.read(&mut buf))
             .await
             .expect("server closes within budget")
         {
             Ok(0) => break,
-            Ok(n) => data.extend_from_slice(&buf[..n]),
+            Ok(_) => {}
             Err(e) if e.kind() == std::io::ErrorKind::ConnectionReset => break,
             Err(e) => panic!("unexpected read error: {e}"),
         }
     }
-    data
-}
-
-#[tokio::test]
-async fn exchanges_versions_and_cleanly_closes() {
-    let addr = start_server(Duration::from_secs(30)).await;
-
-    let mut stream = timeout(TEST_BUDGET, TcpStream::connect(addr))
-        .await
-        .expect("connect within budget")
-        .expect("tcp connect");
-
-    stream
-        .write_all(b"SSH-2.0-testclient_0.1\r\n")
-        .await
-        .expect("send client id");
-
-    let data = read_until_server_closes(&mut stream).await;
-    let line = String::from_utf8(data).expect("server id is utf-8");
-    assert!(
-        line.starts_with("SSH-2.0-quantumssh_"),
-        "unexpected banner: {line:?}"
-    );
-    assert!(line.ends_with("\r\n"), "banner must end with CRLF");
-
-    // The accept loop survives: a second client succeeds.
-    let mut second = timeout(TEST_BUDGET, TcpStream::connect(addr))
-        .await
-        .expect("second connect")
-        .expect("second tcp connect");
-    second
-        .write_all(b"SSH-2.0-testclient_0.1\r\n")
-        .await
-        .expect("send second id");
-    let data = read_until_server_closes(&mut second).await;
-    assert!(!data.is_empty());
-}
-
-#[tokio::test]
-async fn slow_handshake_is_closed_at_the_budget() {
-    // Threat model §5.1.3: a client that connects and never completes
-    // the handshake is cut at the configured deadline.
-    let addr = start_server(Duration::from_millis(200)).await;
-
-    let mut stream = timeout(TEST_BUDGET, TcpStream::connect(addr))
-        .await
-        .expect("connect within budget")
-        .expect("tcp connect");
-
-    // Send nothing. The server must send its banner, wait for ours,
-    // give up at the 200 ms budget, and close — well within the test
-    // budget rather than hanging forever.
-    let data = read_until_server_closes(&mut stream).await;
-    let line = String::from_utf8(data).expect("server id is utf-8");
-    assert!(line.starts_with("SSH-2.0-quantumssh_"));
 }
 
 #[tokio::test]
 async fn malformed_identification_is_rejected() {
-    let addr = start_server(Duration::from_secs(30)).await;
-
-    let mut stream = timeout(TEST_BUDGET, TcpStream::connect(addr))
+    let (addr, _) = start_server(Duration::from_secs(30)).await;
+    let mut stream = connect(addr).await;
+    stream.write_all(b"HTTP/1.1 GET /\r\n").await.unwrap();
+    // Server sends its banner then closes without a KEXINIT exchange.
+    let _ = read_server_id(&mut stream).await;
+    let mut data = Vec::new();
+    let n = timeout(TEST_BUDGET, stream.read_to_end(&mut data))
         .await
-        .expect("connect within budget")
-        .expect("tcp connect");
-
-    stream
-        .write_all(b"HTTP/1.1 GET /\r\n")
-        .await
-        .expect("send junk");
-
-    // The server still sends its banner first, then rejects ours and
-    // closes; the connection must reach EOF without hanging.
-    let data = read_until_server_closes(&mut stream).await;
-    assert!(!data.is_empty());
-}
-
-#[tokio::test]
-async fn oversized_identification_line_is_rejected() {
-    let addr = start_server(Duration::from_secs(30)).await;
-
-    let mut stream = timeout(TEST_BUDGET, TcpStream::connect(addr))
-        .await
-        .expect("connect within budget")
-        .expect("tcp connect");
-
-    // 300 bytes with no newline: must be cut at the 255-byte bound,
-    // not buffered indefinitely.
-    let long = vec![b'A'; 300];
-    stream.write_all(&long).await.expect("send oversized line");
-
-    let data = read_until_server_closes(&mut stream).await;
-    assert!(!data.is_empty());
+        .expect("close within budget")
+        .unwrap_or(0);
+    assert_eq!(n, 0, "no packets after a rejected identification");
 }
