@@ -33,6 +33,9 @@ zeroize = { workspace = true }
 chacha20 = { workspace = true }
 poly1305 = { workspace = true }
 aes-gcm = { workspace = true }
+# Feature switch only — turns on round-key zeroization inside aes-gcm
+# (threat model section 4.3); never imported by first-party code.
+aes = { workspace = true }
 subtle = { workspace = true }
 
 [dev-dependencies]

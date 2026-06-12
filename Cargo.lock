@@ -21,6 +21,7 @@ dependencies = [
  "cfg-if",
  "cipher",
  "cpufeatures 0.2.17",
+ "zeroize",
 ]
 
 [[package]]
@@ -35,6 +36,7 @@ dependencies = [
  "ctr",
  "ghash",
  "subtle",
+ "zeroize",
 ]
 
 [[package]]
@@ -512,6 +514,7 @@ dependencies = [
 name = "quantumssh-core"
 version = "0.0.1"
 dependencies = [
+ "aes",
  "aes-gcm",
  "chacha20",
  "ed25519-dalek",
