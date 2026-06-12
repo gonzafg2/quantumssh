@@ -435,11 +435,13 @@ where
             reason: "service-not-available",
             disconnect_code: DISCONNECT_SERVICE_NOT_AVAILABLE,
         };
+        // General tier, not `audit`: the ADR-0024 event vocabulary is
+        // closed and this is not one of its events — the schema's
+        // `connection.closed` carries the reason for the record.
         warn!(
-            target: "audit",
             reason = rejection.reason,
             disconnect_code = rejection.disconnect_code,
-            "service.denied"
+            "service denied (ssh-userauth lands in M4)"
         );
         let packet = disconnect_payload(&rejection);
         if let Err(e) = self.write_sealed(&packet).await {
@@ -621,14 +623,17 @@ where
         Ok(())
     }
 
-    /// Emits the audit event, sends the encrypted DISCONNECT, and
-    /// consumes the machine.
+    /// Sends the encrypted DISCONNECT and consumes the machine.
+    ///
+    /// Logged on the general tier, not as `kex.failed`: ADR-0024
+    /// scopes that audit event to ADR-0021's negotiation rejection
+    /// paths, and a post-NEWKEYS protocol violation is not one — the
+    /// schema's `connection.closed` carries the reason for the record.
     async fn reject_sealed(mut self, rejection: Rejection) -> TransportError {
         warn!(
-            target: "audit",
             reason = rejection.reason,
             disconnect_code = rejection.disconnect_code,
-            "kex.failed"
+            "post-kex protocol violation"
         );
         if let Err(e) = self.write_sealed(&disconnect_payload(&rejection)).await {
             debug!(error = %e, "disconnect write failed");
