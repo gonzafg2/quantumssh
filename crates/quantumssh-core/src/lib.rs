@@ -14,3 +14,4 @@
 //! only functional code is merged — the project forbids stubs.
 
 pub mod server;
+pub mod wire;
