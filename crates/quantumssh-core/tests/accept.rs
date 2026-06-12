@@ -1,8 +1,10 @@
-//! Integration tests for the M2 contract: a complete post-quantum
+//! Integration tests for the M3 contract: a complete post-quantum
 //! handshake — version exchange, ADR-0021 KEXINIT negotiation, the
 //! hybrid `mlkem768x25519-sha256` exchange with a verified host-key
-//! signature, NEWKEYS — over real TCP, plus the rejection paths and
-//! the §5.1.3 slow-handshake budget.
+//! signature, NEWKEYS — and the AEAD transport that follows it, over
+//! real TCP: `EXT_INFO` under the new keys, an encrypted service
+//! request, both profile ciphers, tamper rejection, the M2 rejection
+//! paths, and the §5.1.3 slow-handshake budget.
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
@@ -10,6 +12,7 @@ use std::sync::Arc;
 use ed25519_dalek::Verifier;
 use ml_kem::MlKem768;
 use ml_kem::kem::{Decapsulate as _, FromSeed as _, KeyExport as _};
+use quantumssh_core::cipher;
 use quantumssh_core::host_key::HostKey;
 use quantumssh_core::kex;
 use quantumssh_core::server::{Config, Server};
@@ -85,18 +88,16 @@ async fn write_packet(stream: &mut TcpStream, payload: &[u8]) {
     stream.write_all(&packet).await.expect("write packet");
 }
 
-/// A stock-OpenSSH-like client KEXINIT. Returns the exact payload
-/// (kept as `I_C`).
-fn client_kexinit() -> Vec<u8> {
+/// A stock-OpenSSH-like client KEXINIT with the given KEX and cipher
+/// lists. Returns the exact payload (kept as `I_C`).
+fn client_kexinit(kex_list: &str, ciphers: &str) -> Vec<u8> {
     let mut w = Writer::new();
     w.put_byte(kex::SSH_MSG_KEXINIT);
     w.put_bytes(&[7u8; 16]);
-    w.put_name_list(
-        "mlkem768x25519-sha256,curve25519-sha256,ext-info-c,kex-strict-c-v00@openssh.com",
-    );
+    w.put_name_list(kex_list);
     w.put_name_list("ssh-ed25519,rsa-sha2-512");
-    w.put_name_list("chacha20-poly1305@openssh.com,aes256-gcm@openssh.com");
-    w.put_name_list("chacha20-poly1305@openssh.com,aes256-gcm@openssh.com");
+    w.put_name_list(ciphers);
+    w.put_name_list(ciphers);
     w.put_name_list("umac-64-etm@openssh.com,hmac-sha2-256");
     w.put_name_list("umac-64-etm@openssh.com,hmac-sha2-256");
     w.put_name_list("none,zlib@openssh.com");
@@ -108,22 +109,78 @@ fn client_kexinit() -> Vec<u8> {
     w.into_bytes()
 }
 
-#[tokio::test]
-async fn full_hybrid_handshake_completes_and_keys_agree() {
-    let (addr, host_key) = start_server(Duration::from_secs(30)).await;
-    let mut stream = connect(addr).await;
+/// The KEX list of a stock OpenSSH client that offers `ext-info-c`.
+const OPENSSH_KEX_EXT_INFO: &str =
+    "mlkem768x25519-sha256,curve25519-sha256,ext-info-c,kex-strict-c-v00@openssh.com";
+/// The same client without the `ext-info-c` marker.
+const OPENSSH_KEX_PLAIN: &str =
+    "mlkem768x25519-sha256,curve25519-sha256,kex-strict-c-v00@openssh.com";
 
+/// Client-side outcome of a completed handshake: the agreed secret,
+/// the exchange hash (= session id on the first exchange), and the
+/// AEAD ciphers installed for both directions, sequence counters
+/// freshly reset per strict-kex.
+struct SealedClient {
+    /// Seals client→server packets.
+    tx: cipher::PacketCipher,
+    /// Opens server→client packets.
+    rx: cipher::PacketCipher,
+    seq_tx: u32,
+    seq_rx: u32,
+}
+
+impl SealedClient {
+    async fn read_sealed(&mut self, stream: &mut TcpStream) -> Vec<u8> {
+        let mut length_bytes = [0u8; 4];
+        timeout(TEST_BUDGET, stream.read_exact(&mut length_bytes))
+            .await
+            .expect("sealed length within budget")
+            .expect("read sealed length");
+        let body_len = self
+            .rx
+            .body_len(self.seq_rx, length_bytes)
+            .expect("valid sealed length");
+        let mut body = vec![0u8; body_len];
+        timeout(TEST_BUDGET, stream.read_exact(&mut body))
+            .await
+            .expect("sealed body within budget")
+            .expect("read sealed body");
+        let payload = self
+            .rx
+            .open(self.seq_rx, length_bytes, &mut body)
+            .expect("authentic packet");
+        self.seq_rx += 1;
+        payload
+    }
+
+    async fn write_sealed(&mut self, stream: &mut TcpStream, payload: &[u8]) {
+        let packet = self.tx.seal(self.seq_tx, payload).expect("seal");
+        stream.write_all(&packet).await.expect("write sealed");
+        self.seq_tx += 1;
+    }
+}
+
+/// Drives the complete handshake from the client side — verifying the
+/// server's Ed25519 signature over the recomputed exchange hash — and
+/// returns the installed client-side AEAD transport.
+async fn establish(
+    stream: &mut TcpStream,
+    host_key: &HostKey,
+    kex_list: &str,
+    ciphers: &str,
+    negotiated_cipher: &str,
+) -> SealedClient {
     // Version exchange.
-    let server_id = read_server_id(&mut stream).await;
+    let server_id = read_server_id(stream).await;
     assert!(server_id.starts_with(b"SSH-2.0-quantumssh_"));
     stream.write_all(CLIENT_ID).await.unwrap();
     stream.write_all(b"\r\n").await.unwrap();
 
     // KEXINIT exchange.
-    let i_s = read_packet(&mut stream).await;
+    let i_s = read_packet(stream).await;
     assert_eq!(i_s.first(), Some(&kex::SSH_MSG_KEXINIT));
-    let i_c = client_kexinit();
-    write_packet(&mut stream, &i_c).await;
+    let i_c = client_kexinit(kex_list, ciphers);
+    write_packet(stream, &i_c).await;
 
     // Hybrid init: fresh client keypair.
     let seed = ml_kem::Seed::try_from(&[5u8; 64][..]).unwrap();
@@ -136,10 +193,10 @@ async fn full_hybrid_handshake_completes_and_keys_agree() {
     let mut init = Writer::new();
     init.put_byte(kex::SSH_MSG_KEX_HYBRID_INIT);
     init.put_string(&c_init);
-    write_packet(&mut stream, &init.into_bytes()).await;
+    write_packet(stream, &init.into_bytes()).await;
 
     // Hybrid reply: K_S ‖ S_REPLY ‖ signature.
-    let reply = read_packet(&mut stream).await;
+    let reply = read_packet(stream).await;
     let mut r = Reader::new(&reply);
     assert_eq!(r.byte().unwrap(), kex::SSH_MSG_KEX_HYBRID_REPLY);
     let k_s = r.string(256).unwrap();
@@ -185,17 +242,148 @@ async fn full_hybrid_handshake_completes_and_keys_agree() {
         .expect("server signature over H must verify");
 
     // NEWKEYS both ways.
-    let newkeys = read_packet(&mut stream).await;
+    let newkeys = read_packet(stream).await;
     assert_eq!(newkeys, vec![kex::SSH_MSG_NEWKEYS]);
-    write_packet(&mut stream, &[kex::SSH_MSG_NEWKEYS]).await;
+    write_packet(stream, &[kex::SSH_MSG_NEWKEYS]).await;
 
-    // M2 ends here: the server closes after the completed handshake.
-    let mut buf = [0u8; 16];
-    let n = timeout(TEST_BUDGET, stream.read(&mut buf))
+    // RFC 4253 §7.2 key schedule, client side: tx = client→server
+    // ('C' key, 'A' IV), rx = server→client ('D', 'B'). The session
+    // id is the first exchange hash; strict-kex resets both counters.
+    let session_id = hash;
+    let derive = |letter: u8, len: usize| {
+        let mut out = kex::derive_key(&shared, &hash, letter, &session_id, len);
+        out.truncate(len);
+        out
+    };
+    let name = negotiated_cipher;
+    let tx = cipher::PacketCipher::new(
+        name,
+        &derive(b'C', cipher::PacketCipher::key_len(name)),
+        &derive(b'A', cipher::PacketCipher::iv_len(name)),
+    )
+    .expect("client tx cipher");
+    let rx = cipher::PacketCipher::new(
+        name,
+        &derive(b'D', cipher::PacketCipher::key_len(name)),
+        &derive(b'B', cipher::PacketCipher::iv_len(name)),
+    )
+    .expect("client rx cipher");
+    SealedClient {
+        tx,
+        rx,
+        seq_tx: 0,
+        seq_rx: 0,
+    }
+}
+
+/// The encrypted `SSH_MSG_SERVICE_REQUEST` for `ssh-userauth`.
+fn service_request_payload() -> Vec<u8> {
+    let mut w = Writer::new();
+    w.put_byte(5); // SSH_MSG_SERVICE_REQUEST
+    w.put_string(b"ssh-userauth");
+    w.into_bytes()
+}
+
+/// Asserts a sealed DISCONNECT with `SSH_DISCONNECT_SERVICE_NOT_AVAILABLE`.
+fn assert_service_denied(payload: &[u8]) {
+    let mut r = Reader::new(payload);
+    assert_eq!(r.byte().unwrap(), kex::SSH_MSG_DISCONNECT);
+    assert_eq!(
+        r.uint32().unwrap(),
+        7,
+        "SSH_DISCONNECT_SERVICE_NOT_AVAILABLE"
+    );
+}
+
+#[tokio::test]
+async fn full_handshake_then_encrypted_ext_info_and_service_denial_chacha20() {
+    let (addr, host_key) = start_server(Duration::from_secs(30)).await;
+    let mut stream = connect(addr).await;
+    let mut client = establish(
+        &mut stream,
+        &host_key,
+        OPENSSH_KEX_EXT_INFO,
+        "chacha20-poly1305@openssh.com,aes256-gcm@openssh.com",
+        "chacha20-poly1305@openssh.com",
+    )
+    .await;
+
+    // ext-info-c was offered: the server's first encrypted packet
+    // must be EXT_INFO with server-sig-algs = ssh-ed25519 (RFC 8308;
+    // ADR-0021).
+    let ext_info = client.read_sealed(&mut stream).await;
+    let mut r = Reader::new(&ext_info);
+    assert_eq!(r.byte().unwrap(), kex::SSH_MSG_EXT_INFO);
+    assert_eq!(r.uint32().unwrap(), 1, "exactly one extension");
+    assert_eq!(r.string(64).unwrap(), b"server-sig-algs");
+    assert_eq!(r.string(64).unwrap(), b"ssh-ed25519");
+    r.finish().unwrap();
+
+    // The encrypted service request crosses; ssh-userauth is M4, so
+    // M3 answers with a sealed DISCONNECT(7).
+    client
+        .write_sealed(&mut stream, &service_request_payload())
+        .await;
+    let denial = client.read_sealed(&mut stream).await;
+    assert_service_denied(&denial);
+}
+
+#[tokio::test]
+async fn full_handshake_with_aes256_gcm_and_no_ext_info() {
+    let (addr, host_key) = start_server(Duration::from_secs(30)).await;
+    let mut stream = connect(addr).await;
+    // Client prefers AES-GCM and does not offer ext-info-c: no
+    // EXT_INFO may arrive, and the GCM path must carry the exchange.
+    let mut client = establish(
+        &mut stream,
+        &host_key,
+        OPENSSH_KEX_PLAIN,
+        "aes256-gcm@openssh.com,chacha20-poly1305@openssh.com",
+        "aes256-gcm@openssh.com",
+    )
+    .await;
+
+    client
+        .write_sealed(&mut stream, &service_request_payload())
+        .await;
+    let denial = client.read_sealed(&mut stream).await;
+    assert_service_denied(&denial);
+}
+
+#[tokio::test]
+async fn tampered_encrypted_packet_drops_the_connection() {
+    let (addr, host_key) = start_server(Duration::from_secs(30)).await;
+    let mut stream = connect(addr).await;
+    let mut client = establish(
+        &mut stream,
+        &host_key,
+        OPENSSH_KEX_PLAIN,
+        "chacha20-poly1305@openssh.com",
+        "chacha20-poly1305@openssh.com",
+    )
+    .await;
+
+    // Seal a legitimate service request, then flip one ciphertext bit.
+    let mut packet = client
+        .tx
+        .seal(client.seq_tx, &service_request_payload())
+        .expect("seal");
+    let mid = packet.len() / 2;
+    packet[mid] ^= 0x01;
+    stream.write_all(&packet).await.expect("write tampered");
+
+    // Fail closed: the server terminates without yielding anything an
+    // unauthenticated peer could use (a DISCONNECT may or may not
+    // make it out before the reset; the connection must die).
+    let mut data = Vec::new();
+    let outcome = timeout(TEST_BUDGET, stream.read_to_end(&mut data))
         .await
-        .expect("close within budget")
-        .unwrap_or(0);
-    assert_eq!(n, 0, "server closes cleanly after NEWKEYS in M2");
+        .expect("server must drop the connection within the budget");
+    match outcome {
+        Ok(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::ConnectionReset => {}
+        Err(e) => panic!("unexpected read error: {e}"),
+    }
 }
 
 /// Expects a DISCONNECT packet with the given code.

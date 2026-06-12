@@ -17,4 +17,5 @@ pub mod cipher;
 pub mod host_key;
 pub mod kex;
 pub mod server;
+pub mod transport;
 pub mod wire;
