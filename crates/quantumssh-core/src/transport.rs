@@ -99,7 +99,10 @@ pub struct HybridInit {
 pub struct NewKeys {
     negotiated: Negotiated,
     shared_secret: Zeroizing<[u8; 32]>,
-    exchange_hash: [u8; 32],
+    /// `H` — also the session identifier (RFC 4253 §7.2). Derived
+    /// with `K` as input, so it gets the same erase-on-drop handling
+    /// as the secret itself (threat model §4.3).
+    exchange_hash: Zeroizing<[u8; 32]>,
 }
 
 /// Stage 4 — first encrypted stage: the only acceptable packet is
@@ -253,7 +256,7 @@ where
         };
 
         let host_key_blob = host_key.public_key_blob();
-        let exchange_hash = kex::exchange_hash(&ExchangeHashInputs {
+        let exchange_hash = Zeroizing::new(kex::exchange_hash(&ExchangeHashInputs {
             client_id: &self.stage.peer_id_line,
             server_id: wire::SERVER_ID.as_bytes(),
             client_kexinit: &self.stage.i_c,
@@ -262,8 +265,8 @@ where
             client_init,
             server_reply: &outcome.server_reply,
             shared_secret: &outcome.shared_secret,
-        });
-        let signature = host_key.sign(&exchange_hash);
+        }));
+        let signature = host_key.sign(exchange_hash.as_ref());
 
         let mut reply = Writer::new();
         reply.put_byte(kex::SSH_MSG_KEX_HYBRID_REPLY);
@@ -320,11 +323,11 @@ where
 
         // Key schedule (RFC 4253 §7.2; HASH = SHA-256). The first
         // exchange hash is the session identifier.
-        let session_id = self.stage.exchange_hash;
+        let session_id = &self.stage.exchange_hash;
         let k = &self.stage.shared_secret;
         let h = &self.stage.exchange_hash;
         let derive = |letter: u8, len: usize| -> Zeroizing<Vec<u8>> {
-            let mut out = kex::derive_key(k, h, letter, &session_id, len);
+            let mut out = kex::derive_key(k, h, letter, session_id, len);
             out.truncate(len);
             out
         };
