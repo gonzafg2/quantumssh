@@ -28,6 +28,12 @@ x25519-dalek = { workspace = true }
 ed25519-dalek = { workspace = true }
 sha2 = { workspace = true }
 zeroize = { workspace = true }
+# AEAD packet layer (M3): chacha20-poly1305@openssh.com from loose
+# primitives, aes256-gcm@openssh.com per RFC 5647.
+chacha20 = { workspace = true }
+poly1305 = { workspace = true }
+aes-gcm = { workspace = true }
+subtle = { workspace = true }
 
 [dev-dependencies]
 # Integration tests construct their own runtime; the library does not.
