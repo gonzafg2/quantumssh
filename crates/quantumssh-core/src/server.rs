@@ -15,9 +15,11 @@ use std::io;
 use std::net::SocketAddr;
 use std::time::Duration;
 
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tracing::{Instrument, debug, info, info_span, warn};
+
+use crate::wire::{self, WireError};
 
 /// Server configuration assembled by the binary from its CLI.
 #[derive(Debug, Clone)]
@@ -106,14 +108,61 @@ impl Server {
 
 /// Handles one connection within the handshake budget.
 ///
-/// M0 behaviour: the connection is shut down cleanly (explicit FIN)
-/// and its closure logged. The SSH protocol (version exchange onwards)
-/// is introduced in the next milestone; until then the server's
-/// observable contract is "accepts TCP, closes immediately", which is
-/// exactly what the integration test asserts.
+/// M1 behaviour — the version exchange (RFC 4253 §4.2): send our
+/// identification line, read and validate the peer's (one line, at
+/// most [`wire::MAX_ID_LINE`] bytes, `SSH-2.0` only — zero legacy),
+/// then close cleanly. The key exchange begins here in the next
+/// milestone.
 async fn handle(mut stream: TcpStream) {
+    let mut id_line = Vec::with_capacity(64);
+    id_line.extend_from_slice(wire::SERVER_ID.as_bytes());
+    id_line.extend_from_slice(b"\r\n");
+    if let Err(e) = stream.write_all(&id_line).await {
+        info!(reason = %format!("identification write failed: {e}"), "connection.closed");
+        return;
+    }
+
+    match read_peer_id(&mut stream).await {
+        Ok(peer) => {
+            debug!(peer_software = %peer.softwareversion, "peer identification accepted");
+        }
+        Err(e) => {
+            info!(reason = %format!("identification rejected: {e}"), "connection.closed");
+            return;
+        }
+    }
+
+    // M2 continues with KEXINIT from this point.
     if let Err(e) = stream.shutdown().await {
         debug!(error = %e, "tcp shutdown failed");
     }
     info!(reason = "closed", "connection.closed");
+}
+
+/// Reads and parses the peer's identification line.
+///
+/// As the server, the client's **first** line must be its
+/// identification (RFC 4253 §4.2 allows pre-banner lines only in the
+/// server→client direction). The read is bounded byte-by-byte at
+/// [`wire::MAX_ID_LINE`]; anything longer, binary, or non-`SSH-2.0`
+/// fails closed.
+async fn read_peer_id<R: AsyncRead + Unpin>(reader: &mut R) -> Result<wire::PeerId, WireError> {
+    let mut line = Vec::with_capacity(64);
+    loop {
+        if line.len() >= wire::MAX_ID_LINE {
+            return Err(WireError::BadIdentification);
+        }
+        let byte = reader
+            .read_u8()
+            .await
+            .map_err(|_| WireError::BadIdentification)?;
+        if byte == b'\n' {
+            break;
+        }
+        line.push(byte);
+    }
+    if line.last() == Some(&b'\r') {
+        line.pop();
+    }
+    wire::parse_peer_id(&line)
 }

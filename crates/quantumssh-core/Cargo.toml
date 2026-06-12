@@ -18,6 +18,9 @@ tokio = { workspace = true, features = ["net", "io-util", "time", "sync", "rt"] 
 # ADR-0024: the library emits through the `tracing` facade only and
 # never installs a subscriber.
 tracing = { workspace = true }
+# OS randomness for protocol fields that must be unpredictable
+# (packet padding, the M2 KEXINIT cookie).
+getrandom = { workspace = true }
 
 [dev-dependencies]
 # Integration tests construct their own runtime; the library does not.
