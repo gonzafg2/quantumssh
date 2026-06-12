@@ -1,0 +1,22 @@
+[package]
+name = "quantumssh"
+version = "0.0.1"
+description = "QuantumSSH server binary: a thin entrypoint (CLI parsing, log subscriber, runtime construction) over quantumssh-core."
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+quantumssh-core = { path = "../quantumssh-core" }
+# ADR-0022: the binary is the only crate that constructs the runtime.
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tracing = { workspace = true }
+# ADR-0024: the binary is the only place a subscriber is constructed.
+tracing-subscriber = { workspace = true, features = ["fmt", "env-filter", "json", "ansi"] }
+
+[lints]
+workspace = true

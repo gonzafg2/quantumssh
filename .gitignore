@@ -4,10 +4,8 @@
 *.pdb
 
 # Cargo
-Cargo.lock
-# Note: Cargo.lock IS committed for binary crates and applications.
-# When the workspace adds a binary, remove the line above and commit
-# Cargo.lock for that crate. See:
+# Cargo.lock is committed: the workspace ships a binary, and the
+# audit workflow's guard (ADR-0011) keys on its presence. See:
 # https://blog.rust-lang.org/2023/08/29/committing-lockfiles.html
 
 # Environment / local secrets

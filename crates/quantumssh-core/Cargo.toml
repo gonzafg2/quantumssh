@@ -1,0 +1,27 @@
+[package]
+name = "quantumssh-core"
+version = "0.0.1"
+description = "Core library of the QuantumSSH server: transport, key exchange, authentication, and channel layers (greenfield, post-quantum-first)."
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+rust-version.workspace = true
+publish = false # ADR-0017: not published until Phase 3+
+
+[dependencies]
+# ADR-0022: the library links the I/O and task features it needs to
+# define async fns (`rt` gates `tokio::spawn`/`spawn_blocking`); it
+# never constructs a runtime.
+tokio = { workspace = true, features = ["net", "io-util", "time", "sync", "rt"] }
+# ADR-0024: the library emits through the `tracing` facade only and
+# never installs a subscriber.
+tracing = { workspace = true }
+
+[dev-dependencies]
+# Integration tests construct their own runtime; the library does not.
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+[lints]
+workspace = true
