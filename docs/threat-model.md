@@ -381,8 +381,9 @@ forwarding is enabled (`T1563.001`, `T1550`), tampering with the
 audit channel to obscure the intrusion (`T1685.004`, `T1685.006`).
 
 **Implication for design.** The pre-authentication parser must be
-the smallest possible attack surface, with no `unsafe` Rust in the
-default profile. Logging must be a one-way path to a sink the
+the smallest possible attack surface, with no first-party `unsafe`
+Rust in the default profile (dependencies on that path may contain
+audited internal `unsafe`, per ADR-0018's carve-out). Logging must be a one-way path to a sink the
 attacker cannot reach from inside the server process. Every
 post-authentication action must be attributable to the
 authenticated user.
@@ -702,8 +703,12 @@ availability (panic loop).
 fuzzer (`cargo-fuzz`, OSS-Fuzz) with corpora derived from the
 RFC 4253 binary packet grammar. No path that observes attacker-
 chosen length fields may allocate without an explicit bound. No
-`unsafe` Rust is permitted in the pre-authentication path; any
-exception requires an RFC.
+first-party `unsafe` Rust is permitted in the pre-authentication
+path — workspace-enforced by ADR-0018's `unsafe_code = "forbid"`,
+which is what an auditor should test against. Dependencies on that
+path may contain internal `unsafe`; they are admitted only through
+the RFC lane (the RFC-0003 primitive crates, the RFC-0004 runtime).
+Any first-party exception requires an RFC.
 
 #### 5.1.3 Connection exhaustion and slowloris
 
@@ -1217,8 +1222,10 @@ repeating it.
 ### 6.2 Implementation posture
 
 - **Memory safety as a primary defence.** Rust with the borrow
-  checker, no `unsafe` in the pre-authentication code path in the
-  default profile. Defends §5.1.2.
+  checker, no first-party `unsafe` in the pre-authentication code
+  path in the default profile (ADR-0018; dependency-internal
+  `unsafe` is admitted through the RFC lane — RFC-0003, RFC-0004).
+  Defends §5.1.2.
 - **Smallest plausible attack surface.** The MVP target is pubkey
   auth (Phase 1), command execution (Phase 1), PTY and SFTP
   (Phase 2). Everything else is opt-in behind a feature flag.
