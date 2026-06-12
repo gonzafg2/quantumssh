@@ -23,6 +23,7 @@ Phase 1 emits the following events via `tracing`. Each connection is wrapped in 
 |---|---|---|
 | `connection.accepted` | INFO | — |
 | `kex.completed` | INFO | `kex_algorithm`, `host_key_algorithm` |
+| `kex.failed` | WARN | `reason`, `disconnect_code` |
 | `auth.succeeded` | INFO | `authenticated_identity`, `auth_method` |
 | `auth.failed` | WARN | `auth_method`, `failure_count` |
 | `exec.started` | INFO | `authenticated_identity`, `executing_uid`, `command` |
@@ -37,11 +38,13 @@ Field semantics that are load-bearing:
 - **`executing_uid`** is the numeric OS UID the child process ran under — in Phase 1 always the service-account UID (§8.12, [ADR-0016](0016-phase-1-service-account-uid-model.md)). It is a **first-class field on every `exec.*` event**, distinct from `authenticated_identity`, so the gap between "who authenticated" and "what UID ran" is machine-readable, exactly as §2.7 requires. The two fields being separate is the point; collapsing them would hide the gap.
 - **`command`** is recorded verbatim as a structured field (not interpolated into a message string), so a downstream JSON consumer gets it as a discrete value and terminal-escape content in the command cannot corrupt a naive log reader (threat-model §5.4.3).
 - **`auth.failed.failure_count`** is per-source (the span's `peer_addr`), **not** per-target-user. Per-user counters are deliberately omitted: on a pubkey-only server they create a user-enumeration oracle (threat-model §5.3.1). Session content is never logged — only this event metadata (§5.4.3, §5.4.4).
+- **`kex.failed`** records the project's central security enforcement firing: a peer that does not offer the hybrid KEX, does not negotiate strict-kex, would negotiate a marker pseudo-algorithm, or whose hybrid halves fail (ADR-0021's rejection paths, CLAUDE.md "fail closed"). `reason` is a short structured enum-like string (e.g. `no-hybrid-kex`, `no-strict-kex`), `disconnect_code` the numeric SSH disconnect reason sent (3). No negotiation payload or key material is ever logged with it.
 
 **Library / binary split:**
 
 - `quantumssh-core` emits events using only the `tracing` facade (`tracing::{info!, warn!, error!, info_span!}`). It **never** initialises a subscriber and never picks an output format. A library that installs a global subscriber is unusable by any embedder, and Phase 4's client would collide with it.
 - The `quantumssh` binary is the **only** place a subscriber is constructed. Phase 1 uses `tracing-subscriber` with `EnvFilter` (honouring `RUST_LOG`) and offers two formats selected at startup: a human-readable default and a `--log-format json` mode (`tracing_subscriber::fmt().json()`) for the one-way-to-an-external-sink shipping that threat-model §5.5.1 and §6.2 describe.
+- **The audit tier is not operator-suppressible.** The §2.7-mandated events (`auth.succeeded`, `auth.failed`, `exec.started`, `exec.finished`, plus `kex.failed`) are emitted under a dedicated `audit` target, and the binary's filter is built as `RUST_LOG` directives layered **on top of a fixed floor directive that pins the audit target at its declared levels**. `RUST_LOG=warn` quiets noise; it cannot silently discard the audit trail — that would be a fail-open on the §2.7 record. Disabling audit events is not a supported configuration in Phase 1.
 - **Schema versioning starts at Phase 2.** Phase 1's schema is not yet a stability contract (no users exist); the JSON output gains an explicit `schema_version` field when Phase 2 cuts `0.1.0`, per §6.2. This ADR is the input that Phase 2's versioned schema freezes.
 
 ## Consequences
@@ -49,7 +52,7 @@ Field semantics that are load-bearing:
 ### Positive
 
 - The two §2.7-mandated fields are guaranteed present and structurally separate from the first crate, not bolted on later. The §8.12 UID gap is auditable in logs by construction.
-- Structured fields (not string interpolation) make the logs JSON-shippable and immune to the terminal-escape log-injection of §5.4.3, and align with the one-way-sink posture of §5.5.1.
+- Structured fields (not string interpolation) make the logs JSON-shippable, and in the JSON format immune to the terminal-escape log-injection of §5.4.3 (serde escapes control bytes); they align with the one-way-sink posture of §5.5.1. The human-readable formatter writes field values verbatim — including any ANSI sequences in an attacker-chosen `command` — so it is the interactive-development format; production shipping is the JSON mode. The §5.4.3 defence is a property of the JSON pipeline, not of structured fields per se.
 - The library/binary split keeps `quantumssh-core` embeddable (Phase 4 client, tests, downstream users) — no global-subscriber landmine.
 - Fixing the event list now means Phase 2's schema-freeze has a reviewed starting point rather than whatever emerged ad hoc.
 
