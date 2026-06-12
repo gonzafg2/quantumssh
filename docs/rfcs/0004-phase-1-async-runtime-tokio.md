@@ -26,7 +26,7 @@ What this RFC does **not** decide: the version pin, which Tokio features are lin
 
 - `cargo deny` (licences, advisories, sources) and `cargo audit` run in CI on every PR (ADR-0011 guards self-enable with the first crate).
 - The feature allowlist (ADR-0022) links only the modules the server uses — no `full` grab-bag — keeping the audited surface enumerable.
-- The version is pinned to a published LTS line with a documented end-of-support date; bumps are deliberate, reviewed events (errata per [ADR-0015](../adr/0015-permit-annotated-errata-in-adrs.md)), not silent lockfile drift.
+- The version is pinned to a published LTS line with a documented end-of-support date; bumps are deliberate, reviewed events — a superseding ADR to ADR-0022, since a new pin is a decision change, which [ADR-0015](../adr/0015-permit-annotated-errata-in-adrs.md) routes to supersession rather than errata — not silent lockfile drift.
 - Tokio's security posture is mature: RUSTSEC advisories exist and have been handled with timely point releases and backports to LTS lines, which is the behaviour the pin relies on.
 
 **Boundary.** The library crate exposes async functions; only the binary constructs a runtime. No protocol type embeds runtime handles, preserving the option (Phase 4, client library) of embedding the core under a caller-provided runtime.
