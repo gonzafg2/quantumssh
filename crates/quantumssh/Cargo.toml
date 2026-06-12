@@ -17,6 +17,8 @@ tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 tracing = { workspace = true }
 # ADR-0024: the binary is the only place a subscriber is constructed.
 tracing-subscriber = { workspace = true, features = ["fmt", "env-filter", "json", "ansi"] }
+# Threat model section 4.3: the host-key PEM buffer is erased on drop.
+zeroize = { workspace = true }
 
 [lints]
 workspace = true

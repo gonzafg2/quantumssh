@@ -117,9 +117,10 @@ impl HostKey {
         if public.len() != 32 || scalar_and_public.len() != 64 {
             return Err(HostKeyError::Unsupported);
         }
-        let seed: [u8; 32] = scalar_and_public[..32]
-            .try_into()
-            .map_err(|_| HostKeyError::Unsupported)?;
+        let seed = Zeroizing::new(
+            <[u8; 32]>::try_from(&scalar_and_public[..32])
+                .map_err(|_| HostKeyError::Unsupported)?,
+        );
         let signing = SigningKey::from_bytes(&seed);
         // Cross-check: the file's public halves must match the seed.
         let derived = signing.verifying_key();

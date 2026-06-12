@@ -16,6 +16,7 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{EnvFilter, Layer};
+use zeroize::Zeroizing;
 
 const DEFAULT_LISTEN: &str = "127.0.0.1:2222";
 const DEFAULT_HANDSHAKE_TIMEOUT_SECS: u64 = 30;
@@ -188,8 +189,11 @@ async fn main() -> ExitCode {
         error!(message = "--host-key is required", "server.config_error");
         return ExitCode::FAILURE;
     };
+    // Zeroizing: the PEM holds the private seed; erase the buffer on
+    // drop instead of leaving it readable for the process lifetime
+    // (threat model §4.3).
     let pem = match std::fs::read_to_string(&host_key_path) {
-        Ok(pem) => pem,
+        Ok(pem) => Zeroizing::new(pem),
         Err(e) => {
             error!(message = %format!("cannot read host key {host_key_path}: {e}"), "server.config_error");
             return ExitCode::FAILURE;
@@ -202,6 +206,7 @@ async fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    drop(pem);
 
     let config = Config {
         listen: cli.listen,
