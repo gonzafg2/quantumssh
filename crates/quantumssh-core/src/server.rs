@@ -6,9 +6,14 @@
 //! one, the per-connection future is `Send`-checked by the compiler
 //! from the first crate, and a panicking handler surfaces as a logged
 //! `JoinError` instead of taking the server down.
+//!
+//! Every connection runs under the handshake budget ADR-0022 fixes
+//! (default 30 seconds, configurable): a connection that does not
+//! complete within it is closed with `reason = "handshake-timeout"`.
 
 use std::io;
 use std::net::SocketAddr;
+use std::time::Duration;
 
 use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpListener, TcpStream};
@@ -19,6 +24,9 @@ use tracing::{Instrument, debug, info, info_span, warn};
 pub struct Config {
     /// Address the TCP listener binds to.
     pub listen: SocketAddr,
+    /// Budget from TCP accept to handshake completion (ADR-0022:
+    /// 30 seconds by default, configurable via `--handshake-timeout`).
+    pub handshake_timeout: Duration,
 }
 
 /// A bound, not-yet-serving server.
@@ -27,13 +35,19 @@ pub struct Config {
 /// integration tests) can bind to an ephemeral port (`:0`), read the
 /// actual address with [`Server::local_addr`], and only then start the
 /// accept loop.
+///
+/// Note: the ADR-0024 `server.started` event is **not** emitted yet —
+/// its schema mandates `host_key_fingerprint`, which cannot exist
+/// before the host-key milestone. Per the schema-complete-or-nothing
+/// posture, the event lands together with host-key loading.
 #[derive(Debug)]
 pub struct Server {
     listener: TcpListener,
+    handshake_timeout: Duration,
 }
 
 impl Server {
-    /// Binds the TCP listener and emits `server.started`.
+    /// Binds the TCP listener.
     ///
     /// # Errors
     ///
@@ -41,9 +55,10 @@ impl Server {
     /// bound (in use, permission denied, …).
     pub async fn bind(config: &Config) -> io::Result<Self> {
         let listener = TcpListener::bind(config.listen).await?;
-        let listen_addr = listener.local_addr()?;
-        info!(listen_addr = %listen_addr, "server.started");
-        Ok(Self { listener })
+        Ok(Self {
+            listener,
+            handshake_timeout: config.handshake_timeout,
+        })
     }
 
     /// The address the listener is actually bound to.
@@ -61,9 +76,10 @@ impl Server {
     /// Per ADR-0022 the loop is sequential: one connection is handled
     /// to completion before the next is accepted. Each connection runs
     /// inside a `connection` span carrying `peer_addr` (ADR-0024), is
-    /// spawned (enforcing `Send` on the per-connection future), and is
-    /// joined immediately. A `JoinError` — a panicked handler — is
-    /// logged as `connection.closed` with the panic as reason; it never
+    /// spawned (enforcing `Send` on the per-connection future), is
+    /// joined immediately, and is bounded by the handshake budget. A
+    /// `JoinError` — a panicked handler — is logged as
+    /// `connection.closed` with the panic as reason; it never
     /// terminates the accept loop.
     ///
     /// # Errors
@@ -71,25 +87,31 @@ impl Server {
     /// Returns the underlying I/O error when accepting a connection
     /// fails at the listener level.
     pub async fn serve(self) -> io::Result<()> {
+        let budget = self.handshake_timeout;
         loop {
             let (stream, peer_addr) = self.listener.accept().await?;
             let span = info_span!("connection", peer_addr = %peer_addr);
-            if let Err(join_err) = tokio::spawn(handle(stream).instrument(span)).await {
+            let connection = async move {
+                info!("connection.accepted");
+                if tokio::time::timeout(budget, handle(stream)).await.is_err() {
+                    warn!(reason = "handshake-timeout", "connection.closed");
+                }
+            };
+            if let Err(join_err) = tokio::spawn(connection.instrument(span)).await {
                 warn!(peer_addr = %peer_addr, reason = %join_err, "connection.closed");
             }
         }
     }
 }
 
-/// Handles one connection.
+/// Handles one connection within the handshake budget.
 ///
-/// M0 behaviour: the connection is accepted, logged, and shut down
-/// cleanly (explicit FIN). The SSH protocol (version exchange onwards)
+/// M0 behaviour: the connection is shut down cleanly (explicit FIN)
+/// and its closure logged. The SSH protocol (version exchange onwards)
 /// is introduced in the next milestone; until then the server's
 /// observable contract is "accepts TCP, closes immediately", which is
 /// exactly what the integration test asserts.
 async fn handle(mut stream: TcpStream) {
-    info!("connection.accepted");
     if let Err(e) = stream.shutdown().await {
         debug!(error = %e, "tcp shutdown failed");
     }

@@ -12,6 +12,7 @@ use tokio::time::{Duration, timeout};
 async fn accepts_and_cleanly_closes_a_tcp_connection() {
     let config = Config {
         listen: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+        handshake_timeout: Duration::from_secs(30),
     };
     let server = Server::bind(&config).await.expect("bind ephemeral port");
     let addr = server.local_addr().expect("local addr");
