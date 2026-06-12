@@ -16,7 +16,7 @@ QuantumSSH adopts **Tokio** as the async runtime for the Phase 1 server. This RF
 
 ## Guide-level explanation
 
-Tokio provides the TCP listener/stream types, the async I/O traits the binary-packet framing is written against, timers for handshake budgets (threat model §5.1.3), and the task primitives the server composes. It is the substrate `server.rs` is built on; it is **not** part of the protocol or cryptographic logic, which remain runtime-agnostic in their core types.
+Tokio provides the TCP listener/stream types, the async I/O traits the binary-packet framing is written against, timers for handshake budgets (threat model §5.1.3), and the task primitives the server composes. It will be the substrate the `server` module (TBD — no code has landed yet) is built on; it is **not** part of the protocol or cryptographic logic, which remain runtime-agnostic in their core types.
 
 What this RFC does **not** decide: the version pin, which Tokio features are linked, single- vs multi-threaded scheduler, and the Phase 1 accept-loop shape. Those are operative choices with their own trade-offs, recorded in ADR-0022 so they can be revisited (superseded) without re-opening the adoption itself.
 
@@ -25,7 +25,7 @@ What this RFC does **not** decide: the version pin, which Tokio features are lin
 **Trust-base impact.** Tokio brings itself plus a small transitive set (notably `mio` for the OS event queue). These crates contain internal `unsafe` — permitted by [ADR-0018](../adr/0018-phase-1-unsafe-code-forbid-workspace.md), which forbids first-party `unsafe` while accepting it in audited dependencies — and sit under the pre-auth path. This RFC carries the companion qualification of `docs/threat-model.md` (§3.2.4, §5.1.2, §6.2): those passages said "no `unsafe` in the pre-authentication path" without the first-party qualifier, a literal guarantee any dependency with internal `unsafe` on that path — the RFC-0003 primitives included — would already read as violating. They now state the first-party rule, name ADR-0018 as the enforced (and auditable) mechanism, and route dependency-internal `unsafe` through the RFC lane explicitly. Mitigations, all already in place or decided:
 
 - `cargo deny` (licences, advisories, sources) and `cargo audit` run in CI on every PR (ADR-0011 guards self-enable with the first crate).
-- The feature allowlist (ADR-0022) links only the modules the server uses — no `full` grab-bag — keeping the audited surface enumerable.
+- The feature allowlist (ADR-0022, in review) will link only the modules the server uses — no `full` grab-bag — keeping the audited surface enumerable.
 - The version is pinned to a published LTS line with a documented end-of-support date; bumps are deliberate, reviewed events — a superseding ADR to ADR-0022, since a new pin is a decision change, which [ADR-0015](../adr/0015-permit-annotated-errata-in-adrs.md) routes to supersession rather than errata — not silent lockfile drift.
 - Tokio's security posture is mature: RUSTSEC advisories exist and have been handled with timely point releases and backports to LTS lines, which is the behaviour the pin relies on.
 
