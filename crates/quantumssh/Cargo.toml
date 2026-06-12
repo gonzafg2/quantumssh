@@ -11,7 +11,7 @@ rust-version.workspace = true
 publish = false
 
 [dependencies]
-quantumssh-core = { path = "../quantumssh-core" }
+quantumssh-core = { path = "../quantumssh-core", version = "0.0.1" }
 # ADR-0022: the binary is the only crate that constructs the runtime.
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 tracing = { workspace = true }
