@@ -36,7 +36,6 @@ ml-kem        = { version = "0.3.0", default-features = false, features = ["zero
 x25519-dalek  = { version = "2.0.1", default-features = false, features = ["static_secrets", "zeroize"] }
 ed25519-dalek = { version = "2", default-features = false, features = ["std", "rand_core", "zeroize"] }
 sha2          = { version = "0.10", default-features = false }
-subtle        = { version = "2", default-features = false }
 zeroize       = { version = "1", default-features = false, features = ["zeroize_derive"] }
 
 # Lints applied to every crate in the workspace via

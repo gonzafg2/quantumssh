@@ -402,7 +402,6 @@ dependencies = [
  "getrandom 0.3.4",
  "ml-kem",
  "sha2",
- "subtle",
  "tokio",
  "tracing",
  "x25519-dalek",
