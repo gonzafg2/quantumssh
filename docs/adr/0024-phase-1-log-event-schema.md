@@ -7,7 +7,7 @@
 
 ## Context
 
-RFC-0003 and the README commit Phase 1 to "structured logging via `tracing`", and `docs/threat-model.md` §2.7 goes further: it names two fields the audit record **must** carry on every command-execution boundary — `authenticated_identity` (the key fingerprint that authenticated) and `executing_uid` (the OS UID the command actually ran under) — precisely so the §8.12 gap (Phase 1 runs commands as the service account, not a per-user UID) is visible to anyone reading the logs. §6.2 then states that the log schema becomes part of the public interface from Phase 2 onward.
+RFC-0003 and the README commit Phase 1 to "structured logging via `tracing`", and `docs/threat-model.md` §2.7 goes further: it names two fields the audit record **must** carry on every command-execution boundary — `authenticated_identity` (the key fingerprint that authenticated) and `executing_uid` (the OS UID the command actually ran under) — precisely so the §8.12 gap (Phase 1 runs commands as the service account, not a per-user UID) is visible to anyone reading the logs. §5.5.1 then states that format stability of the log schema is part of the public interface from Phase 2 onward (§6.2 restates it as a mitigation: schema-versioned, stable from Phase 2).
 
 What does not yet exist is the concrete event list: which events Phase 1 emits, what fields each carries, and how the library and binary split the `tracing` responsibility. Without that fixed before code, the mandated fields end up as ad-hoc strings scattered across call sites, impossible to monitor reliably and expensive to stabilise once Phase 2 freezes the schema. This ADR fixes the schema while it is still cheap.
 
@@ -88,5 +88,5 @@ Treat the schema as stable immediately. Rejected as premature: Phase 1 has no co
 
 - Implementation: TBD — `tracing` event/span calls throughout `quantumssh-core`; `tracing-subscriber` init in `quantumssh/src/main.rs`. Neither exists yet.
 - Related ADRs: [ADR-0016](0016-phase-1-service-account-uid-model.md) (the service-account UID that `executing_uid` records), [ADR-0022](0022-phase-1-async-runtime-tokio.md) (runtime), [ADR-0023](0023-phase-1-channel-layer-scope.md) (the exec boundary producing `exec.*`).
-- Threat model: §2.7 (audit record and the mandated fields), §5.3.1 (why `failure_count` is per-source), §5.4.3 / §5.4.4 (no session content; escape-safe metadata), §5.5.1 (one-way sink, JSON shipping), §6.2 (schema as public interface from Phase 2), §8.12 (the UID gap this schema makes visible).
+- Threat model: §2.7 (audit record and the mandated fields), §5.3.1 (why `failure_count` is per-source), §5.4.3 / §5.4.4 (no session content; escape-safe metadata), §5.5.1 (one-way sink, JSON shipping, and the origin of the public-interface-from-Phase-2 commitment), §6.2 (restates it as a mitigation: schema-versioned, stable from Phase 2), §8.12 (the UID gap this schema makes visible).
 - Standards / conventions: OpenSSH key-fingerprint format (`SHA256:` base64, unpadded) for `authenticated_identity`; [`tracing`](https://docs.rs/tracing) and [`tracing-subscriber`](https://docs.rs/tracing-subscriber) as the emission and subscriber layers.
