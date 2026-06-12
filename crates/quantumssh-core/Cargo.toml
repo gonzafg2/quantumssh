@@ -19,8 +19,16 @@ tokio = { workspace = true, features = ["net", "io-util", "time", "sync", "rt"] 
 # never installs a subscriber.
 tracing = { workspace = true }
 # OS randomness for protocol fields that must be unpredictable
-# (packet padding, the M2 KEXINIT cookie).
+# (packet padding, the KEXINIT cookie).
 getrandom = { workspace = true }
+# Cryptographic primitives (RFC-0003 / ADR-0019): the hybrid KEX and
+# host-key layer. Protocol code only — primitives come from here.
+ml-kem = { workspace = true }
+x25519-dalek = { workspace = true }
+ed25519-dalek = { workspace = true }
+sha2 = { workspace = true }
+subtle = { workspace = true }
+zeroize = { workspace = true }
 
 [dev-dependencies]
 # Integration tests construct their own runtime; the library does not.
