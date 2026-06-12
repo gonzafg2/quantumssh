@@ -11,8 +11,10 @@
 //!   and `ext-info-*` are filtered out before selection and before
 //!   any emptiness check (RFC 8308 §2.2).
 //! - **The negotiated KEX must be `mlkem768x25519-sha256`** — there is
-//!   no fallback. Every rejection path uses
-//!   `SSH_DISCONNECT_KEY_EXCHANGE_FAILED` (3).
+//!   no fallback. Every *negotiation* rejection uses
+//!   `SSH_DISCONNECT_KEY_EXCHANGE_FAILED` (3); a packet that is
+//!   malformed at the wire level is the transport's concern and is
+//!   rejected there with `SSH_DISCONNECT_PROTOCOL_ERROR` (2).
 //! - **strict-kex is required on the initial KEXINIT** and the marker
 //!   is ignored on re-key KEXINITs.
 //! - **The MAC list never fails** under the AEAD-only profile, and
@@ -123,6 +125,10 @@ pub struct PeerKexInit<'a> {
     pub encryption_c2s: wire::NameList<'a>,
     /// Peer `encryption_algorithms_server_to_client`.
     pub encryption_s2c: wire::NameList<'a>,
+    /// Peer `compression_algorithms_client_to_server`.
+    pub compression_c2s: wire::NameList<'a>,
+    /// Peer `compression_algorithms_server_to_client`.
+    pub compression_s2c: wire::NameList<'a>,
     /// `first_kex_packet_follows` (RFC 4253 §7.1).
     pub first_kex_packet_follows: bool,
 }
@@ -197,8 +203,8 @@ pub fn parse_kexinit(payload: &[u8]) -> Result<PeerKexInit<'_>, KexError> {
     let encryption_s2c = r.name_list(NAME_LIST_BOUND)?;
     let _mac_c2s = r.name_list(NAME_LIST_BOUND)?;
     let _mac_s2c = r.name_list(NAME_LIST_BOUND)?;
-    let _compression_c2s = r.name_list(NAME_LIST_BOUND)?;
-    let _compression_s2c = r.name_list(NAME_LIST_BOUND)?;
+    let compression_c2s = r.name_list(NAME_LIST_BOUND)?;
+    let compression_s2c = r.name_list(NAME_LIST_BOUND)?;
     let _languages_c2s = r.name_list(NAME_LIST_BOUND)?;
     let _languages_s2c = r.name_list(NAME_LIST_BOUND)?;
     let first_kex_packet_follows = r.boolean()?;
@@ -209,6 +215,8 @@ pub fn parse_kexinit(payload: &[u8]) -> Result<PeerKexInit<'_>, KexError> {
         server_host_key_algorithms,
         encryption_c2s,
         encryption_s2c,
+        compression_c2s,
+        compression_s2c,
         first_kex_packet_follows,
     })
 }
@@ -230,8 +238,8 @@ fn is_marker(name: &str) -> bool {
 /// [`KexError::Rejected`] with `SSH_DISCONNECT_KEY_EXCHANGE_FAILED`
 /// (3) on every rejection path: no hybrid KEX offered, no strict-kex
 /// marker on the initial KEXINIT, or an empty intersection on a
-/// required list (host key, encryption). The MAC and language lists
-/// never fail (ADR-0021).
+/// required list (host key, encryption, compression). The MAC and
+/// language lists never fail (ADR-0021).
 pub fn negotiate(peer: &PeerKexInit<'_>, initial: bool) -> Result<Negotiated, KexError> {
     // Markers are filtered BEFORE selection and before any emptiness
     // check: a hostile client echoing our own markers must not produce
@@ -273,6 +281,15 @@ pub fn negotiate(peer: &PeerKexInit<'_>, initial: bool) -> Result<Negotiated, Ke
     let Some(cipher_s2c) = pick(&peer.encryption_s2c) else {
         return Err(KexError::Rejected(Rejection::kex_failed("no-cipher-s2c")));
     };
+
+    // Compression: "none" is our only entry, both directions — a peer
+    // whose list omits it (e.g. offers only zlib) fails negotiation.
+    // Zero legacy: no compression code is compiled in (ADR-0021 §7–8).
+    if !peer.compression_c2s.contains(COMPRESSION_LIST)
+        || !peer.compression_s2c.contains(COMPRESSION_LIST)
+    {
+        return Err(KexError::Rejected(Rejection::kex_failed("no-compression")));
+    }
 
     // MAC: never consulted — both ciphers are AEAD, selection is
     // skipped entirely and an empty intersection is never fatal
@@ -369,6 +386,38 @@ mod tests {
         let n = negotiate(&peer, true).unwrap();
         assert_eq!(n.cipher_c2s, "aes256-gcm@openssh.com");
         assert_eq!(n.cipher_s2c, "aes256-gcm@openssh.com");
+    }
+
+    #[test]
+    fn compression_without_none_is_rejected() {
+        // Zero legacy: a client offering only zlib — no "none" — must
+        // fail negotiation with code 3; no compression code is
+        // compiled in, so there is nothing to fall back to.
+        let mut w = Writer::new();
+        w.put_byte(SSH_MSG_KEXINIT);
+        w.put_bytes(&[0u8; 16]);
+        w.put_name_list(OPENSSH_KEX);
+        w.put_name_list(OPENSSH_HOSTKEYS);
+        w.put_name_list(OPENSSH_CIPHERS);
+        w.put_name_list(OPENSSH_CIPHERS);
+        w.put_name_list("hmac-sha2-256-etm@openssh.com");
+        w.put_name_list("hmac-sha2-256-etm@openssh.com");
+        w.put_name_list("zlib@openssh.com,zlib");
+        w.put_name_list("zlib@openssh.com,zlib");
+        w.put_name_list("");
+        w.put_name_list("");
+        w.put_boolean(false);
+        w.put_uint32(0);
+        let payload = w.into_bytes();
+        let peer = parse_kexinit(&payload).unwrap();
+        let err = negotiate(&peer, true).unwrap_err();
+        assert_eq!(
+            err,
+            KexError::Rejected(Rejection {
+                reason: "no-compression",
+                disconnect_code: DISCONNECT_KEY_EXCHANGE_FAILED,
+            })
+        );
     }
 
     #[test]
