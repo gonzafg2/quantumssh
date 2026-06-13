@@ -67,3 +67,9 @@ jobs:
             - CI/workflows: check for unpinned actions, excessive permissions, missing authorization gates, supply-chain risk
 
             Report only high-signal findings. Anchor each to a CLAUDE.md rule, threat-model section, or ADR.
+
+            When making commits, follow Conventional Commits exactly:
+            - Format: `<type>(<optional scope>): <short summary>`
+            - Types: feat, fix, docs, chore, refactor, test, perf, ci, build, security
+            - Always sign off: `git commit -s -S`
+            - A blank line separates subject from body; body explains why, cross-references the issue/RFC.

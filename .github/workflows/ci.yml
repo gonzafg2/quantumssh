@@ -20,6 +20,41 @@ permissions:
   contents: read
 
 jobs:
+  # Enforce Conventional Commits on every PR. Merge and revert commits
+  # are exempt. The job runs on pull_request only — pushes to main skip
+  # it (those commits already passed this check in their own PR).
+  commit-lint:
+    name: commit-lint
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Conventional Commits
+        run: |
+          pattern='^(feat|fix|docs|chore|refactor|test|perf|ci|build|security)(\([^)]+\))?!?: .+'
+          violations=0
+          while IFS= read -r commit_line; do
+            # Merge and revert commits are exempt.
+            case "$commit_line" in
+              Merge*|Revert*) continue ;;
+            esac
+            if ! echo "$commit_line" | grep -qE "$pattern"; then
+              echo "::error::Conventional Commits violation: '$commit_line'"
+              violations=$((violations + 1))
+            fi
+          done < <(git log --format=%s "${{ github.event.pull_request.base.sha }}..HEAD")
+          if [ "$violations" -gt 0 ]; then
+            echo "::error::${violations} commit(s) do not follow Conventional Commits"
+            echo "Expected: <type>(<optional scope>): <summary>"
+            echo "Types: feat, fix, docs, chore, refactor, test, perf, ci, build, security"
+            exit 1
+          fi
+          echo "All commits follow Conventional Commits"
+
   build:
     name: build (${{ matrix.os }})
     strategy:
