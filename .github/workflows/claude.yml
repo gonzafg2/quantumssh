@@ -43,8 +43,8 @@ jobs:
           # Optional: Give a custom prompt to Claude. If this is not specified, Claude will perform the instructions specified in the comment that tagged it.
           # prompt: 'Update the pull request description to include a summary of changes.'
 
-          # Optional: Add claude_args to customize behavior and configuration
-          # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
-          # or https://code.claude.com/docs/en/cli-reference for available options
-          # claude_args: '--allowed-tools Bash(gh pr *)'
+          # System prompt that applies to every @claude invocation in this repo.
+          # Includes the commit conventions so the agent formats commits correctly.
+          claude_args: |
+            --append-system-prompt "When making commits, follow Conventional Commits: <type>(<optional scope>): <short summary>. Types: feat, fix, docs, chore, refactor, test, perf, ci, build, security. Always sign off and sign: git commit -s -S. Separate subject from body with a blank line; body explains why and cross-references the issue or RFC."
 
