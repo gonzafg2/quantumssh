@@ -38,6 +38,24 @@ ed25519-dalek = { version = "2", default-features = false, features = ["std", "r
 sha2          = { version = "0.10", default-features = false }
 zeroize       = { version = "1", default-features = false, features = ["zeroize_derive"] }
 
+# AEAD transport layer (M3). `chacha20-poly1305@openssh.com` cannot be
+# expressed through the IETF `chacha20poly1305` AEAD crate (96-bit
+# nonce, single key): the OpenSSH format takes two 256-bit keys, a
+# 64-bit sequence-number nonce, and encrypts the length field
+# separately — it is assembled from the loose primitives instead
+# (same RustCrypto org). `aes256-gcm@openssh.com` is RFC 5647 over
+# the standard AEAD.
+chacha20 = { version = "0.9", default-features = false, features = ["zeroize"] }  # ChaCha20Legacy: the 64-bit-nonce djb variant OpenSSH uses
+poly1305 = { version = "0.8", default-features = false, features = ["zeroize"] }
+aes-gcm  = { version = "0.10", default-features = false, features = ["aes", "alloc", "zeroize"] }
+# Declared ONLY to switch on its `zeroize` feature (Cargo feature
+# unification): `aes-gcm/zeroize` erases the GHASH key on drop but
+# does not forward to `aes`, whose round-key schedule is the bulk of
+# the key material (threat model §4.3). No first-party code imports
+# this crate.
+aes      = { version = "0.8.4", default-features = false, features = ["zeroize"] }
+subtle   = { version = "2", default-features = false }  # constant-time Poly1305 tag comparison
+
 # Lints applied to every crate in the workspace via
 # `lints.workspace = true` in each crate's manifest.
 #
