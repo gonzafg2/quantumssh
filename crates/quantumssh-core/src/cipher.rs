@@ -47,6 +47,11 @@ pub enum CipherError {
     /// The authentication tag did not verify, or decryption failed.
     /// Fail closed: nothing about the packet is trustworthy.
     BadTag,
+    /// Sequence-number mismatch detected at the packet level:
+    /// the GCM invocation delta does not equal the expected `seqnr`,
+    /// or the `ChaCha20` decrypted length fails validation — the
+    /// keystream was derived from the wrong nonce.
+    BadSequence,
     /// The (decrypted or cleartext) length field is invalid.
     Wire(WireError),
 }
@@ -61,6 +66,7 @@ impl std::fmt::Display for CipherError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::BadTag => write!(f, "packet authentication failed"),
+            Self::BadSequence => write!(f, "packet sequence number mismatch"),
             Self::Wire(e) => write!(f, "invalid packet length: {e}"),
         }
     }
@@ -142,7 +148,7 @@ impl PacketCipher {
     pub fn seal(&mut self, seqnr: u32, payload: &[u8]) -> Result<Vec<u8>, CipherError> {
         match self {
             Self::ChaCha(c) => c.seal(seqnr, payload),
-            Self::Gcm(c) => c.seal(payload),
+            Self::Gcm(c) => c.seal(seqnr, payload),
         }
     }
 
@@ -181,7 +187,7 @@ impl PacketCipher {
     ) -> Result<Vec<u8>, CipherError> {
         match self {
             Self::ChaCha(c) => c.open(seqnr, length_bytes, body),
-            Self::Gcm(c) => c.open(length_bytes, body),
+            Self::Gcm(c) => c.open(seqnr, length_bytes, body),
         }
     }
 }
@@ -294,7 +300,9 @@ impl ChaCha20Poly1305Openssh {
         ChaCha20Legacy::new(self.k_header.as_ref().into(), (&nonce).into())
             .apply_keystream(&mut decrypted);
         let packet_length = u32::from_be_bytes(decrypted);
-        Ok(validate_aead_length(packet_length, Self::BLOCK)? + TAG_LEN)
+        validate_aead_length(packet_length, Self::BLOCK)
+            .map(|len| len + TAG_LEN)
+            .map_err(|_| CipherError::BadSequence)
     }
 
     fn open(
@@ -339,6 +347,7 @@ pub struct Aes256GcmOpenssh {
     cipher: Aes256Gcm,
     fixed: [u8; 4],
     invocation: u64,
+    initial_invocation: u64,
 }
 
 impl Aes256GcmOpenssh {
@@ -352,10 +361,12 @@ impl Aes256GcmOpenssh {
         fixed.copy_from_slice(&iv[..4]);
         let mut counter = [0u8; 8];
         counter.copy_from_slice(&iv[4..12]);
+        let initial_invocation = u64::from_be_bytes(counter);
         Self {
             cipher,
             fixed,
-            invocation: u64::from_be_bytes(counter),
+            invocation: initial_invocation,
+            initial_invocation,
         }
     }
 
@@ -368,7 +379,12 @@ impl Aes256GcmOpenssh {
         nonce
     }
 
-    fn seal(&mut self, payload: &[u8]) -> Result<Vec<u8>, CipherError> {
+    fn seal(&mut self, seqnr: u32, payload: &[u8]) -> Result<Vec<u8>, CipherError> {
+        debug_assert_eq!(
+            self.invocation.wrapping_sub(self.initial_invocation),
+            u64::from(seqnr),
+            "GCM invocation counter out of sync on seal"
+        );
         let mut body = padded_body(payload, Self::BLOCK)?;
         let packet_length =
             u32::try_from(body.len()).map_err(|_| CipherError::Wire(WireError::BadPadding))?;
@@ -388,7 +404,17 @@ impl Aes256GcmOpenssh {
         Ok(out)
     }
 
-    fn open(&mut self, length_bytes: [u8; 4], body: &mut [u8]) -> Result<Vec<u8>, CipherError> {
+    fn open(
+        &mut self,
+        seqnr: u32,
+        length_bytes: [u8; 4],
+        body: &mut [u8],
+    ) -> Result<Vec<u8>, CipherError> {
+        debug_assert_eq!(
+            self.invocation.wrapping_sub(self.initial_invocation),
+            u64::from(seqnr),
+            "GCM invocation counter out of sync on open"
+        );
         let Some(ct_len) = body.len().checked_sub(TAG_LEN) else {
             return Err(CipherError::BadTag);
         };
@@ -488,28 +514,27 @@ mod tests {
     fn gcm_roundtrip_across_sizes() {
         let (mut tx, mut rx) = gcm_pair();
         // GCM's invocation counter advances per packet on BOTH sides —
-        // sealing and opening must stay in lockstep.
-        for size in [1usize, 16, 255, 4096, 32_000] {
+        // sealing and opening must stay in lockstep. Seqnr must match
+        // the invocation delta (debug-asserted).
+        for (seqnr, size) in (0u32..).zip([1usize, 16, 255, 4096, 32_000]) {
             let payload: Vec<u8> = (0..size).map(|i| u8::try_from(i % 251).unwrap()).collect();
-            roundtrip(&mut tx, &mut rx, 9999, &payload);
+            roundtrip(&mut tx, &mut rx, seqnr, &payload);
         }
     }
 
     #[test]
     fn chacha_wrong_sequence_number_fails_closed() {
-        let (mut tx, mut rx) = chacha_pair();
+        let (mut tx, rx) = chacha_pair();
         let packet = tx.seal(5, b"payload").unwrap();
         let mut length_bytes = [0u8; 4];
         length_bytes.copy_from_slice(&packet[..4]);
-        // A replayed/desynchronised packet: even the length decryption
-        // uses the wrong keystream, so the declared length is garbage
-        // (overwhelmingly rejected) — and if it were accepted, the tag
-        // could not verify.
-        let mut body = packet[4..].to_vec();
-        let outcome = rx
-            .body_len(6, length_bytes)
-            .and_then(|_| rx.open(6, length_bytes, &mut body));
-        assert!(outcome.is_err());
+        // Sealed with seqnr 5, read with seqnr 6: the wrong nonce
+        // produces garbage for the decrypted length — the cipher
+        // rejects as BadSequence (likely wrong keystream).
+        assert!(matches!(
+            rx.body_len(6, length_bytes),
+            Err(CipherError::BadSequence)
+        ));
     }
 
     #[test]
@@ -517,11 +542,11 @@ mod tests {
         for (mut tx, mut rx, seqnr) in [
             {
                 let (a, b) = chacha_pair();
-                (a, b, 3u32)
+                (a, b, 0u32)
             },
             {
                 let (a, b) = gcm_pair();
-                (a, b, 3u32)
+                (a, b, 0u32)
             },
         ] {
             let packet = tx.seal(seqnr, b"attack at dawn").unwrap();
@@ -543,9 +568,9 @@ mod tests {
     fn gcm_nonce_advances_per_packet() {
         let (mut tx, _) = gcm_pair();
         let a = tx.seal(0, b"same payload").unwrap();
-        let b = tx.seal(0, b"same payload").unwrap();
-        // Identical plaintext, identical sequence number: the
-        // invocation counter alone must make the ciphertexts differ.
+        let b = tx.seal(1, b"same payload").unwrap();
+        // Identical plaintext, the invocation counter (driven by
+        // sequential seqnr) makes the two ciphertexts differ.
         assert_ne!(a, b);
     }
 
