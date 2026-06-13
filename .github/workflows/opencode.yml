@@ -27,6 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      id-token: write
       pull-requests: write
       issues: write
     steps:
@@ -40,11 +41,9 @@ jobs:
         uses: anomalyco/opencode/github@2c14fc5586fe0b88e5c04732d2e846769cc35671
         env:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           model: deepseek/deepseek-v4-pro
           share: false
-          use_github_token: true
           prompt: |
             You are reviewing a PR for QuantumSSH — a memory-safe, post-quantum-first SSH server in Rust (pre-alpha). Read CLAUDE.md for the project's review criteria.
 
