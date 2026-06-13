@@ -15,15 +15,15 @@ The question is whether this is a sufficiently material change to require an RFC
 
 ## Decision
 
-We will add `anomalyco/opencode/github` (DeepSeek V4 Pro) as a second automated PR reviewer, mirroring the existing Claude reviewer posture:
+We will add `anomalyco/opencode/github` (DeepSeek V4 Pro) as a second automated PR reviewer. While not identical to the Claude reviewer in every detail, it follows the same principle (inference-only, pinned action, minimal permissions):
 
-- **Triggered on every PR** (`opened`, `synchronize`, `reopened`, `ready_for_review`) **from OWNER/MEMBER/COLLABORATOR** only, and on `/oc` or `/opencode` comments on PRs from the same set of authorised users.
-- **Pinned to a full commit SHA** (not `@latest`), same supply-chain standard as any third-party action with write permissions.
-- **Permissions**: `contents: read`, `pull-requests: write`, `issues: write`. No `id-token`, no `contents: write`.
+- **Triggered on every PR** (`opened`, `synchronize`, `reopened`, `ready_for_review`) **from OWNER/MEMBER/COLLABORATOR** only, and on `/oc` or `/opencode` comments on PRs from the same set of authorised users. The `issue_comment` trigger (absent in the Claude reviewer) is a deliberate addition enabling on-demand review via comment commands, not present in the Claude workflow.
+- **Pinned to a full commit SHA** (not `@latest`).
+- **Permissions**: `contents: read`, `pull-requests: write`, `issues: read`, `id-token: write`. No `contents: write`. The `pull-requests: write` scope is required for posting review comments; `id-token: write` enables OIDC-based authentication with the OpenCode GitHub App so comments appear as `opencode-agent[bot]`.
 - **No `share`**: PR diffs are sent to DeepSeek for inference only; no external share link is published.
 - **Project-specific prompt**: the same MANIFIESTO commitments, threat-model rules, and CLAUDE.md criteria that the Claude reviewer receives.
 
-No RFC is required because this is an incremental operational change that mirrors an existing reviewer with the same trust model and security posture. It does not change the server's cryptographic surface, protocol surface, or dependency graph — it only adds a second CI lint pass.
+No RFC is required. The Claude reviewer already sends PR diffs to an external inference API (Anthropic) — adding a second provider is an incremental expansion, not a new class of trust-base change. The `issue_comment` trigger and `id-token: write` permission are operational details of the specific GitHub Action integration, not architectural decisions about the product's trust model. It does not change the SSH server's cryptographic surface, protocol surface, or dependency graph — it adds a second CI lint pass.
 
 ## Consequences
 
@@ -45,7 +45,7 @@ No RFC is required because this is an incremental operational change that mirror
 
 ### Alternative 1: Require an RFC per CLAUDE.md governance
 
-CLAUDE.md classifies "a dependency that materially expands the trust base" as requiring an RFC. Adding a second AI reviewer is a trust-base expansion (a new external service receives PR content), but it is *incremental* to the existing Anthropic reviewer — the project already sends PR diffs to an external inference API. Rejected because: an RFC with a 14-day comment period would delay a CI-only operational change that mirrors an existing, already-accepted reviewer with identical security constraints.
+CLAUDE.md classifies "a dependency that materially expands the trust base" as requiring an RFC. Adding a second AI reviewer is a trust-base expansion (a new external service receives PR content), but it is *incremental* to the existing Anthropic reviewer — the project already sends PR diffs to an external inference API. The opencode reviewer differs from the Claude reviewer in two operational details (`issue_comment` trigger for on-demand review, `id-token: write` for OIDC-based app authentication), but neither expands the product's trust base beyond the pattern already established. Rejected because: an RFC with a 14-day comment period would delay a CI-only operational change whose trust model is a documented point-in-case of the project's existing external-inference-reviewer posture.
 
 ### Alternative 2: Reject the second reviewer entirely
 
