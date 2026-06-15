@@ -6,10 +6,8 @@
 //! connection itself is driven through the transport type-state
 //! machine ([`crate::transport`]): version exchange → KEXINIT →
 //! hybrid `mlkem768x25519-sha256` exchange → NEWKEYS → encrypted
-//! service request. `ssh-userauth` lands in M4; until then every
-//! requested service is denied with
-//! `SSH_DISCONNECT_SERVICE_NOT_AVAILABLE` (RFC 4253 §10) — over the
-//! fully established AEAD transport.
+//! service request → `ssh-userauth` (publickey Ed25519, M4).
+//! Unknown services are denied; channels land in M5.
 
 use std::convert::Infallible;
 use std::io;
@@ -21,6 +19,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpListener, TcpStream};
 use tracing::{Instrument, debug, info, info_span, warn};
 
+use crate::auth::AuthorizedKeys;
 use crate::host_key::HostKey;
 use crate::transport::{self, TransportError};
 
@@ -34,6 +33,8 @@ pub struct Config {
     pub handshake_timeout: Duration,
     /// The Ed25519 host key (ADR-0021: `ssh-ed25519` only).
     pub host_key: Arc<HostKey>,
+    /// The parsed `authorized_keys` file (M4: publickey auth).
+    pub authorized_keys: Arc<AuthorizedKeys>,
 }
 
 /// A bound, not-yet-serving server.
@@ -42,6 +43,7 @@ pub struct Server {
     listener: TcpListener,
     handshake_timeout: Duration,
     host_key: Arc<HostKey>,
+    authorized_keys: Arc<AuthorizedKeys>,
 }
 
 impl Server {
@@ -64,6 +66,7 @@ impl Server {
             listener,
             handshake_timeout: config.handshake_timeout,
             host_key: Arc::clone(&config.host_key),
+            authorized_keys: Arc::clone(&config.authorized_keys),
         })
     }
 
@@ -88,10 +91,11 @@ impl Server {
         loop {
             let (stream, peer_addr) = self.listener.accept().await?;
             let host_key = Arc::clone(&self.host_key);
+            let authorized_keys = Arc::clone(&self.authorized_keys);
             let span = info_span!("connection", peer_addr = %peer_addr);
             let connection = async move {
                 info!("connection.accepted");
-                if tokio::time::timeout(budget, handle(stream, host_key))
+                if tokio::time::timeout(budget, handle(stream, host_key, authorized_keys))
                     .await
                     .is_err()
                 {
@@ -107,10 +111,14 @@ impl Server {
 
 /// Handles one connection within the handshake budget, driving the
 /// transport machine stage by stage.
-async fn handle(mut stream: TcpStream, host_key: Arc<HostKey>) {
-    let reason = match run_connection(&mut stream, &host_key).await {
-        // Infallible: in M3 every connection ends in a denial — the
-        // type records it, no unreachable!/panic needed.
+async fn handle(
+    mut stream: TcpStream,
+    host_key: Arc<HostKey>,
+    authorized_keys: Arc<AuthorizedKeys>,
+) {
+    let reason = match run_connection(&mut stream, &host_key, &authorized_keys).await {
+        // With M4 auth, the Infallible type still holds: every path
+        // ends in an error or the auth-reject terminus.
         Ok(never) => match never {},
         Err(TransportError::Rejected(reason)) => format!("rejected: {reason}"),
         Err(TransportError::Io(e)) => e,
@@ -121,13 +129,14 @@ async fn handle(mut stream: TcpStream, host_key: Arc<HostKey>) {
     info!(reason = %reason, "connection.closed");
 }
 
-/// One connection through the type-state machine. The `Infallible`
-/// success type records that every M3 path ends in an error: the
-/// final stage denies the requested service because `ssh-userauth`
-/// arrives with the auth milestone (M4).
+/// One connection through the type-state machine. With M4 auth, the
+/// `Infallible` success type stays: every path ends in an error — auth
+/// success leads to the `AuthAccepted` stage whose
+/// [`reject_channel_open`] always returns `Err`.
 async fn run_connection(
     stream: &mut TcpStream,
     host_key: &HostKey,
+    authorized_keys: &AuthorizedKeys,
 ) -> Result<Infallible, TransportError> {
     let t = transport::version_exchange(stream).await?;
     let t = t.exchange_kexinit().await?;
@@ -146,6 +155,12 @@ async fn run_connection(
     );
 
     let (service, responder) = t.read_service_request().await?;
-    info!(service = %service, "service requested (ssh-userauth lands in M4)");
-    Err(responder.deny().await)
+    if service.as_str() == "ssh-userauth" {
+        let t = responder.accept().await?;
+        let (_identity, t) = t.authenticate(authorized_keys).await?;
+        Err(t.reject_channel_open().await)
+    } else {
+        info!(service = %service, "service denied (only ssh-userauth supported)");
+        Err(responder.deny().await)
+    }
 }
