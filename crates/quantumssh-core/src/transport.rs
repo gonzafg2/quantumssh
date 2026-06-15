@@ -824,9 +824,13 @@ where
                     reason: "channels land in M5",
                     disconnect_code: kex::DISCONNECT_PROTOCOL_ERROR,
                 };
+                // Parse the sender channel from the peer's message
+                // (RFC 4254 §5.1: recipient_channel must echo sender_channel).
+                let _channel_type = r.string(64).unwrap_or(b"");
+                let sender_channel = r.uint32().unwrap_or(0);
                 let mut w = Writer::new();
                 w.put_byte(SSH_MSG_CHANNEL_OPEN_FAILURE);
-                w.put_uint32(0); // recipient channel — the peer's
+                w.put_uint32(sender_channel);
                 w.put_uint32(SSH_OPEN_ADMINISTRATIVELY_PROHIBITED);
                 w.put_string(b"channels land in M5");
                 w.put_string(b""); // language tag
@@ -836,7 +840,7 @@ where
                 warn!(
                     reason = rejection.reason,
                     disconnect_code = rejection.disconnect_code,
-                    "connection.closed"
+                    "channels land in M5"
                 );
                 TransportError::Rejected(rejection.reason)
             }

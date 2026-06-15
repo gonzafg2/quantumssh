@@ -587,12 +587,6 @@ fn probe_auth_request(key_blob: &[u8]) -> Vec<u8> {
     w.into_bytes()
 }
 
-/// Reads an encrypted sealed packet from the server-side.
-#[expect(dead_code)]
-async fn read_sealed_from_server(client: &mut SealedClient, stream: &mut TcpStream) -> Vec<u8> {
-    client.read_sealed(stream).await
-}
-
 #[tokio::test]
 async fn auth_success_then_channel_rejection() {
     let auth_signing = SigningKey::from_bytes(&[77u8; 32]);

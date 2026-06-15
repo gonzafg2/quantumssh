@@ -133,6 +133,8 @@ impl AuthorizedKeys {
     /// [`AuthError::UnsupportedKeyType`] when a non-Ed25519 key is
     /// encountered;
     /// [`AuthError::Empty`] when the file contains zero valid keys.
+    #[must_use]
+    #[allow(clippy::double_must_use)]
     pub fn load(path: &Path) -> Result<Self, AuthError> {
         let content = std::fs::read_to_string(path).map_err(|e| AuthError::Io(e.to_string()))?;
 
@@ -274,7 +276,8 @@ pub fn auth_signed_data(session_id: &[u8; 32], payload_without_sig: &[u8]) -> Ve
 ///
 /// Returns `Err(())` when the signature is invalid (forged, tampered,
 /// wrong key, or non-canonical).
-#[allow(clippy::result_unit_err)]
+#[must_use]
+#[allow(clippy::double_must_use, clippy::result_unit_err)]
 pub fn verify_auth_signature(
     session_id: &[u8; 32],
     payload_without_sig: &[u8],
