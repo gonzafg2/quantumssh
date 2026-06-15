@@ -869,11 +869,11 @@ where
                 if let Err(e) = self.write_sealed(&w.into_bytes()).await {
                     return e;
                 }
-                warn!(reason = "global-request-refused", "connection.closed");
+                warn!(reason = "global-request-refused", "global-request-refused");
                 TransportError::Rejected("global-request-refused")
             }
             SSH_MSG_DISCONNECT => {
-                warn!(reason = "peer-disconnected", "connection.closed");
+                warn!(reason = "peer-disconnected", "peer-disconnected");
                 TransportError::Rejected("peer-disconnected")
             }
             _ => {

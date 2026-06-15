@@ -181,6 +181,10 @@ const B64_ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrst
 
 /// Standard-alphabet base64 encode without padding (the fingerprint
 /// format, also used by the `authorized_keys` test helpers).
+///
+/// Not part of the library's stable public API — exposed for integration
+/// tests. Prefer the `SHA256:` fingerprint through [`HostKey`].
+#[doc(hidden)]
 #[must_use]
 pub fn base64_encode_nopad(input: &[u8]) -> String {
     let mut out = String::with_capacity(input.len().div_ceil(3) * 4);
