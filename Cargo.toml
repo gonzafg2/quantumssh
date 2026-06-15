@@ -53,7 +53,7 @@ aes-gcm  = { version = "0.10", default-features = false, features = ["aes", "all
 # does not forward to `aes`, whose round-key schedule is the bulk of
 # the key material (threat model §4.3). No first-party code imports
 # this crate.
-aes      = { version = "0.8.4", default-features = false, features = ["zeroize"] }
+aes      = { version = "0.9.1", default-features = false, features = ["zeroize"] }
 subtle   = { version = "2", default-features = false }  # constant-time Poly1305 tag comparison
 
 # Lints applied to every crate in the workspace via
