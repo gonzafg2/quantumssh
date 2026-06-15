@@ -11,7 +11,10 @@ jobs:
     if: |
       (
         github.event_name == 'pull_request' &&
-        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)
+        (
+          contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) ||
+          github.event.pull_request.user.login == 'dependabot[bot]'
+        )
       ) ||
       (
         github.event_name == 'issue_comment' &&
