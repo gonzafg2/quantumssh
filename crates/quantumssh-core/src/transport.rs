@@ -575,7 +575,7 @@ where
                     .await);
             }
 
-            let Ok(user_name) = r
+            let Ok(_user_name) = r
                 .string(auth::USER_NAME_BOUND)
                 .and_then(|s| std::str::from_utf8(s).map_err(|_| wire::WireError::Truncated))
             else {
@@ -744,7 +744,6 @@ where
                     self.write_sealed(&success).await?;
                     info!(
                         target: "audit",
-                        user = %user_name,
                         authenticated_identity = %ak.fingerprint,
                         auth_method = method,
                         "auth.succeeded"
