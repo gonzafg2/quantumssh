@@ -628,7 +628,11 @@ where
                 continue;
             }
 
-            let sig_present = r.boolean().unwrap_or(false);
+            let Ok(sig_present) = r.boolean() else {
+                return Err(self
+                    .reject_sealed(protocol_error("malformed-userauth-request"))
+                    .await);
+            };
 
             let Ok(key_algorithm) = r
                 .string(auth::KEY_ALGO_BOUND)
