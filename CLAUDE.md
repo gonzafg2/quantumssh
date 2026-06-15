@@ -96,6 +96,7 @@ authoritative reference; the operative rules a reviewer applies:
   (e.g. from a GitHub App) must be re-signed before it can merge.
 - **Never push to `main`.** Open a pull request from a branch.
 - **Spanish and English are both first-class** in issues, PRs, and docs.
+- Automated reviewers (`opencode`, `Claude Code Review`) only trigger for human-authored PRs (`OWNER`/`MEMBER`/`COLLABORATOR`). Dependabot PRs receive CI + manual review only.
 
 ## Repo map
 
