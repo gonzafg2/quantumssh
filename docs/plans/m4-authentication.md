@@ -1,3 +1,11 @@
+<!--
+  Governance status (2026-06-15):
+  This file lives in docs/plans/ — a category whose governance contract
+  is not yet defined. See issue #79 for the decision.
+  Post-implementation: the plan guided M4 (PR #78, merged) and retains
+  design rationale. It is not authoritative post-merge; locked-in
+  decisions are recorded in ADRs 0021, 0023, 0024.
+-->
 # Plan M4 — Authentication (`auth.rs`)
 
 ## Context
