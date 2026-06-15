@@ -13,8 +13,13 @@
 //! 4. [`Expect<NewKeys>::exchange_newkeys`] → [`Expect<ServiceRequest>`]
 //!    — from here every byte is encrypted.
 //! 5. [`Expect<ServiceRequest>::read_service_request`] →
-//!    [`Expect<ServiceResponse>`], whose only M3 answer is
-//!    [`Expect<ServiceResponse>::deny`] (`ssh-userauth` lands in M4).
+//!    [`Expect<ServiceResponse>`], which can
+//!    [`Expect<ServiceResponse>::deny`] unknown services or
+//!    [`Expect<ServiceResponse>::accept`] `ssh-userauth` (M4).
+//! 6. [`Expect<UserAuth>::authenticate`] → [`Expect<AuthAccepted>`],
+//!    running the RFC 4252 §7 publickey loop.
+//! 7. [`Expect<AuthAccepted>::reject_channel_open`] — the M4 terminal
+//!    (M5 replaces this with a full channel layer).
 //!
 //! Each transition consumes the machine; there is no way to read a
 //! message a stage does not expect, and an unexpected message on the
@@ -28,9 +33,10 @@
 //! decrypt and every integration test would fail.
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 use zeroize::Zeroizing;
 
+use crate::auth::{self, AuthorizedKeys};
 use crate::cipher::PacketCipher;
 use crate::host_key::HostKey;
 use crate::kex::{
@@ -45,6 +51,22 @@ pub const SSH_MSG_SERVICE_REQUEST: u8 = 5;
 pub const SSH_MSG_SERVICE_ACCEPT: u8 = 6;
 /// `SSH_DISCONNECT_SERVICE_NOT_AVAILABLE` (RFC 4253 §11.1).
 pub const DISCONNECT_SERVICE_NOT_AVAILABLE: u32 = 7;
+/// `SSH_DISCONNECT_BY_APPLICATION` (RFC 4253 §11.1) — used when
+/// `MAX_AUTH_ATTEMPTS` is exhausted (ADR-0024).
+pub const DISCONNECT_BY_APPLICATION: u32 = 11;
+
+// Channel protocol constants used by `AuthAccepted` in M4 (prelude to
+// M5, which implements the full RFC 4254 channel layer — ADR-0023).
+/// `SSH_MSG_CHANNEL_OPEN` (RFC 4254 §5.1).
+const SSH_MSG_CHANNEL_OPEN: u8 = 90;
+/// `SSH_MSG_CHANNEL_OPEN_FAILURE` (RFC 4254 §5.1).
+const SSH_MSG_CHANNEL_OPEN_FAILURE: u8 = 92;
+/// `SSH_OPEN_ADMINISTRATIVELY_PROHIBITED` (RFC 4254 §5.1).
+const SSH_OPEN_ADMINISTRATIVELY_PROHIBITED: u32 = 1;
+/// `SSH_MSG_GLOBAL_REQUEST` (RFC 4254 §4).
+const SSH_MSG_GLOBAL_REQUEST: u8 = 80;
+/// `SSH_MSG_REQUEST_FAILURE` (RFC 4254 §4).
+const SSH_MSG_REQUEST_FAILURE: u8 = 82;
 
 /// Bound on a service name (RFC 4253 §10 defines two, both short).
 const SERVICE_NAME_BOUND: usize = 64;
@@ -110,11 +132,33 @@ pub struct NewKeys {
 pub struct ServiceRequest {
     rx: PacketCipher,
     tx: PacketCipher,
+    /// The exchange hash `H` — also the session identifier (RFC 4253
+    /// §7.2). Flows through every encrypted stage so `authenticate()`
+    /// can verify signatures without plumbing the caller.
+    session_id: Zeroizing<[u8; 32]>,
 }
 
-/// Stage 5: a service was requested; the machine can only answer it.
-/// M3 ships [`Expect::deny`]; M4 adds the `ssh-userauth` accept arm.
+/// Stage 5: a service was requested; the machine can answer it.
+/// M3 shipped [`Expect::deny`]; M4 adds the `ssh-userauth` accept arm.
 pub struct ServiceResponse {
+    rx: PacketCipher,
+    tx: PacketCipher,
+    session_id: Zeroizing<[u8; 32]>,
+}
+
+/// Stage 6 (M4): the transport is ready to authenticate. The only
+/// acceptable message is `SSH_MSG_USERAUTH_REQUEST` (50).
+pub struct UserAuth {
+    rx: PacketCipher,
+    tx: PacketCipher,
+    session_id: Zeroizing<[u8; 32]>,
+}
+
+/// Stage 7 (M4 terminal): authentication succeeded.
+/// For now, [`Expect::reject_channel_open`] cleanly denies any
+/// channel-open attempt. Re-keying and session fields land in M5.
+pub struct AuthAccepted {
+    rx: PacketCipher,
     tx: PacketCipher,
 }
 
@@ -352,7 +396,11 @@ where
             stream: self.stream,
             seq_tx: self.seq_tx,
             seq_rx: self.seq_rx,
-            stage: ServiceRequest { rx, tx },
+            stage: ServiceRequest {
+                rx,
+                tx,
+                session_id: self.stage.exchange_hash,
+            },
         };
 
         // EXT_INFO rides the new keys: RFC 8308 §2.3 places it
@@ -405,7 +453,11 @@ where
                 .await);
         };
 
-        let stage = ServiceResponse { tx: self.stage.tx };
+        let stage = ServiceResponse {
+            rx: self.stage.rx,
+            tx: self.stage.tx,
+            session_id: self.stage.session_id,
+        };
         Ok((
             service,
             Expect {
@@ -444,7 +496,7 @@ where
         warn!(
             reason = rejection.reason,
             disconnect_code = rejection.disconnect_code,
-            "service denied (ssh-userauth lands in M4)"
+            "service denied"
         );
         let packet = disconnect_payload(&rejection);
         if let Err(e) = self.write_sealed(&packet).await {
@@ -452,10 +504,390 @@ where
         }
         TransportError::Rejected(rejection.reason)
     }
+
+    /// Accepts the requested service with `SSH_MSG_SERVICE_ACCEPT`
+    /// (RFC 4253 §10) and advances the machine to the `UserAuth` stage,
+    /// ready to authenticate.
+    ///
+    /// # Errors
+    ///
+    /// [`TransportError::Io`] when the accept packet cannot be written.
+    pub async fn accept(mut self) -> Result<Expect<S, UserAuth>, TransportError> {
+        let mut w = Writer::new();
+        w.put_byte(SSH_MSG_SERVICE_ACCEPT);
+        self.write_sealed(&w.into_bytes()).await?;
+
+        let stage = UserAuth {
+            rx: self.stage.rx,
+            tx: self.stage.tx,
+            session_id: self.stage.session_id,
+        };
+        Ok(Expect {
+            stream: self.stream,
+            seq_tx: self.seq_tx,
+            seq_rx: self.seq_rx,
+            stage,
+        })
+    }
 }
 
-// ---- shared plumbing (private: stages cannot be bypassed) ----
+impl<S> Expect<S, UserAuth>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    /// Runs the RFC 4252 §7 `publickey` authentication loop.
+    ///
+    /// Reads `SSH_MSG_USERAUTH_REQUEST` messages until a valid Ed25519
+    /// signature authenticates the peer, and advances the machine to
+    /// [`AuthAccepted`]. Every other method or non-Ed25519 key type is
+    /// refused with `SSH_MSG_USERAUTH_FAILURE`; unknown keys get a
+    /// `SSH_MSG_USERAUTH_PK_OK` probe. After
+    /// [`auth::MAX_AUTH_ATTEMPTS`] failures, the connection is
+    /// terminated with `SSH_DISCONNECT_BY_APPLICATION` (11).
+    ///
+    /// Audit events (`auth.succeeded` / `auth.failed`) are emitted on
+    /// the `audit` target (ADR-0024).
+    ///
+    /// Returns the machine advanced to [`AuthAccepted`].
+    ///
+    /// # Errors
+    ///
+    /// [`TransportError::Rejected`] when the attempt budget is
+    /// exhausted, a wire-level parse fails, or the peer sends an
+    /// unexpected message; [`TransportError::Io`] when the connection
+    /// breaks.
+    #[allow(clippy::too_many_lines)]
+    pub async fn authenticate(
+        mut self,
+        authorized_keys: &AuthorizedKeys,
+    ) -> Result<Expect<S, AuthAccepted>, TransportError> {
+        let mut failure_count: u32 = 0;
 
+        loop {
+            let payload = self.read_sealed().await?;
+            let payload_len = payload.len();
+            let mut r = Reader::new(&payload);
+
+            let msg = r.byte().unwrap_or(0);
+            if msg != auth::SSH_MSG_USERAUTH_REQUEST {
+                return Err(self
+                    .reject_sealed(protocol_error("expected-userauth-request"))
+                    .await);
+            }
+
+            let Ok(_user_name) = r
+                .string(auth::USER_NAME_BOUND)
+                .and_then(|s| std::str::from_utf8(s).map_err(|_| wire::WireError::Truncated))
+            else {
+                return Err(self
+                    .reject_sealed(protocol_error("malformed-userauth-request"))
+                    .await);
+            };
+
+            let Ok(service_name) = r
+                .string(auth::SERVICE_NAME_BOUND)
+                .and_then(|s| std::str::from_utf8(s).map_err(|_| wire::WireError::Truncated))
+            else {
+                return Err(self
+                    .reject_sealed(protocol_error("malformed-userauth-request"))
+                    .await);
+            };
+            if service_name != "ssh-connection" {
+                return Err(self
+                    .reject_sealed(protocol_error("unexpected-service-name"))
+                    .await);
+            }
+
+            let Ok(method) = r
+                .string(auth::METHOD_NAME_BOUND)
+                .and_then(|s| std::str::from_utf8(s).map_err(|_| wire::WireError::Truncated))
+            else {
+                return Err(self
+                    .reject_sealed(protocol_error("malformed-userauth-request"))
+                    .await);
+            };
+
+            if method != auth::AUTH_METHOD {
+                failure_count += 1;
+                if failure_count >= auth::MAX_AUTH_ATTEMPTS {
+                    return Err(self
+                        .reject_sealed(Rejection {
+                            reason: "too-many-auth-attempts",
+                            disconnect_code: DISCONNECT_BY_APPLICATION,
+                        })
+                        .await);
+                }
+                warn!(
+                    target: "audit",
+                    auth_method = method,
+                    failure_count,
+                    "auth.failed"
+                );
+                let failure = auth::build_failure_payload(false);
+                self.write_sealed(&failure).await?;
+                continue;
+            }
+
+            let Ok(sig_present) = r.boolean() else {
+                return Err(self
+                    .reject_sealed(protocol_error("malformed-userauth-request"))
+                    .await);
+            };
+
+            let Ok(key_algorithm) = r
+                .string(auth::KEY_ALGO_BOUND)
+                .and_then(|s| std::str::from_utf8(s).map_err(|_| wire::WireError::Truncated))
+            else {
+                return Err(self
+                    .reject_sealed(protocol_error("malformed-userauth-request"))
+                    .await);
+            };
+
+            if key_algorithm != auth::KEY_ALGORITHM {
+                failure_count += 1;
+                if failure_count >= auth::MAX_AUTH_ATTEMPTS {
+                    return Err(self
+                        .reject_sealed(Rejection {
+                            reason: "too-many-auth-attempts",
+                            disconnect_code: DISCONNECT_BY_APPLICATION,
+                        })
+                        .await);
+                }
+                warn!(
+                    target: "audit",
+                    auth_method = method,
+                    failure_count,
+                    "auth.failed"
+                );
+                let failure = auth::build_failure_payload(false);
+                self.write_sealed(&failure).await?;
+                continue;
+            }
+
+            let Ok(key_blob) = r.string(auth::KEY_BLOB_BOUND) else {
+                return Err(self
+                    .reject_sealed(protocol_error("malformed-userauth-request"))
+                    .await);
+            };
+
+            // Snapshot the position: bytes consumed so far (everything
+            // up to, but not including, the signature field).
+            let consumed_before_sig = payload_len - r.remaining();
+            let payload_without_sig = &payload[..consumed_before_sig];
+
+            if sig_present {
+                let Ok(signature) = r.string(auth::SIGNATURE_BOUND) else {
+                    return Err(self
+                        .reject_sealed(protocol_error("malformed-userauth-request"))
+                        .await);
+                };
+                if r.finish().is_err() {
+                    return Err(self
+                        .reject_sealed(protocol_error("malformed-userauth-request"))
+                        .await);
+                }
+
+                // Unwrap the nested signature encoding (RFC 4252 §7 / RFC 8709 §6):
+                //   string("ssh-ed25519") + string(<64-byte raw sig>)
+                let mut sig_reader = Reader::new(signature);
+                let Ok(parsed_sig_algo) = sig_reader.string(auth::KEY_ALGO_BOUND) else {
+                    return Err(self
+                        .reject_sealed(protocol_error("malformed-userauth-request"))
+                        .await);
+                };
+                if parsed_sig_algo != auth::KEY_ALGORITHM.as_bytes() {
+                    return Err(self
+                        .reject_sealed(protocol_error("malformed-userauth-request"))
+                        .await);
+                }
+                let Ok(raw_sig) = sig_reader.string(auth::SIGNATURE_BOUND) else {
+                    return Err(self
+                        .reject_sealed(protocol_error("malformed-userauth-request"))
+                        .await);
+                };
+                if sig_reader.finish().is_err() {
+                    return Err(self
+                        .reject_sealed(protocol_error("malformed-userauth-request"))
+                        .await);
+                }
+
+                let Some(ak) = authorized_keys.lookup(key_blob) else {
+                    failure_count += 1;
+                    if failure_count >= auth::MAX_AUTH_ATTEMPTS {
+                        return Err(self
+                            .reject_sealed(Rejection {
+                                reason: "too-many-auth-attempts",
+                                disconnect_code: DISCONNECT_BY_APPLICATION,
+                            })
+                            .await);
+                    }
+                    warn!(
+                        target: "audit",
+                        auth_method = method,
+                        failure_count,
+                        "auth.failed"
+                    );
+                    let failure = auth::build_failure_payload(false);
+                    self.write_sealed(&failure).await?;
+                    continue;
+                };
+
+                let session_id = &*self.stage.session_id;
+                if auth::verify_auth_signature(
+                    session_id,
+                    payload_without_sig,
+                    raw_sig,
+                    &ak.verifying_key,
+                ) == Ok(())
+                {
+                    let success = auth::build_success_payload();
+                    self.write_sealed(&success).await?;
+                    info!(
+                        target: "audit",
+                        authenticated_identity = %ak.fingerprint,
+                        auth_method = method,
+                        "auth.succeeded"
+                    );
+                    let stage = AuthAccepted {
+                        rx: self.stage.rx,
+                        tx: self.stage.tx,
+                    };
+                    return Ok(Expect {
+                        stream: self.stream,
+                        seq_tx: self.seq_tx,
+                        seq_rx: self.seq_rx,
+                        stage,
+                    });
+                }
+                failure_count += 1;
+                if failure_count >= auth::MAX_AUTH_ATTEMPTS {
+                    return Err(self
+                        .reject_sealed(Rejection {
+                            reason: "too-many-auth-attempts",
+                            disconnect_code: DISCONNECT_BY_APPLICATION,
+                        })
+                        .await);
+                }
+                warn!(
+                    target: "audit",
+                    auth_method = method,
+                    failure_count,
+                    "auth.failed"
+                );
+                let failure = auth::build_failure_payload(false);
+                self.write_sealed(&failure).await?;
+                continue;
+            }
+
+            // No signature present: probe whether the key is known.
+            if r.finish().is_err() {
+                return Err(self
+                    .reject_sealed(protocol_error("malformed-userauth-request"))
+                    .await);
+            }
+
+            if authorized_keys.lookup(key_blob).is_some() {
+                let pk_ok = auth::build_pk_ok(auth::KEY_ALGORITHM, key_blob);
+                self.write_sealed(&pk_ok).await?;
+            } else {
+                failure_count += 1;
+                if failure_count >= auth::MAX_AUTH_ATTEMPTS {
+                    return Err(self
+                        .reject_sealed(Rejection {
+                            reason: "too-many-auth-attempts",
+                            disconnect_code: DISCONNECT_BY_APPLICATION,
+                        })
+                        .await);
+                }
+                warn!(
+                    target: "audit",
+                    auth_method = method,
+                    failure_count,
+                    "auth.failed"
+                );
+                let failure = auth::build_failure_payload(false);
+                self.write_sealed(&failure).await?;
+            }
+        }
+    }
+}
+
+impl<S> Expect<S, AuthAccepted>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    /// M4 terminal: reads the next post-auth packet and rejects channel
+    /// opens cleanly. Channels land in M5 (ADR-0023).
+    ///
+    /// - `SSH_MSG_CHANNEL_OPEN` → `SSH_MSG_CHANNEL_OPEN_FAILURE` with
+    ///   `SSH_OPEN_ADMINISTRATIVELY_PROHIBITED`.
+    /// - `SSH_MSG_GLOBAL_REQUEST` → `SSH_MSG_REQUEST_FAILURE`.
+    /// - `SSH_MSG_DISCONNECT` → returns `Rejected` without reply.
+    /// - Anything else → `SSH_DISCONNECT_PROTOCOL_ERROR`.
+    ///
+    /// # Errors
+    ///
+    /// Always returns [`TransportError::Rejected`] (the M4 terminus) or
+    /// [`TransportError::Io`] if writing fails.
+    pub async fn reject_channel_open(mut self) -> TransportError {
+        let Ok(payload) = self.read_sealed().await else {
+            return TransportError::Io("packet read failed".into());
+        };
+        let mut r = Reader::new(&payload);
+        let msg = r.byte().unwrap_or(0);
+
+        match msg {
+            SSH_MSG_CHANNEL_OPEN => {
+                let rejection = Rejection {
+                    reason: "channels land in M5",
+                    disconnect_code: kex::DISCONNECT_PROTOCOL_ERROR,
+                };
+                // Parse the sender channel from the peer's message
+                // (RFC 4254 §5.1: recipient_channel must echo sender_channel).
+                let _channel_type = r.string(64).unwrap_or(b"");
+                let sender_channel = r.uint32().unwrap_or(0);
+                let mut w = Writer::new();
+                w.put_byte(SSH_MSG_CHANNEL_OPEN_FAILURE);
+                w.put_uint32(sender_channel);
+                w.put_uint32(SSH_OPEN_ADMINISTRATIVELY_PROHIBITED);
+                w.put_string(b"channels land in M5");
+                w.put_string(b""); // language tag
+                if let Err(e) = self.write_sealed(&w.into_bytes()).await {
+                    return e;
+                }
+                warn!(
+                    reason = rejection.reason,
+                    disconnect_code = rejection.disconnect_code,
+                    "channels land in M5"
+                );
+                TransportError::Rejected(rejection.reason)
+            }
+            SSH_MSG_GLOBAL_REQUEST => {
+                let mut w = Writer::new();
+                w.put_byte(SSH_MSG_REQUEST_FAILURE);
+                if let Err(e) = self.write_sealed(&w.into_bytes()).await {
+                    return e;
+                }
+                warn!(reason = "global-request-refused", "global-request-refused");
+                TransportError::Rejected("global-request-refused")
+            }
+            SSH_MSG_DISCONNECT => {
+                warn!(reason = "peer-disconnected", "peer-disconnected");
+                TransportError::Rejected("peer-disconnected")
+            }
+            _ => {
+                let rejection = protocol_error("unexpected-post-auth-message");
+                if let Err(e) = self.write_sealed(&disconnect_payload(&rejection)).await {
+                    return e;
+                }
+                TransportError::Rejected(rejection.reason)
+            }
+        }
+    }
+}
+
+/// ---- shared plumbing (private: stages cannot be bypassed) ----
+///
 /// A protocol-error rejection (code 2) with the given reason.
 const fn protocol_error(reason: &'static str) -> Rejection {
     Rejection {
@@ -576,6 +1008,36 @@ impl SealedWrite for ServiceRequest {
 }
 
 impl SealedWrite for ServiceResponse {
+    fn tx(&mut self) -> &mut PacketCipher {
+        &mut self.tx
+    }
+}
+
+impl SealedRead for ServiceResponse {
+    fn rx(&mut self) -> &mut PacketCipher {
+        &mut self.rx
+    }
+}
+
+impl SealedRead for UserAuth {
+    fn rx(&mut self) -> &mut PacketCipher {
+        &mut self.rx
+    }
+}
+
+impl SealedWrite for UserAuth {
+    fn tx(&mut self) -> &mut PacketCipher {
+        &mut self.tx
+    }
+}
+
+impl SealedRead for AuthAccepted {
+    fn rx(&mut self) -> &mut PacketCipher {
+        &mut self.rx
+    }
+}
+
+impl SealedWrite for AuthAccepted {
     fn tx(&mut self) -> &mut PacketCipher {
         &mut self.tx
     }

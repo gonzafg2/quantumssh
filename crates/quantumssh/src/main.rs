@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use std::sync::Arc;
 
+use quantumssh_core::auth::AuthorizedKeys;
 use quantumssh_core::host_key::HostKey;
 use quantumssh_core::server::{Config, Server};
 use tracing::error;
@@ -32,6 +33,9 @@ OPTIONS:
     --host-key <PATH>             Ed25519 host key file (openssh-key-v1,
                                   unencrypted; ssh-keygen -t ed25519).
                                   Required.
+    --authorized-keys <PATH>      authorized_keys file (one ssh-ed25519
+                                  key per line; options ignored).
+                                  Required.
     --handshake-timeout <SECS>    Budget from TCP accept to handshake
                                   completion (default: 30; ADR-0022)
     --log-format <FORMAT>         'json' or 'human' (default: json when
@@ -54,6 +58,7 @@ enum LogFormat {
 struct Cli {
     listen: SocketAddr,
     host_key_path: Option<String>,
+    authorized_keys_path: Option<String>,
     handshake_timeout: Duration,
     log_format: LogFormat,
 }
@@ -68,6 +73,7 @@ fn parse_cli(args: &[String]) -> Result<CliOutcome, String> {
         .parse()
         .map_err(|e| format!("internal default listen address invalid: {e}"))?;
     let mut host_key_path: Option<String> = None;
+    let mut authorized_keys_path: Option<String> = None;
     let mut handshake_timeout = Duration::from_secs(DEFAULT_HANDSHAKE_TIMEOUT_SECS);
     let mut log_format = if std::io::stderr().is_terminal() {
         LogFormat::Human
@@ -87,6 +93,10 @@ fn parse_cli(args: &[String]) -> Result<CliOutcome, String> {
             "--host-key" => {
                 let value = it.next().ok_or("--host-key requires a path")?;
                 host_key_path = Some(value.clone());
+            }
+            "--authorized-keys" => {
+                let value = it.next().ok_or("--authorized-keys requires a path")?;
+                authorized_keys_path = Some(value.clone());
             }
             "--handshake-timeout" => {
                 let value = it.next().ok_or("--handshake-timeout requires seconds")?;
@@ -121,6 +131,7 @@ fn parse_cli(args: &[String]) -> Result<CliOutcome, String> {
     Ok(CliOutcome::Run(Cli {
         listen,
         host_key_path,
+        authorized_keys_path,
         handshake_timeout,
         log_format,
     }))
@@ -208,10 +219,27 @@ async fn main() -> ExitCode {
     };
     drop(pem);
 
+    // Authorized keys: read once at startup (ADR-0022).
+    let Some(authorized_keys_path) = cli.authorized_keys_path else {
+        error!(
+            message = "--authorized-keys is required",
+            "server.config_error"
+        );
+        return ExitCode::FAILURE;
+    };
+    let authorized_keys = match AuthorizedKeys::load(std::path::Path::new(&authorized_keys_path)) {
+        Ok(k) => Arc::new(k),
+        Err(e) => {
+            error!(message = %format!("cannot load authorized_keys {authorized_keys_path}: {e}"), "server.config_error");
+            return ExitCode::FAILURE;
+        }
+    };
+
     let config = Config {
         listen: cli.listen,
         handshake_timeout: cli.handshake_timeout,
         host_key,
+        authorized_keys,
     };
     let server = match Server::bind(&config).await {
         Ok(server) => server,

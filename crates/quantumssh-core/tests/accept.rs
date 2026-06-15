@@ -1,23 +1,28 @@
-//! Integration tests for the M3 contract: a complete post-quantum
-//! handshake — version exchange, ADR-0021 KEXINIT negotiation, the
-//! hybrid `mlkem768x25519-sha256` exchange with a verified host-key
-//! signature, NEWKEYS — and the AEAD transport that follows it, over
-//! real TCP: `EXT_INFO` under the new keys, an encrypted service
-//! request, both profile ciphers, tamper rejection, the M2 rejection
-//! paths, and the §5.1.3 slow-handshake budget.
+//! Integration tests for the M4 contract: the full post-quantum
+//! handshake (M2–M3) plus publickey authentication (M4).
+//! — version exchange, ADR-0021 KEXINIT negotiation, the hybrid
+//! `mlkem768x25519-sha256` exchange with a verified host-key
+//! signature, NEWKEYS, AEAD transport, service request, and the
+//! `ssh-userauth` publickey loop. Also retains M3-level denial and
+//! rejection paths.
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 
+use ed25519_dalek::Signer;
+use ed25519_dalek::SigningKey;
 use ed25519_dalek::Verifier;
 use ml_kem::MlKem768;
 use ml_kem::kem::{Decapsulate as _, FromSeed as _, KeyExport as _};
+use quantumssh_core::auth;
+use quantumssh_core::auth::AuthorizedKeys;
 use quantumssh_core::cipher;
 use quantumssh_core::host_key::HostKey;
 use quantumssh_core::kex;
 use quantumssh_core::server::{Config, Server};
 use quantumssh_core::wire::{self, Reader, Writer};
 use sha2::{Digest, Sha256};
+use std::io::Write;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::time::{Duration, timeout};
@@ -28,10 +33,16 @@ const CLIENT_ID: &[u8] = b"SSH-2.0-testclient_0.1";
 
 async fn start_server(handshake_timeout: Duration) -> (SocketAddr, Arc<HostKey>) {
     let host_key = Arc::new(HostKey::from_seed([11u8; 32]));
+    // Create a temp authorized_keys with the test key so the server
+    // can start (authorized_keys is mandatory). Use a well-known seed.
+    let auth_signing = SigningKey::from_bytes(&[77u8; 32]);
+    let ak_path = temp_authorized_keys(&auth_signing);
+    let authorized_keys = Arc::new(AuthorizedKeys::load(&ak_path).expect("load test ak"));
     let config = Config {
         listen: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
         handshake_timeout,
         host_key: Arc::clone(&host_key),
+        authorized_keys,
     };
     let server = Server::bind(&config).await.expect("bind ephemeral port");
     let addr = server.local_addr().expect("local addr");
@@ -162,14 +173,14 @@ impl SealedClient {
 
 /// Drives the complete handshake from the client side — verifying the
 /// server's Ed25519 signature over the recomputed exchange hash — and
-/// returns the installed client-side AEAD transport.
+/// returns the installed client-side AEAD transport and the `session_id`.
 async fn establish(
     stream: &mut TcpStream,
     host_key: &HostKey,
     kex_list: &str,
     ciphers: &str,
     negotiated_cipher: &str,
-) -> SealedClient {
+) -> (SealedClient, [u8; 32]) {
     // Version exchange.
     let server_id = read_server_id(stream).await;
     assert!(server_id.starts_with(b"SSH-2.0-quantumssh_"));
@@ -249,7 +260,7 @@ async fn establish(
     // RFC 4253 §7.2 key schedule, client side: tx = client→server
     // ('C' key, 'A' IV), rx = server→client ('D', 'B'). The session
     // id is the first exchange hash; strict-kex resets both counters.
-    let session_id = hash;
+    let session_id: [u8; 32] = hash.as_slice().try_into().unwrap();
     let derive = |letter: u8, len: usize| {
         let mut out = kex::derive_key(&shared, &hash, letter, &session_id, len);
         out.truncate(len);
@@ -268,12 +279,15 @@ async fn establish(
         &derive(b'B', cipher::PacketCipher::iv_len(name)),
     )
     .expect("client rx cipher");
-    SealedClient {
-        tx,
-        rx,
-        seq_tx: 0,
-        seq_rx: 0,
-    }
+    (
+        SealedClient {
+            tx,
+            rx,
+            seq_tx: 0,
+            seq_rx: 0,
+        },
+        session_id,
+    )
 }
 
 /// The encrypted `SSH_MSG_SERVICE_REQUEST` for `ssh-userauth`.
@@ -281,6 +295,37 @@ fn service_request_payload() -> Vec<u8> {
     let mut w = Writer::new();
     w.put_byte(5); // SSH_MSG_SERVICE_REQUEST
     w.put_string(b"ssh-userauth");
+    w.into_bytes()
+}
+
+/// Service request for an unsupported service — triggers the deny path.
+fn unsupported_service_request() -> Vec<u8> {
+    let mut w = Writer::new();
+    w.put_byte(5);
+    w.put_string(b"ssh-connection");
+    w.into_bytes()
+}
+
+/// Writes a temporary `authorized_keys` file with the given Ed25519 key.
+fn temp_authorized_keys(signing: &SigningKey) -> std::path::PathBuf {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let vk = signing.verifying_key();
+    let blob = auth_test_blob(&vk);
+    let b64 = quantumssh_core::host_key::base64_encode_nopad(&blob);
+    let dir = std::env::temp_dir();
+    let path = dir.join(format!("quantumssh-test-ak-{n}.txt"));
+    let mut f = std::fs::File::create(&path).expect("create temp ak file");
+    writeln!(f, "ssh-ed25519 {b64} test-key").expect("write ak");
+    path
+}
+
+/// Builds the wire-format key blob for an Ed25519 verifying key.
+fn auth_test_blob(vk: &ed25519_dalek::VerifyingKey) -> Vec<u8> {
+    let mut w = Writer::new();
+    w.put_string(b"ssh-ed25519");
+    w.put_string(vk.as_bytes());
     w.into_bytes()
 }
 
@@ -299,7 +344,7 @@ fn assert_service_denied(payload: &[u8]) {
 async fn full_handshake_then_encrypted_ext_info_and_service_denial_chacha20() {
     let (addr, host_key) = start_server(Duration::from_secs(30)).await;
     let mut stream = connect(addr).await;
-    let mut client = establish(
+    let (mut client, _session_id) = establish(
         &mut stream,
         &host_key,
         OPENSSH_KEX_EXT_INFO,
@@ -319,10 +364,9 @@ async fn full_handshake_then_encrypted_ext_info_and_service_denial_chacha20() {
     assert_eq!(r.string(64).unwrap(), b"ssh-ed25519");
     r.finish().unwrap();
 
-    // The encrypted service request crosses; ssh-userauth is M4, so
-    // M3 answers with a sealed DISCONNECT(7).
+    // Service denied for an unsupported service.
     client
-        .write_sealed(&mut stream, &service_request_payload())
+        .write_sealed(&mut stream, &unsupported_service_request())
         .await;
     let denial = client.read_sealed(&mut stream).await;
     assert_service_denied(&denial);
@@ -334,7 +378,7 @@ async fn full_handshake_with_aes256_gcm_and_no_ext_info() {
     let mut stream = connect(addr).await;
     // Client prefers AES-GCM and does not offer ext-info-c: no
     // EXT_INFO may arrive, and the GCM path must carry the exchange.
-    let mut client = establish(
+    let (mut client, _session_id) = establish(
         &mut stream,
         &host_key,
         OPENSSH_KEX_PLAIN,
@@ -344,7 +388,7 @@ async fn full_handshake_with_aes256_gcm_and_no_ext_info() {
     .await;
 
     client
-        .write_sealed(&mut stream, &service_request_payload())
+        .write_sealed(&mut stream, &unsupported_service_request())
         .await;
     let denial = client.read_sealed(&mut stream).await;
     assert_service_denied(&denial);
@@ -354,7 +398,7 @@ async fn full_handshake_with_aes256_gcm_and_no_ext_info() {
 async fn tampered_encrypted_packet_drops_the_connection() {
     let (addr, host_key) = start_server(Duration::from_secs(30)).await;
     let mut stream = connect(addr).await;
-    let mut client = establish(
+    let (mut client, _session_id) = establish(
         &mut stream,
         &host_key,
         OPENSSH_KEX_PLAIN,
@@ -502,4 +546,275 @@ async fn malformed_identification_is_rejected() {
         .expect("close within budget")
         .unwrap_or(0);
     assert_eq!(n, 0, "no packets after a rejected identification");
+}
+
+// --------------------------------------------------------------------
+// M4 — authentication tests
+// --------------------------------------------------------------------
+
+/// Builds a `SSH_MSG_USERAUTH_REQUEST` with a valid publickey
+/// signature, ready to be sealed and sent.
+fn signed_auth_request(signing: &SigningKey, session_id: &[u8; 32], key_blob: &[u8]) -> Vec<u8> {
+    let mut w = Writer::new();
+    w.put_byte(auth::SSH_MSG_USERAUTH_REQUEST);
+    w.put_string(b"testuser");
+    w.put_string(b"ssh-connection");
+    w.put_string(b"publickey");
+    w.put_boolean(true);
+    w.put_string(b"ssh-ed25519");
+    w.put_string(key_blob);
+    let payload_without_sig = w.into_bytes();
+
+    let signed = auth::auth_signed_data(session_id, &payload_without_sig);
+    let sig = signing.sign(&signed);
+
+    // RFC 8709 §6: signature blob is string("ssh-ed25519") + string(raw_sig)
+    let mut sig_blob = Writer::new();
+    sig_blob.put_string(b"ssh-ed25519");
+    sig_blob.put_string(sig.to_bytes().as_ref());
+
+    let mut full = Writer::new();
+    full.put_bytes(&payload_without_sig);
+    full.put_string(&sig_blob.into_bytes());
+    full.into_bytes()
+}
+
+/// Builds a `SSH_MSG_USERAUTH_REQUEST` with `signature_present = false`.
+fn probe_auth_request(key_blob: &[u8]) -> Vec<u8> {
+    let mut w = Writer::new();
+    w.put_byte(auth::SSH_MSG_USERAUTH_REQUEST);
+    w.put_string(b"testuser");
+    w.put_string(b"ssh-connection");
+    w.put_string(b"publickey");
+    w.put_boolean(false);
+    w.put_string(b"ssh-ed25519");
+    w.put_string(key_blob);
+    w.into_bytes()
+}
+
+#[tokio::test]
+async fn auth_success_then_channel_rejection() {
+    let auth_signing = SigningKey::from_bytes(&[77u8; 32]);
+    let auth_vk = auth_signing.verifying_key();
+    let key_blob = auth_test_blob(&auth_vk);
+
+    let (addr, host_key) = start_server(Duration::from_secs(30)).await;
+    let mut stream = connect(addr).await;
+    let (mut client, session_id) = establish(
+        &mut stream,
+        &host_key,
+        OPENSSH_KEX_PLAIN,
+        "chacha20-poly1305@openssh.com",
+        "chacha20-poly1305@openssh.com",
+    )
+    .await;
+
+    // Request ssh-userauth → expect SERVICE_ACCEPT.
+    client
+        .write_sealed(&mut stream, &service_request_payload())
+        .await;
+    let service_reply = client.read_sealed(&mut stream).await;
+    let mut r = Reader::new(&service_reply);
+    assert_eq!(r.byte().unwrap(), 6, "SSH_MSG_SERVICE_ACCEPT");
+
+    // Send a valid signed auth request → expect SUCCESS.
+    client
+        .write_sealed(
+            &mut stream,
+            &signed_auth_request(&auth_signing, &session_id, &key_blob),
+        )
+        .await;
+    let auth_reply = client.read_sealed(&mut stream).await;
+    assert_eq!(auth_reply, vec![auth::SSH_MSG_USERAUTH_SUCCESS]);
+
+    // Send channel-open → expect CHANNEL_OPEN_FAILURE.
+    let mut ch = Writer::new();
+    ch.put_byte(90); // SSH_MSG_CHANNEL_OPEN
+    ch.put_string(b"session");
+    ch.put_uint32(0);
+    ch.put_uint32(2 * 1024 * 1024);
+    ch.put_uint32(32 * 1024);
+    client.write_sealed(&mut stream, &ch.into_bytes()).await;
+    let ch_reply = client.read_sealed(&mut stream).await;
+    let mut cr = Reader::new(&ch_reply);
+    assert_eq!(cr.byte().unwrap(), 92, "SSH_MSG_CHANNEL_OPEN_FAILURE");
+}
+
+#[tokio::test]
+async fn auth_failure_on_wrong_signature() {
+    let auth_signing = SigningKey::from_bytes(&[77u8; 32]);
+    let auth_vk = auth_signing.verifying_key();
+    let key_blob = auth_test_blob(&auth_vk);
+
+    let (addr, host_key) = start_server(Duration::from_secs(30)).await;
+    let mut stream = connect(addr).await;
+    let (mut client, _session_id) = establish(
+        &mut stream,
+        &host_key,
+        OPENSSH_KEX_PLAIN,
+        "chacha20-poly1305@openssh.com",
+        "chacha20-poly1305@openssh.com",
+    )
+    .await;
+
+    client
+        .write_sealed(&mut stream, &service_request_payload())
+        .await;
+    let reply = client.read_sealed(&mut stream).await;
+    assert_eq!(reply.first(), Some(&6));
+
+    // Build a request with a tampered signature.
+    let mut w = Writer::new();
+    w.put_byte(auth::SSH_MSG_USERAUTH_REQUEST);
+    w.put_string(b"testuser");
+    w.put_string(b"ssh-connection");
+    w.put_string(b"publickey");
+    w.put_boolean(true);
+    w.put_string(b"ssh-ed25519");
+    w.put_string(&key_blob);
+    // RFC 8709 §6 nested encoding with wrong raw signature bytes.
+    let mut sig_blob = Writer::new();
+    sig_blob.put_string(b"ssh-ed25519");
+    sig_blob.put_string(&[0u8; 64]);
+    w.put_string(&sig_blob.into_bytes());
+    client.write_sealed(&mut stream, &w.into_bytes()).await;
+
+    let auth_reply = client.read_sealed(&mut stream).await;
+    assert_eq!(auth_reply.first(), Some(&auth::SSH_MSG_USERAUTH_FAILURE));
+}
+
+#[tokio::test]
+async fn auth_rejects_non_publickey_method() {
+    let auth_signing = SigningKey::from_bytes(&[77u8; 32]);
+    let _auth_vk = auth_signing.verifying_key();
+
+    let (addr, host_key) = start_server(Duration::from_secs(30)).await;
+    let mut stream = connect(addr).await;
+    let (mut client, _session_id) = establish(
+        &mut stream,
+        &host_key,
+        OPENSSH_KEX_PLAIN,
+        "chacha20-poly1305@openssh.com",
+        "chacha20-poly1305@openssh.com",
+    )
+    .await;
+
+    client
+        .write_sealed(&mut stream, &service_request_payload())
+        .await;
+    let reply = client.read_sealed(&mut stream).await;
+    assert_eq!(reply.first(), Some(&6));
+
+    // Send "password" method.
+    let mut w = Writer::new();
+    w.put_byte(auth::SSH_MSG_USERAUTH_REQUEST);
+    w.put_string(b"testuser");
+    w.put_string(b"ssh-connection");
+    w.put_string(b"password");
+    w.put_boolean(false);
+    w.put_string(b"hunter2");
+    client.write_sealed(&mut stream, &w.into_bytes()).await;
+
+    let auth_reply = client.read_sealed(&mut stream).await;
+    let mut r = Reader::new(&auth_reply);
+    assert_eq!(r.byte().unwrap(), auth::SSH_MSG_USERAUTH_FAILURE);
+    let methods = r.name_list(64).unwrap();
+    assert!(methods.contains("publickey"));
+    assert!(!r.boolean().unwrap());
+}
+
+#[tokio::test]
+async fn auth_pk_ok_then_signed_succeeds() {
+    let auth_signing = SigningKey::from_bytes(&[77u8; 32]);
+    let auth_vk = auth_signing.verifying_key();
+    let key_blob = auth_test_blob(&auth_vk);
+
+    let (addr, host_key) = start_server(Duration::from_secs(30)).await;
+    let mut stream = connect(addr).await;
+    let (mut client, session_id) = establish(
+        &mut stream,
+        &host_key,
+        OPENSSH_KEX_PLAIN,
+        "chacha20-poly1305@openssh.com",
+        "chacha20-poly1305@openssh.com",
+    )
+    .await;
+
+    client
+        .write_sealed(&mut stream, &service_request_payload())
+        .await;
+    let reply = client.read_sealed(&mut stream).await;
+    assert_eq!(reply.first(), Some(&6));
+
+    // Probe without signature → PK_OK.
+    client
+        .write_sealed(&mut stream, &probe_auth_request(&key_blob))
+        .await;
+    let pk_ok = client.read_sealed(&mut stream).await;
+    assert_eq!(pk_ok.first(), Some(&auth::SSH_MSG_USERAUTH_PK_OK));
+
+    // Signed request → SUCCESS.
+    client
+        .write_sealed(
+            &mut stream,
+            &signed_auth_request(&auth_signing, &session_id, &key_blob),
+        )
+        .await;
+    let success = client.read_sealed(&mut stream).await;
+    assert_eq!(success, vec![auth::SSH_MSG_USERAUTH_SUCCESS]);
+}
+
+#[tokio::test]
+async fn max_auth_attempts_disconnects() {
+    let auth_signing = SigningKey::from_bytes(&[77u8; 32]);
+    let auth_vk = auth_signing.verifying_key();
+    let _key_blob = auth_test_blob(&auth_vk);
+
+    let (addr, host_key) = start_server(Duration::from_secs(30)).await;
+    let mut stream = connect(addr).await;
+    let (mut client, _session_id) = establish(
+        &mut stream,
+        &host_key,
+        OPENSSH_KEX_PLAIN,
+        "chacha20-poly1305@openssh.com",
+        "chacha20-poly1305@openssh.com",
+    )
+    .await;
+
+    client
+        .write_sealed(&mut stream, &service_request_payload())
+        .await;
+    let reply = client.read_sealed(&mut stream).await;
+    assert_eq!(reply.first(), Some(&6));
+
+    for i in 0..12 {
+        let mut w = Writer::new();
+        w.put_byte(auth::SSH_MSG_USERAUTH_REQUEST);
+        w.put_string(b"testuser");
+        w.put_string(b"ssh-connection");
+        w.put_string(b"publickey");
+        w.put_boolean(true);
+        w.put_string(b"ssh-ed25519");
+        w.put_string(&[0xe0u8; 12]); // unknown blob
+        // RFC 8709 §6 nested encoding with wrong raw signature bytes.
+        let mut sig_blob = Writer::new();
+        sig_blob.put_string(b"ssh-ed25519");
+        sig_blob.put_string(&[0u8; 64]);
+        w.put_string(&sig_blob.into_bytes());
+        client.write_sealed(&mut stream, &w.into_bytes()).await;
+
+        let reply = client.read_sealed(&mut stream).await;
+        if i < 11 {
+            assert_eq!(
+                reply.first(),
+                Some(&auth::SSH_MSG_USERAUTH_FAILURE),
+                "attempt {i}"
+            );
+        } else {
+            let mut r = Reader::new(&reply);
+            assert_eq!(r.byte().unwrap(), kex::SSH_MSG_DISCONNECT, "attempt {i}");
+            assert_eq!(r.uint32().unwrap(), 11, "DISCONNECT_BY_APPLICATION");
+            return;
+        }
+    }
 }
