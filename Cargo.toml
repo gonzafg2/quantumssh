@@ -24,7 +24,7 @@ rust-version = "1.92"
 # used, each justified in its PR; the cryptographic pins are fixed by
 # RFC-0003/ADR-0019 and land with the kex milestone.
 [workspace.dependencies]
-tokio              = { version = "~1.51", default-features = false } # ADR-0022 (RFC-0004): tilde keeps us on the 1.51.x LTS line, per Tokio's own LTS guidance
+tokio              = { version = "~1.52", default-features = false } # ADR-0022 (RFC-0004): tilde keeps us on the 1.51.x LTS line, per Tokio's own LTS guidance
 tracing            = { version = "0.1", default-features = false }  # ADR-0024: the facade the library emits through
 tracing-subscriber = { version = "0.3", default-features = false }  # ADR-0024: constructed only by the binary
 getrandom          = { version = "0.3", default-features = false }  # OS randomness: BPP padding (RFC 4253 §6), KEXINIT cookie (M2)
@@ -35,7 +35,7 @@ getrandom          = { version = "0.3", default-features = false }  # OS randomn
 ml-kem        = { version = "0.3.0", default-features = false, features = ["zeroize"] }            # ADR-0019
 x25519-dalek  = { version = "2.0.1", default-features = false, features = ["static_secrets", "zeroize"] }
 ed25519-dalek = { version = "2", default-features = false, features = ["std", "rand_core", "zeroize"] }
-sha2          = { version = "0.10", default-features = false }
+sha2          = { version = "0.11", default-features = false }
 zeroize       = { version = "1", default-features = false, features = ["zeroize_derive"] }
 
 # AEAD transport layer (M3). `chacha20-poly1305@openssh.com` cannot be
