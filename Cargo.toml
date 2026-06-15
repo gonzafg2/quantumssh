@@ -27,7 +27,7 @@ rust-version = "1.92"
 tokio              = { version = "~1.51", default-features = false } # ADR-0022 (RFC-0004): tilde keeps us on the 1.51.x LTS line, per Tokio's own LTS guidance
 tracing            = { version = "0.1", default-features = false }  # ADR-0024: the facade the library emits through
 tracing-subscriber = { version = "0.3", default-features = false }  # ADR-0024: constructed only by the binary
-getrandom          = { version = "0.3", default-features = false }  # OS randomness: BPP padding (RFC 4253 §6), KEXINIT cookie (M2)
+getrandom          = { version = "0.4", default-features = false }  # OS randomness: BPP padding (RFC 4253 §6), KEXINIT cookie (M2)
 
 # Cryptographic primitive layer — pinned by RFC-0003 §"Guide-level
 # explanation" and ADR-0019. All pure-Rust, no FFI; `hmac` is
