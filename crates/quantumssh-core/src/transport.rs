@@ -683,6 +683,30 @@ where
                         .await);
                 }
 
+                // Unwrap the nested signature encoding (RFC 4252 §7 / RFC 8709 §6):
+                //   string("ssh-ed25519") + string(<64-byte raw sig>)
+                let mut sig_reader = Reader::new(signature);
+                let Ok(parsed_sig_algo) = sig_reader.string(auth::KEY_ALGO_BOUND) else {
+                    return Err(self
+                        .reject_sealed(protocol_error("malformed-userauth-request"))
+                        .await);
+                };
+                if parsed_sig_algo != auth::KEY_ALGORITHM.as_bytes() {
+                    return Err(self
+                        .reject_sealed(protocol_error("malformed-userauth-request"))
+                        .await);
+                }
+                let Ok(raw_sig) = sig_reader.string(auth::SIGNATURE_BOUND) else {
+                    return Err(self
+                        .reject_sealed(protocol_error("malformed-userauth-request"))
+                        .await);
+                };
+                if sig_reader.finish().is_err() {
+                    return Err(self
+                        .reject_sealed(protocol_error("malformed-userauth-request"))
+                        .await);
+                }
+
                 let Some(ak) = authorized_keys.lookup(key_blob) else {
                     failure_count += 1;
                     if failure_count >= auth::MAX_AUTH_ATTEMPTS {
@@ -708,7 +732,7 @@ where
                 if auth::verify_auth_signature(
                     session_id,
                     payload_without_sig,
-                    signature,
+                    raw_sig,
                     &ak.verifying_key,
                 ) == Ok(())
                 {

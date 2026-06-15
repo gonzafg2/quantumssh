@@ -568,9 +568,14 @@ fn signed_auth_request(signing: &SigningKey, session_id: &[u8; 32], key_blob: &[
     let signed = auth::auth_signed_data(session_id, &payload_without_sig);
     let sig = signing.sign(&signed);
 
+    // RFC 8709 §6: signature blob is string("ssh-ed25519") + string(raw_sig)
+    let mut sig_blob = Writer::new();
+    sig_blob.put_string(b"ssh-ed25519");
+    sig_blob.put_string(sig.to_bytes().as_ref());
+
     let mut full = Writer::new();
     full.put_bytes(&payload_without_sig);
-    full.put_string(sig.to_bytes().as_ref());
+    full.put_string(&sig_blob.into_bytes());
     full.into_bytes()
 }
 
@@ -667,7 +672,11 @@ async fn auth_failure_on_wrong_signature() {
     w.put_boolean(true);
     w.put_string(b"ssh-ed25519");
     w.put_string(&key_blob);
-    w.put_string(&[0u8; 64]); // wrong "signature"
+    // RFC 8709 §6 nested encoding with wrong raw signature bytes.
+    let mut sig_blob = Writer::new();
+    sig_blob.put_string(b"ssh-ed25519");
+    sig_blob.put_string(&[0u8; 64]);
+    w.put_string(&sig_blob.into_bytes());
     client.write_sealed(&mut stream, &w.into_bytes()).await;
 
     let auth_reply = client.read_sealed(&mut stream).await;
@@ -787,7 +796,11 @@ async fn max_auth_attempts_disconnects() {
         w.put_boolean(true);
         w.put_string(b"ssh-ed25519");
         w.put_string(&[0xe0u8; 12]); // unknown blob
-        w.put_string(&[0u8; 64]);
+        // RFC 8709 §6 nested encoding with wrong raw signature bytes.
+        let mut sig_blob = Writer::new();
+        sig_blob.put_string(b"ssh-ed25519");
+        sig_blob.put_string(&[0u8; 64]);
+        w.put_string(&sig_blob.into_bytes());
         client.write_sealed(&mut stream, &w.into_bytes()).await;
 
         let reply = client.read_sealed(&mut stream).await;
