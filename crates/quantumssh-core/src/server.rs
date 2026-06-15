@@ -157,7 +157,7 @@ async fn run_connection(
     let (service, responder) = t.read_service_request().await?;
     if service.as_str() == "ssh-userauth" {
         let t = responder.accept().await?;
-        let (_identity, t) = t.authenticate(authorized_keys).await?;
+        let t = t.authenticate(authorized_keys).await?;
         Err(t.reject_channel_open().await)
     } else {
         info!(service = %service, "service denied (only ssh-userauth supported)");

@@ -16,6 +16,8 @@
 use std::fmt;
 use std::path::Path;
 
+use zeroize::Zeroizing;
+
 use crate::host_key;
 use crate::wire::{Reader, Writer};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
@@ -36,7 +38,10 @@ pub const AUTH_METHOD: &str = "publickey";
 pub const KEY_ALGORITHM: &str = "ssh-ed25519";
 
 /// Maximum authentication attempts per connection (per-source counter,
-/// not per-user — ADR-0024).
+/// not per-user — ADR-0024 records the per-source semantics).
+///
+/// Chosen above OpenSSH's default of 6 to accommodate `PK_OK` probes followed
+/// by signature retries without prematurely disconnecting legitimate clients.
 pub const MAX_AUTH_ATTEMPTS: u32 = 12;
 
 // Bounds for auth-request fields (wire::Reader requires explicit bounds).
@@ -92,7 +97,6 @@ impl fmt::Display for AuthError {
 impl std::error::Error for AuthError {}
 
 /// A single parsed entry from an `authorized_keys` file.
-#[derive(Debug)]
 pub struct AuthorizedKey {
     /// Raw wire-format key blob (string algorithm + string key).
     pub blob: Vec<u8>,
@@ -101,6 +105,14 @@ pub struct AuthorizedKey {
     pub fingerprint: String,
     /// The verified public key, ready to check signatures.
     pub verifying_key: VerifyingKey,
+}
+
+impl fmt::Debug for AuthorizedKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AuthorizedKey")
+            .field("fingerprint", &self.fingerprint)
+            .finish_non_exhaustive()
+    }
 }
 
 /// The parsed `authorized_keys` file, ready for lockup.
@@ -146,20 +158,15 @@ impl AuthorizedKeys {
                 continue;
             }
 
-            // Skip options: find the first token that looks like a key
-            // type (starts with "ssh-").
-            let Some(key_start) = trimmed.find("ssh-") else {
-                return Err(AuthError::MalformedLine {
+            // Skip options: scan tokens for the key type. Token-based
+            // matching avoids substring matches inside option values
+            // (e.g. command="/usr/bin/ssh-agent").
+            let mut tokens = trimmed.split_whitespace();
+            let algo = tokens.find(|&tok| tok.starts_with("ssh-")).ok_or_else(|| {
+                AuthError::MalformedLine {
                     line: line_no,
                     reason: "no key type found".into(),
-                });
-            };
-            let remainder = &trimmed[key_start..];
-            let mut tokens = remainder.split_whitespace();
-
-            let algo = tokens.next().ok_or_else(|| AuthError::MalformedLine {
-                line: line_no,
-                reason: "missing key type".into(),
+                }
             })?;
             if algo != KEY_ALGORITHM {
                 return Err(AuthError::UnsupportedKeyType {
@@ -263,11 +270,11 @@ impl AuthorizedKeys {
 /// parsing the request with [`Reader`] and noting the offset before
 /// reading the signature string.
 #[must_use]
-pub fn auth_signed_data(session_id: &[u8; 32], payload_without_sig: &[u8]) -> Vec<u8> {
+pub fn auth_signed_data(session_id: &[u8; 32], payload_without_sig: &[u8]) -> Zeroizing<Vec<u8>> {
     let mut w = Writer::new();
     w.put_string(session_id);
     w.put_bytes(payload_without_sig);
-    w.into_bytes()
+    Zeroizing::new(w.into_bytes())
 }
 
 /// Verifies an Ed25519 signature over the `publickey` auth request.
@@ -375,6 +382,17 @@ mod tests {
         let keys = AuthorizedKeys::load(&path).expect("load");
         assert_eq!(keys.keys.len(), 1);
         assert_eq!(keys.keys[0].blob, blob);
+    }
+
+    #[test]
+    fn ignore_option_value_containing_ssh_prefix() {
+        let signing = SigningKey::from_bytes(&[50u8; 32]);
+        let blob = build_ed25519_blob(&signing.verifying_key());
+        let b64 = host_key::base64_encode_nopad(&blob);
+        let content = format!("command=\"/usr/bin/ssh-agent\" ssh-ed25519 {b64} test\n");
+        let path = temp_authorized_keys(&content);
+        let keys = AuthorizedKeys::load(&path).expect("load");
+        assert_eq!(keys.keys.len(), 1);
     }
 
     #[test]

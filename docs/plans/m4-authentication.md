@@ -429,7 +429,7 @@ fn sign_auth_request(signing_key: &SigningKey, session_id: &[u8; 32], user: &str
    - Luego envía con firma → recibe SUCCESS
 
 6. **`max_auth_attempts_disconnects`**
-   - 20 intentos fallidos con keys no autorizadas → recibe DISCONNECT code 11
+   - `MAX_AUTH_ATTEMPTS + 1` intentos fallidos con keys no autorizadas → recibe DISCONNECT code 11
 
 ---
 

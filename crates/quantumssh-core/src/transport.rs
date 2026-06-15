@@ -155,19 +155,11 @@ pub struct UserAuth {
 }
 
 /// Stage 7 (M4 terminal): authentication succeeded.
-/// Holds the authenticated identity; channels land in M5.
 /// For now, [`Expect::reject_channel_open`] cleanly denies any
-/// channel-open attempt.
+/// channel-open attempt. Re-keying and session fields land in M5.
 pub struct AuthAccepted {
     rx: PacketCipher,
     tx: PacketCipher,
-    /// Stored for M5 re-keying (issue #60) and channel integration.
-    #[expect(dead_code)]
-    session_id: Zeroizing<[u8; 32]>,
-    /// The SHA256 fingerprint of the authenticated key. Used by M5
-    /// for audit events (`exec.started` / `exec.finished`).
-    #[expect(dead_code)]
-    authenticated_identity: String,
 }
 
 /// Performs the RFC 4253 §4.2 identification exchange and produces
@@ -556,8 +548,7 @@ where
     /// Audit events (`auth.succeeded` / `auth.failed`) are emitted on
     /// the `audit` target (ADR-0024).
     ///
-    /// Returns the authenticated key's fingerprint and the machine
-    /// advanced to [`AuthAccepted`].
+    /// Returns the machine advanced to [`AuthAccepted`].
     ///
     /// # Errors
     ///
@@ -569,7 +560,7 @@ where
     pub async fn authenticate(
         mut self,
         authorized_keys: &AuthorizedKeys,
-    ) -> Result<(String, Expect<S, AuthAccepted>), TransportError> {
+    ) -> Result<Expect<S, AuthAccepted>, TransportError> {
         let mut failure_count: u32 = 0;
 
         loop {
@@ -593,7 +584,7 @@ where
                     .await);
             };
 
-            let Ok(_service_name) = r
+            let Ok(service_name) = r
                 .string(auth::SERVICE_NAME_BOUND)
                 .and_then(|s| std::str::from_utf8(s).map_err(|_| wire::WireError::Truncated))
             else {
@@ -601,6 +592,11 @@ where
                     .reject_sealed(protocol_error("malformed-userauth-request"))
                     .await);
             };
+            if service_name != "ssh-connection" {
+                return Err(self
+                    .reject_sealed(protocol_error("unexpected-service-name"))
+                    .await);
+            }
 
             let Ok(method) = r
                 .string(auth::METHOD_NAME_BOUND)
@@ -728,18 +724,13 @@ where
                     let stage = AuthAccepted {
                         rx: self.stage.rx,
                         tx: self.stage.tx,
-                        session_id: self.stage.session_id,
-                        authenticated_identity: ak.fingerprint.clone(),
                     };
-                    return Ok((
-                        ak.fingerprint.clone(),
-                        Expect {
-                            stream: self.stream,
-                            seq_tx: self.seq_tx,
-                            seq_rx: self.seq_rx,
-                            stage,
-                        },
-                    ));
+                    return Ok(Expect {
+                        stream: self.stream,
+                        seq_tx: self.seq_tx,
+                        seq_rx: self.seq_rx,
+                        stage,
+                    });
                 }
                 failure_count += 1;
                 if failure_count >= auth::MAX_AUTH_ATTEMPTS {
