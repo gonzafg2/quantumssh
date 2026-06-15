@@ -81,6 +81,7 @@ warnings.
   (`git commit -s`), and signed (`git commit -S`). CI rejects unsigned or
   unsigned-off commits.
 - Spanish and English are both first-class in issues, PRs, and commits.
+- Automated reviewers (`opencode`, `Claude Code Review`) only run on PRs from `OWNER`/`MEMBER`/`COLLABORATOR`. Dependabot and other bots are excluded.
 
 ## Dependencies
 
