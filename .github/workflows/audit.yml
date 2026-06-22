@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       # cargo-audit requires Cargo.lock, which only exists once a binary
       # or application member crate has been added to the workspace.
