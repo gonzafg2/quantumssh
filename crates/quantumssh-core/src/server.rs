@@ -6,10 +6,11 @@
 //! connection itself is driven through the transport type-state
 //! machine ([`crate::transport`]): version exchange → KEXINIT →
 //! hybrid `mlkem768x25519-sha256` exchange → NEWKEYS → encrypted
-//! service request → `ssh-userauth` (publickey Ed25519, M4).
-//! Unknown services are denied; channels land in M5.
+//! service request → `ssh-userauth` (publickey Ed25519, M4) → the
+//! channel layer: one `session` channel, one `exec`, clean close (M5).
+//! Unknown services are denied. The handshake budget bounds everything
+//! up to authentication; the channel phase runs un-timed (ADR-0023).
 
-use std::convert::Infallible;
 use std::io;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -95,12 +96,7 @@ impl Server {
             let span = info_span!("connection", peer_addr = %peer_addr);
             let connection = async move {
                 info!("connection.accepted");
-                if tokio::time::timeout(budget, handle(stream, host_key, authorized_keys))
-                    .await
-                    .is_err()
-                {
-                    warn!(reason = "handshake-timeout", "connection.closed");
-                }
+                handle(stream, host_key, authorized_keys, budget).await;
             };
             if let Err(join_err) = tokio::spawn(connection.instrument(span)).await {
                 warn!(peer_addr = %peer_addr, reason = %join_err, "connection.closed");
@@ -109,17 +105,16 @@ impl Server {
     }
 }
 
-/// Handles one connection within the handshake budget, driving the
-/// transport machine stage by stage.
+/// Handles one connection: the handshake under the budget, then the
+/// channel phase un-timed.
 async fn handle(
     mut stream: TcpStream,
     host_key: Arc<HostKey>,
     authorized_keys: Arc<AuthorizedKeys>,
+    budget: Duration,
 ) {
-    let reason = match run_connection(&mut stream, &host_key, &authorized_keys).await {
-        // With M4 auth, the Infallible type still holds: every path
-        // ends in an error or the auth-reject terminus.
-        Ok(never) => match never {},
+    let reason = match run_connection(&mut stream, &host_key, &authorized_keys, budget).await {
+        Ok(()) => "session closed".to_string(),
         Err(TransportError::Rejected(reason)) => format!("rejected: {reason}"),
         Err(TransportError::Io(e)) => e,
     };
@@ -129,38 +124,53 @@ async fn handle(
     info!(reason = %reason, "connection.closed");
 }
 
-/// One connection through the type-state machine. With M4 auth, the
-/// `Infallible` success type stays: every path ends in an error — auth
-/// success leads to the `AuthAccepted` stage whose
-/// [`reject_channel_open`] always returns `Err`.
+/// One connection through the type-state machine. The handshake (up to
+/// and including authentication) runs under `budget`; once a key
+/// authenticates, the channel phase ([`Expect::serve`]) runs un-timed —
+/// a command may legitimately take arbitrarily long (ADR-0023). Returns
+/// `Ok(())` on a clean session close.
 async fn run_connection(
     stream: &mut TcpStream,
     host_key: &HostKey,
     authorized_keys: &AuthorizedKeys,
-) -> Result<Infallible, TransportError> {
-    let t = transport::version_exchange(stream).await?;
-    let t = t.exchange_kexinit().await?;
-    let t = t.run_hybrid(host_key).await?;
-    let (negotiated, t) = t.exchange_newkeys().await?;
-    info!(
-        kex_algorithm = negotiated.kex_algorithm,
-        host_key_algorithm = negotiated.host_key_algorithm,
-        "kex.completed"
-    );
-    debug!(
-        cipher_c2s = %negotiated.cipher_c2s,
-        cipher_s2c = %negotiated.cipher_s2c,
-        ext_info = negotiated.ext_info,
-        "encrypted transport established"
-    );
+    budget: Duration,
+) -> Result<(), TransportError> {
+    let auth_phase = async {
+        let t = transport::version_exchange(stream).await?;
+        let t = t.exchange_kexinit().await?;
+        let t = t.run_hybrid(host_key).await?;
+        let (negotiated, t) = t.exchange_newkeys().await?;
+        info!(
+            kex_algorithm = negotiated.kex_algorithm,
+            host_key_algorithm = negotiated.host_key_algorithm,
+            "kex.completed"
+        );
+        debug!(
+            cipher_c2s = %negotiated.cipher_c2s,
+            cipher_s2c = %negotiated.cipher_s2c,
+            ext_info = negotiated.ext_info,
+            "encrypted transport established"
+        );
 
-    let (service, responder) = t.read_service_request().await?;
-    if service.as_str() == "ssh-userauth" {
-        let t = responder.accept().await?;
-        let t = t.authenticate(authorized_keys).await?;
-        Err(t.reject_channel_open().await)
-    } else {
-        info!(service = %service, "service denied (only ssh-userauth supported)");
-        Err(responder.deny().await)
+        let (service, responder) = t.read_service_request().await?;
+        if service.as_str() == "ssh-userauth" {
+            let t = responder.accept().await?;
+            Ok::<_, TransportError>(Some(t.authenticate(authorized_keys).await?))
+        } else {
+            info!(service = %service, "service denied (only ssh-userauth supported)");
+            Err(responder.deny().await)
+        }
+    };
+
+    let authed = tokio::time::timeout(budget, auth_phase)
+        .await
+        .map_err(|_| TransportError::Rejected("handshake-timeout"))??;
+
+    match authed {
+        // Authentication succeeded: run the channel layer un-timed.
+        Some(t) => t.serve().await,
+        // `responder.deny()` already returned `Err`, so this arm is
+        // unreachable; kept total for the type.
+        None => Ok(()),
     }
 }

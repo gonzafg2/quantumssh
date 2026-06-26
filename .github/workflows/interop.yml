@@ -1,0 +1,62 @@
+name: Interop
+
+# OpenSSH interop hard gate (ADR-0020): every PR must drive a real
+# OpenSSH 10.x client through connect → publickey auth → exec → clean
+# close against the quantumssh release binary. The default Ubuntu runner
+# ships OpenSSH 9.6p1 (no mlkem768x25519-sha256), so the job runs in a
+# Debian trixie container, which provides OpenSSH 10.0p1.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: short
+
+permissions:
+  contents: read
+
+jobs:
+  openssh-interop:
+    name: openssh-interop
+    runs-on: ubuntu-latest
+    # ADR-0020: the trixie-slim *tag* is mutable; pin to an image digest
+    # (debian@sha256:…) before merge so an upstream OpenSSH change is a
+    # reviewed "version bump" PR, never a mystery red check elsewhere.
+    # TODO(ADR-0020): replace the tag below with the resolved digest.
+    container:
+      image: debian:trixie-slim
+    steps:
+      - name: Install OpenSSH client + build prerequisites
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates curl gcc libc6-dev openssh-client
+          # ADR-0020: assert the pinned client version.
+          ssh -V 2>&1
+          ssh -V 2>&1 | grep -q "OpenSSH_10.0p1" \
+            || { echo "::error::expected OpenSSH_10.0p1 in trixie"; exit 1; }
+          # The KEX must be available, or the gate cannot test the hybrid.
+          ssh -Q kex | grep -qx "mlkem768x25519-sha256" \
+            || { echo "::error::mlkem768x25519-sha256 not offered by this client"; exit 1; }
+
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry, index and target
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build release binary
+        run: cargo build --workspace --release
+
+      - name: OpenSSH interop gate
+        run: bash tests/interop/run_openssh_client.sh

@@ -30,7 +30,9 @@ We will run `quantumsshd` in Phase 1 as a dedicated non-root service account (ca
 
 The server-side execution flow for `"exec"` channel requests does **not** call `setuid`, `setgid`, `initgroups`, or `chroot`, and does not integrate with PAM. Commands inherit the service account's UID/GID, supplementary groups, and `$HOME`, with a sanitised environment (`PATH`, `HOME`, `USER`, `SHELL`, `LANG`, `LC_*`).
 
-The audit-record requirement from RFC-0002 §2.7 — logging `executing_uid` distinct from `authenticated_identity` — is implemented by reading `nix::unistd::Uid::current()` at the boundary. In Phase 1 the field is a constant per process; the schema is forward-compatible with the Phase 3 per-user value.
+The audit-record requirement from RFC-0002 §2.7 — logging `executing_uid` distinct from `authenticated_identity` — is implemented by reading the process UID at the boundary via `rustix::process::getuid()`. In Phase 1 the field is a constant per process; the schema is forward-compatible with the Phase 3 per-user value.
+
+> **Note (M5, while Proposed):** this ADR originally named `nix::unistd::Uid::current()`. Phase-1 implementation selected `rustix` (`features = ["process"]`) over `nix` for a smaller dependency surface (MANIFIESTO #4): the same `process` feature supplies both `getuid()` here and the `kill_process()` the channel layer needs for kill-on-early-close (ADR-0023), so the UID read costs no dependency the exec path does not already require. Edited in place because this ADR is still `Proposed`; no superseding ADR is needed.
 
 ## Consequences
 

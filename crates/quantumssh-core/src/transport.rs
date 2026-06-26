@@ -18,8 +18,9 @@
 //!    [`Expect<ServiceResponse>::accept`] `ssh-userauth` (M4).
 //! 6. [`Expect<UserAuth>::authenticate`] → [`Expect<AuthAccepted>`],
 //!    running the RFC 4252 §7 publickey loop.
-//! 7. [`Expect<AuthAccepted>::reject_channel_open`] — the M4 terminal
-//!    (M5 replaces this with a full channel layer).
+//! 7. [`Expect<AuthAccepted>::serve`] → transitions to [`Session`] and
+//!    runs the M5 channel layer: one `session` channel carrying one
+//!    `exec`, then a clean close (ADR-0023).
 //!
 //! Each transition consumes the machine; there is no way to read a
 //! message a stage does not expect, and an unexpected message on the
@@ -54,19 +55,6 @@ pub const DISCONNECT_SERVICE_NOT_AVAILABLE: u32 = 7;
 /// `SSH_DISCONNECT_BY_APPLICATION` (RFC 4253 §11.1) — used when
 /// `MAX_AUTH_ATTEMPTS` is exhausted (ADR-0024).
 pub const DISCONNECT_BY_APPLICATION: u32 = 11;
-
-// Channel protocol constants used by `AuthAccepted` in M4 (prelude to
-// M5, which implements the full RFC 4254 channel layer — ADR-0023).
-/// `SSH_MSG_CHANNEL_OPEN` (RFC 4254 §5.1).
-const SSH_MSG_CHANNEL_OPEN: u8 = 90;
-/// `SSH_MSG_CHANNEL_OPEN_FAILURE` (RFC 4254 §5.1).
-const SSH_MSG_CHANNEL_OPEN_FAILURE: u8 = 92;
-/// `SSH_OPEN_ADMINISTRATIVELY_PROHIBITED` (RFC 4254 §5.1).
-const SSH_OPEN_ADMINISTRATIVELY_PROHIBITED: u32 = 1;
-/// `SSH_MSG_GLOBAL_REQUEST` (RFC 4254 §4).
-const SSH_MSG_GLOBAL_REQUEST: u8 = 80;
-/// `SSH_MSG_REQUEST_FAILURE` (RFC 4254 §4).
-const SSH_MSG_REQUEST_FAILURE: u8 = 82;
 
 /// Bound on a service name (RFC 4253 §10 defines two, both short).
 const SERVICE_NAME_BOUND: usize = 64;
@@ -154,12 +142,32 @@ pub struct UserAuth {
     session_id: Zeroizing<[u8; 32]>,
 }
 
-/// Stage 7 (M4 terminal): authentication succeeded.
-/// For now, [`Expect::reject_channel_open`] cleanly denies any
-/// channel-open attempt. Re-keying and session fields land in M5.
+/// Stage 7 (M4): authentication succeeded. [`Expect::serve`] transitions
+/// this into [`Session`] and runs the channel layer (M5).
 pub struct AuthAccepted {
     rx: PacketCipher,
     tx: PacketCipher,
+    /// The authenticated key fingerprint (`SHA256:…`), threaded from
+    /// `authenticate()` so the `exec.*` audit events can attribute the
+    /// command to the key that authorised it (ADR-0024).
+    identity: String,
+}
+
+/// Stage 8 (M5): the connection-protocol phase.
+///
+/// Carries the cipher pair, the authenticated identity, and a
+/// **resumable** receive buffer (`inbuf`) so [`Expect::read_packet`] is
+/// cancel-safe — the channel driver `select!`s the read against
+/// blocking-thread child output, and a cancelled read must not desync
+/// the stream (ADR-0023).
+pub struct Session {
+    rx: PacketCipher,
+    tx: PacketCipher,
+    identity: String,
+    /// Bytes read from the wire but not yet framed into a packet.
+    /// Bounded to one full frame (`4 + body_len`) at a time; progress
+    /// survives `select!` cancellation.
+    inbuf: Vec<u8>,
 }
 
 /// Performs the RFC 4253 §4.2 identification exchange and produces
@@ -751,6 +759,7 @@ where
                     let stage = AuthAccepted {
                         rx: self.stage.rx,
                         tx: self.stage.tx,
+                        identity: ak.fingerprint.clone(),
                     };
                     return Ok(Expect {
                         stream: self.stream,
@@ -816,73 +825,120 @@ impl<S> Expect<S, AuthAccepted>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
-    /// M4 terminal: reads the next post-auth packet and rejects channel
-    /// opens cleanly. Channels land in M5 (ADR-0023).
-    ///
-    /// - `SSH_MSG_CHANNEL_OPEN` → `SSH_MSG_CHANNEL_OPEN_FAILURE` with
-    ///   `SSH_OPEN_ADMINISTRATIVELY_PROHIBITED`.
-    /// - `SSH_MSG_GLOBAL_REQUEST` → `SSH_MSG_REQUEST_FAILURE`.
-    /// - `SSH_MSG_DISCONNECT` → returns `Rejected` without reply.
-    /// - Anything else → `SSH_DISCONNECT_PROTOCOL_ERROR`.
+    /// Transitions into the [`Session`] stage and runs the M5 channel
+    /// layer (ADR-0023): one `session` channel carrying one `exec`, then
+    /// a clean close.
     ///
     /// # Errors
     ///
-    /// Always returns [`TransportError::Rejected`] (the M4 terminus) or
-    /// [`TransportError::Io`] if writing fails.
-    pub async fn reject_channel_open(mut self) -> TransportError {
-        let Ok(payload) = self.read_sealed().await else {
-            return TransportError::Io("packet read failed".into());
+    /// [`TransportError::Rejected`] on a protocol violation (the
+    /// `SSH_MSG_DISCONNECT` is already sent), or [`TransportError::Io`]
+    /// if the connection fails mid-session. Returns `Ok(())` on a clean
+    /// session close.
+    pub async fn serve(self) -> Result<(), TransportError> {
+        let mut session = Expect {
+            stream: self.stream,
+            seq_tx: self.seq_tx,
+            seq_rx: self.seq_rx,
+            stage: Session {
+                rx: self.stage.rx,
+                tx: self.stage.tx,
+                identity: self.stage.identity,
+                inbuf: Vec::new(),
+            },
         };
-        let mut r = Reader::new(&payload);
-        let msg = r.byte().unwrap_or(0);
+        crate::channel::drive(&mut session).await
+    }
+}
 
-        match msg {
-            SSH_MSG_CHANNEL_OPEN => {
-                let rejection = Rejection {
-                    reason: "channels land in M5",
-                    disconnect_code: kex::DISCONNECT_PROTOCOL_ERROR,
-                };
-                // Parse the sender channel from the peer's message
-                // (RFC 4254 §5.1: recipient_channel must echo sender_channel).
-                let _channel_type = r.string(64).unwrap_or(b"");
-                let sender_channel = r.uint32().unwrap_or(0);
-                let mut w = Writer::new();
-                w.put_byte(SSH_MSG_CHANNEL_OPEN_FAILURE);
-                w.put_uint32(sender_channel);
-                w.put_uint32(SSH_OPEN_ADMINISTRATIVELY_PROHIBITED);
-                w.put_string(b"channels land in M5");
-                w.put_string(b""); // language tag
-                if let Err(e) = self.write_sealed(&w.into_bytes()).await {
-                    return e;
-                }
-                warn!(
-                    reason = rejection.reason,
-                    disconnect_code = rejection.disconnect_code,
-                    "channels land in M5"
-                );
-                TransportError::Rejected(rejection.reason)
-            }
-            SSH_MSG_GLOBAL_REQUEST => {
-                let mut w = Writer::new();
-                w.put_byte(SSH_MSG_REQUEST_FAILURE);
-                if let Err(e) = self.write_sealed(&w.into_bytes()).await {
-                    return e;
-                }
-                warn!(reason = "global-request-refused", "global-request-refused");
-                TransportError::Rejected("global-request-refused")
-            }
-            SSH_MSG_DISCONNECT => {
-                warn!(reason = "peer-disconnected", "peer-disconnected");
-                TransportError::Rejected("peer-disconnected")
-            }
-            _ => {
-                let rejection = protocol_error("unexpected-post-auth-message");
-                if let Err(e) = self.write_sealed(&disconnect_payload(&rejection)).await {
-                    return e;
-                }
-                TransportError::Rejected(rejection.reason)
-            }
+impl<S> Expect<S, Session>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    /// Reads one decrypted packet, **cancel-safe**: partial progress
+    /// lives in `self.stage.inbuf` and survives `select!` cancellation,
+    /// so a read dropped mid-frame never desyncs the stream. Shares the
+    /// length-bound + tag-verify discipline of [`Self::read_sealed`] via
+    /// the [`frame_body_len`]/[`open_frame`] helpers — there is no second
+    /// framing path that could diverge.
+    ///
+    /// # Errors
+    ///
+    /// [`TransportError::Io`] on EOF or a read error;
+    /// [`TransportError::Rejected`] (`packet-auth-failed`) on a length or
+    /// tag violation.
+    pub(crate) async fn read_packet(&mut self) -> Result<Vec<u8>, TransportError> {
+        // 1. Ensure the 4 length bytes are buffered.
+        while self.stage.inbuf.len() < 4 {
+            self.fill_inbuf(4).await?;
         }
+        let len4: [u8; 4] = self.stage.inbuf[..4].try_into().expect("4 bytes present");
+        let seqnr = self.seq_rx;
+        let body_len = frame_body_len(&self.stage.rx, seqnr, len4)?;
+        let total = 4 + body_len;
+        // 2. Ensure the whole frame is buffered (bounded: total ≤ 4 + MAX_PACKET).
+        while self.stage.inbuf.len() < total {
+            self.fill_inbuf(total).await?;
+        }
+        // 3. Split off exactly one frame; the remainder (if any) stays
+        //    buffered for the next call.
+        let mut frame: Vec<u8> = self.stage.inbuf.drain(..total).collect();
+        let payload = open_frame(&mut self.stage.rx, seqnr, len4, &mut frame[4..])?;
+        self.seq_rx = self.seq_rx.wrapping_add(1);
+        Ok(payload)
+    }
+
+    /// Reads more bytes into `inbuf`, never past `want` total bytes (so
+    /// `inbuf` is bounded by one frame). Cancel-safe:
+    /// [`AsyncReadExt::read`] guarantees no bytes are consumed if the
+    /// future is dropped while pending, so a cancelled fill leaves
+    /// `inbuf` intact.
+    async fn fill_inbuf(&mut self, want: usize) -> Result<(), TransportError> {
+        let need = want.saturating_sub(self.stage.inbuf.len());
+        let mut scratch = [0u8; 8192];
+        let take = need.min(scratch.len());
+        let n = self
+            .stream
+            .read(&mut scratch[..take])
+            .await
+            .map_err(|e| TransportError::Io(format!("packet read failed: {e}")))?;
+        if n == 0 {
+            return Err(TransportError::Io("peer closed connection".into()));
+        }
+        self.stage.inbuf.extend_from_slice(&scratch[..n]);
+        Ok(())
+    }
+
+    /// Writes one sealed packet. Delegates to the inherited
+    /// [`Self::write_sealed`]; only ever called **after** a `select!`
+    /// returns, never inside one, so it is never cancelled.
+    ///
+    /// # Errors
+    ///
+    /// [`TransportError::Io`] if sealing or writing fails.
+    pub(crate) async fn write_packet(&mut self, payload: &[u8]) -> Result<(), TransportError> {
+        self.write_sealed(payload).await
+    }
+
+    /// The authenticated key fingerprint, for `exec.*` audit events.
+    pub(crate) fn identity(&self) -> &str {
+        &self.stage.identity
+    }
+
+    /// Sends an encrypted `SSH_MSG_DISCONNECT` with `PROTOCOL_ERROR`
+    /// (code 2) and consumes the rejection reason. Used by the channel
+    /// driver to fail closed on a malformed or unknown-channel frame.
+    pub(crate) async fn protocol_disconnect(&mut self, reason: &'static str) -> TransportError {
+        let rejection = protocol_error(reason);
+        warn!(
+            reason = rejection.reason,
+            disconnect_code = rejection.disconnect_code,
+            "channel protocol violation"
+        );
+        if let Err(e) = self.write_sealed(&disconnect_payload(&rejection)).await {
+            debug!(error = %e, "disconnect write failed");
+        }
+        TransportError::Rejected(rejection.reason)
     }
 }
 
@@ -904,6 +960,35 @@ fn disconnect_payload(rejection: &Rejection) -> Vec<u8> {
     w.put_string(rejection.reason.as_bytes());
     w.put_string(b""); // language tag
     w.into_bytes()
+}
+
+/// Validates the sealed length field and returns the body length (body
+/// plus tag), the bound applied **before** any body is allocated or
+/// read. Shared by [`Expect::read_sealed`] (`read_exact`) and
+/// [`Expect::read_packet`] (`read_buf`-style) so the length discipline
+/// has a single source — the cipher's own `body_len`.
+fn frame_body_len(
+    cipher: &PacketCipher,
+    seqnr: u32,
+    length_bytes: [u8; 4],
+) -> Result<usize, TransportError> {
+    cipher
+        .body_len(seqnr, length_bytes)
+        .map_err(|_| TransportError::Rejected("packet-auth-failed"))
+}
+
+/// Opens one sealed frame body in place (verify tag, decrypt, strip
+/// padding). Shared by the two read paths so the decrypt discipline has
+/// a single source — there is no second framing path that could diverge.
+fn open_frame(
+    cipher: &mut PacketCipher,
+    seqnr: u32,
+    length_bytes: [u8; 4],
+    body: &mut [u8],
+) -> Result<Vec<u8>, TransportError> {
+    cipher
+        .open(seqnr, length_bytes, body)
+        .map_err(|_| TransportError::Rejected("packet-auth-failed"))
 }
 
 impl<S, St> Expect<S, St>
@@ -1043,6 +1128,18 @@ impl SealedWrite for AuthAccepted {
     }
 }
 
+impl SealedRead for Session {
+    fn rx(&mut self) -> &mut PacketCipher {
+        &mut self.rx
+    }
+}
+
+impl SealedWrite for Session {
+    fn tx(&mut self) -> &mut PacketCipher {
+        &mut self.tx
+    }
+}
+
 impl<S, St> Expect<S, St>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
@@ -1060,21 +1157,13 @@ where
             .await
             .map_err(|e| TransportError::Io(format!("packet read failed: {e}")))?;
         let seqnr = self.seq_rx;
-        let body_len = self
-            .stage
-            .rx()
-            .body_len(seqnr, length_bytes)
-            .map_err(|_| TransportError::Rejected("packet-auth-failed"))?;
+        let body_len = frame_body_len(self.stage.rx(), seqnr, length_bytes)?;
         let mut body = vec![0u8; body_len];
         self.stream
             .read_exact(&mut body)
             .await
             .map_err(|e| TransportError::Io(format!("packet read failed: {e}")))?;
-        let payload = self
-            .stage
-            .rx()
-            .open(seqnr, length_bytes, &mut body)
-            .map_err(|_| TransportError::Rejected("packet-auth-failed"))?;
+        let payload = open_frame(self.stage.rx(), seqnr, length_bytes, &mut body)?;
         self.seq_rx = self.seq_rx.wrapping_add(1);
         Ok(payload)
     }
