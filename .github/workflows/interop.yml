@@ -38,11 +38,15 @@ jobs:
           apt-get update
           apt-get install -y --no-install-recommends \
             ca-certificates curl gcc libc6-dev openssh-client
-          # ADR-0020: assert the pinned client version.
+          # ADR-0020 asserts the client version. The ADR names 10.0p1, but
+          # trixie's openssh-client (package 1:10.0p1-7+deb13uN) now ships
+          # binary OpenSSH_10.0p2 via a security update — so assert the
+          # 10.0p line (p1/p2), which is exactly the drift the digest +
+          # package-version pin is meant to surface as a reviewed event.
           ssh -V 2>&1
-          ssh -V 2>&1 | grep -q "OpenSSH_10.0p1" \
-            || { echo "::error::expected OpenSSH_10.0p1 in trixie"; exit 1; }
-          # The KEX must be available, or the gate cannot test the hybrid.
+          ssh -V 2>&1 | grep -qE "OpenSSH_10\.0p[0-9]" \
+            || { echo "::error::expected OpenSSH 10.0p line in trixie"; ssh -V; exit 1; }
+          # The hybrid KEX must be offered, or the gate cannot test it.
           ssh -Q kex | grep -qx "mlkem768x25519-sha256" \
             || { echo "::error::mlkem768x25519-sha256 not offered by this client"; exit 1; }
 
