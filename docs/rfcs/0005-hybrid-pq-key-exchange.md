@@ -213,9 +213,12 @@ prevent.
 
 A deliberate divergence from Apple/PQ3 and the NIST-suite deployments:
 QuantumSSH uses **X25519** for the classical half, not NIST **P-256/P-384**.
-This is a stricter, non-NIST-curve posture consistent with MANIFIESTO #3's
-exclusion of NIST elliptic curves from the signature surface, applied here to
-the ECDH half as well.
+MANIFIESTO #3 excludes NIST elliptic curves from the *signature* surface
+(it names ECDSA-NIST); it does not, by its letter, govern the ECDH half. This
+RFC **extends that same principle** to the classical-ECDH half as a reasoned
+choice — a stricter, non-NIST-curve posture, not a direct mandate of #3. The
+wire-level form of this call is ADR-0021 Alternative 3, which rejects a
+P-384-bearing hybrid.
 
 ## Unresolved questions
 
