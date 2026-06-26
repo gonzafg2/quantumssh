@@ -24,6 +24,7 @@ use std::io::{Read, Write};
 use std::process::{Command, ExitStatus, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 use tokio::sync::mpsc;
 
@@ -35,6 +36,8 @@ const CHUNK: usize = 32 * 1024;
 const OUT_QUEUE: usize = 8;
 /// Pending-stdin queue bound.
 const STDIN_QUEUE: usize = 8;
+/// Reap poll interval — the upper bound on exit-detection latency.
+const REAP_POLL: Duration = Duration::from_millis(20);
 /// Conventional exit status when the wait itself fails or the child is
 /// signalled (`exit-signal` detail is deferred to Phase 2 — ADR-0023).
 const EXIT_WAIT_FAILED: i32 = 127;
@@ -67,37 +70,29 @@ pub(crate) struct ChildIo {
     /// (client `CHANNEL_EOF` or early `CHANNEL_CLOSE`), which sends the
     /// child EOF on its stdin.
     stdin_tx: Option<mpsc::Sender<Vec<u8>>>,
-    pid: u32,
-    /// Set `true` by the reap task **before** it reports the exit, so a
-    /// `Drop`-time kill never targets a pid the reap has already waited on
-    /// (and that the OS could have reused).
-    reaped: Arc<AtomicBool>,
+    /// Requests the child be killed. The reap task polls this and kills
+    /// through its **owned `Child` handle** (`Child::kill()` is safe after
+    /// exit) — never by raw pid — so a kill can never target a pid the OS
+    /// has reused (the TOCTOU a post-`wait()` kill-by-pid would carry).
+    kill_flag: Arc<AtomicBool>,
 }
 
 impl Drop for ChildIo {
-    /// Guarantees no child outlives its channel: on any drop — including
-    /// an abrupt transport failure that unwinds `Driver` without a
-    /// cooperative `CHANNEL_CLOSE` — the child is killed unless the reap
-    /// task has already waited on it. The reap then unblocks from `wait`
-    /// and the blocking thread is freed.
+    /// Guarantees no child outlives its channel: any drop — including an
+    /// abrupt transport failure that unwinds `Driver` without a
+    /// cooperative `CHANNEL_CLOSE` — signals the reap to kill the child,
+    /// which then unblocks and frees its blocking thread.
     fn drop(&mut self) {
-        if !self.reaped.load(Ordering::SeqCst) {
-            self.kill();
-        }
+        self.kill_flag.store(true, Ordering::SeqCst);
     }
 }
 
 impl ChildIo {
-    /// Kills the child (client-initiated early close, or `Drop`). The reap
-    /// task still holds the un-reaped child while it is alive, so the pid
-    /// cannot be reused before the kill lands; the reap's `wait` then
-    /// reports the status.
+    /// Requests the child be killed (client-initiated early close). The
+    /// reap task performs the kill through its owned `Child` handle on its
+    /// next poll.
     pub(crate) fn kill(&self) {
-        if let Ok(raw) = i32::try_from(self.pid)
-            && let Some(pid) = rustix::process::Pid::from_raw(raw)
-        {
-            let _ = rustix::process::kill_process(pid, rustix::process::Signal::KILL);
-        }
+        self.kill_flag.store(true, Ordering::SeqCst);
     }
 
     /// Closes the child's stdin (drops the sender → the stdin pump
@@ -140,7 +135,6 @@ pub(crate) fn spawn(command: &str) -> std::io::Result<ChildIo> {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let mut child = cmd.spawn()?;
-    let pid = child.id();
 
     let mut child_stdin = child.stdin.take().expect("stdin piped");
     let mut child_stdout = child.stdout.take().expect("stdout piped");
@@ -205,14 +199,13 @@ pub(crate) fn spawn(command: &str) -> std::io::Result<ChildIo> {
         // Dropping `child_stdin` here closes the child's stdin (EOF).
     });
 
-    // reap: wait for exit, mark the child reaped (so a Drop-time kill
-    // cannot target the now-freed pid), then report it on the same channel
-    // (before dropping the sender, so it precedes the channel's close).
-    let reaped = Arc::new(AtomicBool::new(false));
-    let reaped_reap = Arc::clone(&reaped);
+    // reap: poll for exit, honouring a kill request through the owned
+    // `Child` handle, then report the status on the same channel (before
+    // dropping the sender, so it precedes the channel's close).
+    let kill_flag = Arc::new(AtomicBool::new(false));
+    let kf = Arc::clone(&kill_flag);
     tokio::task::spawn_blocking(move || {
-        let code = exit_status_code(&child.wait());
-        reaped_reap.store(true, Ordering::SeqCst);
+        let code = reap_child(&mut child, &kf);
         let _ = out_tx.blocking_send(ChildChunk::Exited(code));
     });
 
@@ -220,9 +213,25 @@ pub(crate) fn spawn(command: &str) -> std::io::Result<ChildIo> {
         out_rx,
         consumed_rx,
         stdin_tx: Some(stdin_tx),
-        pid,
-        reaped,
+        kill_flag,
     })
+}
+
+/// Polls the child to exit, applying a kill request through the owned
+/// handle (no kill-by-pid, so no pid-reuse race). Polling adds at most
+/// [`REAP_POLL`] latency to exit detection — imperceptible for a command
+/// whose output already streamed over the wire.
+fn reap_child(child: &mut std::process::Child, kill_flag: &AtomicBool) -> i32 {
+    loop {
+        if kill_flag.load(Ordering::SeqCst) {
+            let _ = child.kill(); // idempotent; safe to call after exit
+        }
+        match child.try_wait() {
+            Ok(Some(status)) => return code_of(status),
+            Ok(None) => std::thread::sleep(REAP_POLL),
+            Err(_) => return EXIT_WAIT_FAILED,
+        }
+    }
 }
 
 /// ADR-0016: clear the inherited environment and re-add only the
@@ -240,14 +249,10 @@ fn sanitise_env(cmd: &mut Command) {
     }
 }
 
-/// Maps a wait result to a conventional exit status: the code if the
-/// child exited normally, `128 + signo` if a signal killed it
-/// (`exit-signal` detail is deferred to Phase 2 — ADR-0023), or
-/// [`EXIT_WAIT_FAILED`] if the wait failed.
-fn exit_status_code(status: &std::io::Result<ExitStatus>) -> i32 {
-    let Ok(status) = status else {
-        return EXIT_WAIT_FAILED;
-    };
+/// Maps an exit status to a conventional code: the code if the child
+/// exited normally, or `128 + signo` if a signal killed it (`exit-signal`
+/// detail is deferred to Phase 2 — ADR-0023).
+fn code_of(status: ExitStatus) -> i32 {
     if let Some(code) = status.code() {
         return code;
     }

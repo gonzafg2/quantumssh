@@ -32,7 +32,7 @@ The server-side execution flow for `"exec"` channel requests does **not** call `
 
 The audit-record requirement from RFC-0002 §2.7 — logging `executing_uid` distinct from `authenticated_identity` — is implemented by reading the process UID at the boundary via `rustix::process::getuid()`. In Phase 1 the field is a constant per process; the schema is forward-compatible with the Phase 3 per-user value.
 
-> **Note (M5, while Proposed):** this ADR originally named `nix::unistd::Uid::current()`. Phase-1 implementation selected `rustix` (`features = ["process"]`) over `nix` for a smaller dependency surface (MANIFIESTO #4): the same `process` feature supplies both `getuid()` here and the `kill_process()` the channel layer needs for kill-on-early-close (ADR-0023), so the UID read costs no dependency the exec path does not already require. Edited in place because this ADR is still `Proposed`; no superseding ADR is needed.
+> **Note (M5, while Proposed):** this ADR originally named `nix::unistd::Uid::current()`. Phase-1 implementation selected `rustix` (`features = ["process"]`) over `nix` for a smaller dependency surface (MANIFIESTO #4); `rustix::process::getuid()` reads the UID without first-party `unsafe`. The child kill the channel layer needs (ADR-0023, kill-on-early-close) goes through the owned `std::process::Child` handle (`Child::kill()`), not a raw-pid syscall — this avoids a pid-reuse TOCTOU and needs no `kill` from `rustix`. Edited in place because this ADR is still `Proposed`; no superseding ADR is needed.
 
 ## Consequences
 

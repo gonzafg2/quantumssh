@@ -37,9 +37,8 @@ aes-gcm = { workspace = true }
 # (threat model section 4.3); never imported by first-party code.
 aes = { workspace = true }
 subtle = { workspace = true }
-# M5 (ADR-0016/ADR-0023): process UID for the `executing_uid` audit
-# field and kill-on-early-close for the channel layer. Safe wrappers
-# over the syscalls, keeping first-party code `unsafe`-free.
+# M5 (ADR-0016): process UID for the `executing_uid` audit field. Safe
+# wrapper over `getuid`, keeping first-party code `unsafe`-free.
 rustix = { workspace = true }
 
 [dev-dependencies]

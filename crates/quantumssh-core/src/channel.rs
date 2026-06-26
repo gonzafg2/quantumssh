@@ -174,8 +174,10 @@ struct Driver {
     child_out_closed: bool,
     /// The consumed-acks channel has closed (stdin pump finished).
     consumed_closed: bool,
-    /// An `exec` was accepted (so an `exec.finished` audit event is owed).
-    command_started: bool,
+    /// The accepted `exec` command — `Some` once an `exec` is accepted (so
+    /// an `exec.finished` audit event is owed) and the value the `exec.*`
+    /// events carry as the structured `command` field (ADR-0024).
+    command: Option<String>,
     /// `exec.finished` has been emitted (emit exactly once).
     finished_emitted: bool,
     /// The spawned child, once `exec` is accepted.
@@ -201,7 +203,7 @@ impl Driver {
             exit_status: None,
             child_out_closed: false,
             consumed_closed: false,
-            command_started: false,
+            command: None,
             finished_emitted: false,
             child: None,
         }
@@ -333,17 +335,35 @@ impl Driver {
         Ok(())
     }
 
-    /// (B) Hands the buffered inbound chunk to the child's stdin without
-    /// blocking. A full pump queue leaves it stashed, which keeps the
-    /// inbound read gated and backpressures the wire.
+    /// (B) Hands one buffered inbound chunk to the child's stdin without
+    /// blocking, refilling from the pre-exec buffer first. A full pump
+    /// queue leaves the chunk stashed, which keeps the inbound arm gated
+    /// and backpressures the wire — nothing is dropped. Once all buffered
+    /// stdin is delivered and the client has sent EOF, the child's stdin
+    /// is closed.
     fn handoff_stdin(&mut self) {
-        let Some(child) = self.child.as_ref() else {
+        if self.child.is_none() {
             return;
-        };
+        }
+        // Refill the single pending slot from the pre-exec buffer (stdin
+        // that arrived before the exec was accepted).
+        if self.pending_stdin.is_none() {
+            self.pending_stdin = self.pre_exec_stdin.pop_front();
+        }
         if let Some(chunk) = self.pending_stdin.take()
-            && let Err(returned) = child.try_send_stdin(chunk)
+            && let Err(returned) = self.child.as_ref().unwrap().try_send_stdin(chunk)
         {
+            // Pump full: keep it for the next pass (wire backpressure).
             self.pending_stdin = Some(returned);
+            return;
+        }
+        // All buffered stdin delivered; honour a pending client EOF now.
+        if self.client_eof
+            && self.pending_stdin.is_none()
+            && self.pre_exec_stdin.is_empty()
+            && let Some(child) = self.child.as_mut()
+        {
+            child.close_stdin();
         }
     }
 
@@ -400,13 +420,16 @@ impl Driver {
 
     /// Emits `exec.finished` exactly once, if an `exec` was started.
     fn emit_finished(&mut self) {
-        if self.command_started && !self.finished_emitted {
+        if let Some(command) = self.command.clone()
+            && !self.finished_emitted
+        {
             self.finished_emitted = true;
             let exit_status = self.exit_status.unwrap_or(EXIT_SPAWN_FAILED);
             info!(
                 target: "audit",
                 authenticated_identity = %self.identity,
                 executing_uid = self.uid,
+                command = %command,
                 exit_status,
                 "exec.finished"
             );
@@ -551,7 +574,7 @@ impl Driver {
     where
         S: AsyncRead + AsyncWrite + Unpin + Send,
     {
-        self.command_started = true;
+        self.command = Some(command.to_string());
         info!(
             target: "audit",
             authenticated_identity = %self.identity,
@@ -564,16 +587,14 @@ impl Driver {
                 .write_packet(&build_channel_msg(SSH_MSG_CHANNEL_SUCCESS, self.peer_chan))
                 .await?;
         }
-        if let Ok(mut child) = exec::spawn(command) {
-            // Drain any stdin that arrived before the exec.
-            while let Some(chunk) = self.pre_exec_stdin.pop_front() {
-                let _ = child.try_send_stdin(chunk);
-            }
-            if self.client_eof {
-                child.close_stdin();
-            }
+        if let Ok(child) = exec::spawn(command) {
             self.child = Some(child);
             self.state = ChannelState::Running;
+            // Any stdin buffered before the exec stays in `pre_exec_stdin`
+            // and is drained by `handoff_stdin` under flow control — never
+            // dropped (the pump's queue bound would otherwise discard it
+            // and leak the inbound window credit). `client_eof` is likewise
+            // applied only once that buffer is fully delivered.
         } else {
             // Spawn failed: still produce a started/finished pair.
             self.exit_status = Some(EXIT_SPAWN_FAILED);
@@ -660,10 +681,10 @@ impl Driver {
         if recipient != LOCAL_CHANNEL {
             return Err(session.protocol_disconnect("unknown-channel").await);
         }
+        // Mark EOF; `handoff_stdin` closes the child's stdin only after any
+        // buffered (incl. pre-exec) stdin has been delivered, so no input
+        // is lost to an early close.
         self.client_eof = true;
-        if let Some(child) = self.child.as_mut() {
-            child.close_stdin();
-        }
         Ok(())
     }
 
