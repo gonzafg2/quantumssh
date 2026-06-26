@@ -128,12 +128,20 @@ pub(crate) fn executing_uid() -> u32 {
 ///
 /// [`std::io::Error`] if the child cannot be spawned.
 pub(crate) fn spawn(command: &str) -> std::io::Result<ChildIo> {
+    use std::os::unix::process::CommandExt;
+
     let mut cmd = Command::new("/bin/sh");
     cmd.arg("-c").arg(command);
     sanitise_env(&mut cmd);
     cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    // Put the child in its own process group (it becomes the leader, so
+    // pgid == pid). On kill we signal the whole group, not just `/bin/sh`:
+    // a shell that fork+execs its command (as dash does) would otherwise
+    // leave the grandchild (e.g. `sleep`) running and holding the stdio
+    // pipes open, so the pumps never see EOF and the channel never closes.
+    cmd.process_group(0);
     let mut child = cmd.spawn()?;
 
     let mut child_stdin = child.stdin.take().expect("stdin piped");
@@ -224,7 +232,15 @@ pub(crate) fn spawn(command: &str) -> std::io::Result<ChildIo> {
 fn reap_child(child: &mut std::process::Child, kill_flag: &AtomicBool) -> i32 {
     loop {
         if kill_flag.load(Ordering::SeqCst) {
-            let _ = child.kill(); // idempotent; safe to call after exit
+            // Signal the whole process group (shell + any forked children).
+            // The reap still holds the un-waited `Child`, so the leader's
+            // pid (== pgid) cannot have been reused — no pid-reuse race.
+            if let Ok(raw) = i32::try_from(child.id())
+                && let Some(pid) = rustix::process::Pid::from_raw(raw)
+            {
+                let _ = rustix::process::kill_process_group(pid, rustix::process::Signal::KILL);
+            }
+            let _ = child.kill(); // also signal the leader directly
         }
         match child.try_wait() {
             Ok(Some(status)) => return code_of(status),
