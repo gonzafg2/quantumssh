@@ -19,9 +19,19 @@ It is built greenfield on audited cryptographic primitive crates — it does
 
 **Status: pre-alpha.** Phase 0 (foundation: manifesto, governance, threat
 model, ADR/RFC catalog, supporting infrastructure) is complete. Phase 1
-(the first crate — a walking-skeleton server) has not landed yet, so **there
-is no Rust code in the repository today**. Phase 1 is tracked in
-[issue #9](https://github.com/gonzafg2/quantumssh/issues/9).
+(the walking-skeleton server, [issue #9](https://github.com/gonzafg2/quantumssh/issues/9))
+has **landed**: milestones M1–M5 are merged. The `quantumssh-core` library
+and the `quantumssh` binary implement the full greenfield path end to end —
+version exchange → `mlkem768x25519-sha256` hybrid KEX → AEAD transport →
+publickey Ed25519 authentication → one `session` channel running one
+`exec` → clean close — and interoperate with a stock OpenSSH 10.x client
+(the `interop` CI gate, [ADR-0020](docs/adr/0020-phase-1-ci-openssh-interop-gate.md)).
+It is **not** hardened for production: no PTY, no SFTP, no config file, no
+per-user privilege separation (Phase 2+).
+
+Note: most Phase-1 ADRs (0016–0024) are still marked `Proposed` though the
+code that implements them has merged — a known status lag to be reconciled
+in a separate governance sweep. Read them as in force.
 
 ## The five commitments, as review criteria
 
@@ -108,24 +118,30 @@ authoritative reference; the operative rules a reviewer applies:
 | [`docs/rfcs/`](docs/rfcs/) | RFCs + the lightweight RFC process |
 | [`docs/infrastructure.md`](docs/infrastructure.md), [`docs/operations.md`](docs/operations.md) | Ops topology and verification recipes |
 | `deny.toml`, `clippy.toml`, `rust-toolchain.toml`, `Cargo.toml` | Tooling and workspace config |
-| `crates/` | Workspace members — **lands in Phase 1; does not exist yet** |
-| `.github/workflows/` | CI: `ci`, `audit`, `deny`, and the Claude reviewers |
+| `crates/quantumssh-core/` | The library — modules `wire`, `kex`, `cipher`, `host_key`, `transport` (type-state machine), `auth`, `channel`, `exec`, `server` |
+| `crates/quantumssh/` | The thin binary entrypoint over the library (two crates, flat — [ADR-0017](docs/adr/0017-phase-1-workspace-topology-two-crates-flat.md)) |
+| `tests/interop/` | `run_openssh_client.sh` — the OpenSSH interop gate driver (ADR-0020) |
+| `.github/workflows/` | CI: `ci`, `audit`, `deny`, `interop` (OpenSSH gate), and the Claude reviewers |
 
 ## Key commands
 
 The toolchain is pinned in `rust-toolchain.toml` (stable channel, MSRV 1.92,
-edition 2024). Once the first crate lands, the validation loop is:
+edition 2024). The validation loop, run on every PR:
 
 ```sh
 cargo fmt --all                                              # format
 cargo clippy --workspace --all-targets -- -D warnings        # lint, warnings = errors
 cargo deny check                                             # licences, advisories, sources
 cargo test --workspace                                       # unit + integration
+cargo build --workspace --release                            # the connectable binary
 ```
 
-Until the first crate lands, the CI workspace-state guards self-disable
-([ADR-0011](docs/adr/0011-ci-guards-workspace-state.md)); these commands
-become load-bearing with the first crate.
+The `interop` CI job additionally drives a real OpenSSH 10.x client through
+connect → auth → exec → close against the release binary
+([ADR-0020](docs/adr/0020-phase-1-ci-openssh-interop-gate.md)); reproduce it
+locally with `tests/interop/run_openssh_client.sh`. (The CI workspace-state
+guards that self-disabled during Phase 0 — [ADR-0011](docs/adr/0011-ci-guards-workspace-state.md)
+— are now active, since the workspace has members.)
 
 ## What not to do
 
@@ -136,7 +152,7 @@ become load-bearing with the first crate.
 - Do not write mock, stub, or placeholder code — everything committed must be
   functional. No "not implemented yet" left in a merged path.
 - Do not reference files or paths that do not exist yet as if they do; mark
-  planned work as TBD (the ADRs do this deliberately while `crates/` is empty).
+  planned work (Phase 2+) as TBD, as the forward-looking ADRs do.
 - Do not edit an accepted ADR in place except its Status field or annotated
   errata ([ADR-0015](docs/adr/0015-permit-annotated-errata-in-adrs.md)); to
   change a decision, write a superseding ADR.
