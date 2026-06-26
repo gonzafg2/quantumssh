@@ -485,6 +485,14 @@ impl Driver {
             session.write_packet(&frame).await?;
             return Ok(());
         }
+        // A zero max-packet-size would make `flush_output` compute a send
+        // size of 0 forever: output never drains, the close sequence never
+        // fires, and the un-timed channel phase hangs while the child's
+        // stdout pump pins a blocking thread. Fail closed (RFC 4254 §5.1
+        // sets no minimum, so the server enforces one).
+        if max_pkt == 0 {
+            return Err(session.protocol_disconnect("zero-max-packet-size").await);
+        }
         self.peer_chan = sender;
         self.out_window = u64::from(window);
         self.out_max_pkt = max_pkt;

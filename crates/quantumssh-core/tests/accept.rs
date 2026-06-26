@@ -853,6 +853,25 @@ async fn non_session_channel_type_is_refused() {
 }
 
 #[tokio::test]
+async fn zero_max_packet_is_rejected() {
+    // A zero maximum_packet_size would stall flush_output forever (DoS);
+    // the server must fail closed at channel open.
+    let (addr, host_key) = start_server(Duration::from_secs(30)).await;
+    let (mut stream, mut client) = authenticate(addr, &host_key).await;
+
+    let mut w = Writer::new();
+    w.put_byte(CH_OPEN);
+    w.put_string(b"session");
+    w.put_uint32(0);
+    w.put_uint32(2 * 1024 * 1024);
+    w.put_uint32(0); // maximum_packet_size = 0
+    client.write_sealed(&mut stream, &w.into_bytes()).await;
+
+    let reply = client.read_sealed(&mut stream).await;
+    assert_eq!(reply.first(), Some(&kex::SSH_MSG_DISCONNECT));
+}
+
+#[tokio::test]
 async fn pty_req_is_refused() {
     let (addr, host_key) = start_server(Duration::from_secs(30)).await;
     let (mut stream, mut client) = authenticate(addr, &host_key).await;

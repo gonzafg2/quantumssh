@@ -22,6 +22,8 @@
 
 use std::io::{Read, Write};
 use std::process::{Command, ExitStatus, Stdio};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use tokio::sync::mpsc;
 
@@ -66,12 +68,30 @@ pub(crate) struct ChildIo {
     /// child EOF on its stdin.
     stdin_tx: Option<mpsc::Sender<Vec<u8>>>,
     pid: u32,
+    /// Set `true` by the reap task **before** it reports the exit, so a
+    /// `Drop`-time kill never targets a pid the reap has already waited on
+    /// (and that the OS could have reused).
+    reaped: Arc<AtomicBool>,
+}
+
+impl Drop for ChildIo {
+    /// Guarantees no child outlives its channel: on any drop — including
+    /// an abrupt transport failure that unwinds `Driver` without a
+    /// cooperative `CHANNEL_CLOSE` — the child is killed unless the reap
+    /// task has already waited on it. The reap then unblocks from `wait`
+    /// and the blocking thread is freed.
+    fn drop(&mut self) {
+        if !self.reaped.load(Ordering::SeqCst) {
+            self.kill();
+        }
+    }
 }
 
 impl ChildIo {
-    /// Kills the child (client-initiated early close). The reap task
-    /// still holds the un-reaped child, so the pid cannot be reused
-    /// before the kill lands; the reap's `wait` then reports the status.
+    /// Kills the child (client-initiated early close, or `Drop`). The reap
+    /// task still holds the un-reaped child while it is alive, so the pid
+    /// cannot be reused before the kill lands; the reap's `wait` then
+    /// reports the status.
     pub(crate) fn kill(&self) {
         if let Ok(raw) = i32::try_from(self.pid)
             && let Some(pid) = rustix::process::Pid::from_raw(raw)
@@ -185,11 +205,14 @@ pub(crate) fn spawn(command: &str) -> std::io::Result<ChildIo> {
         // Dropping `child_stdin` here closes the child's stdin (EOF).
     });
 
-    // reap: wait for exit, report it on the same channel (before
-    // dropping the sender, so it precedes the channel's close), exactly
-    // once.
+    // reap: wait for exit, mark the child reaped (so a Drop-time kill
+    // cannot target the now-freed pid), then report it on the same channel
+    // (before dropping the sender, so it precedes the channel's close).
+    let reaped = Arc::new(AtomicBool::new(false));
+    let reaped_reap = Arc::clone(&reaped);
     tokio::task::spawn_blocking(move || {
         let code = exit_status_code(&child.wait());
+        reaped_reap.store(true, Ordering::SeqCst);
         let _ = out_tx.blocking_send(ChildChunk::Exited(code));
     });
 
@@ -198,6 +221,7 @@ pub(crate) fn spawn(command: &str) -> std::io::Result<ChildIo> {
         consumed_rx,
         stdin_tx: Some(stdin_tx),
         pid,
+        reaped,
     })
 }
 

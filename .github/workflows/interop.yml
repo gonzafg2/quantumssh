@@ -26,12 +26,14 @@ jobs:
   openssh-interop:
     name: openssh-interop
     runs-on: ubuntu-latest
-    # ADR-0020: the trixie-slim *tag* is mutable; pin to an image digest
-    # (debian@sha256:…) before merge so an upstream OpenSSH change is a
-    # reviewed "version bump" PR, never a mystery red check elsewhere.
-    # TODO(ADR-0020): replace the tag below with the resolved digest.
+    # ADR-0020: pin the base image by digest (the `debian:trixie-slim`
+    # tag is mutable), so the base filesystem is frozen. The OpenSSH
+    # package itself is asserted to the 10.0p line below; freezing its
+    # exact build via snapshot.debian.org is the next hardening step
+    # noted in ADR-0020. Bumping the digest is a reviewed event.
     container:
-      image: debian:trixie-slim
+      # debian:trixie-slim
+      image: debian@sha256:28de0877c2189802884ccd20f15ee41c203573bd87bb6b883f5f46362d24c5c2
     steps:
       - name: Install OpenSSH client + build prerequisites
         run: |
