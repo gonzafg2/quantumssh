@@ -1,10 +1,10 @@
 # RFC 0005: Hybrid post-quantum key exchange as the only KEX posture
 
-- **Status:** Draft
+- **Status:** Accepted (2026-06-26)
 - **Authors:** Gonzalo Fleming Garrido
 - **Created:** 2026-06-25
 - **Roadmap issue:** [`#9`](https://github.com/gonzafg2/quantumssh/issues/9) (Phase 1 / Hito 1)
-- **Implementation PR:** TBD
+- **Implementation PR:** TBD (lands with the Phase 1 `kex` module)
 
 ## Summary
 
