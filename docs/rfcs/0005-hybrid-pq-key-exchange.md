@@ -13,12 +13,23 @@ QuantumSSH offers exactly one key exchange — `mlkem768x25519-sha256`, a
 X25519 (classical ECDH). This RFC records the *posture* decision behind that
 choice: the KEX is hybrid, not post-quantum-pure and not classical-only; it
 is mandatory, not opt-in; and failure of **either** half aborts the
-handshake with no fallback to the surviving half. It does **not** re-open the
-exact algorithm strings, their order, or the wire failure codes — those are
-[ADR-0021](../adr/0021-phase-1-negotiation-profile.md). This RFC carries the
-reasoning that ADR-0021 assembles and that [RFC-0003](0003-phase-1-ssh-stack-greenfield-vs-russh.md),
-the README, and `docs/threat-model.md` §6.1 each assert in part, but which
-no RFC has so far argued as a standalone, revisitable decision.
+handshake with no fallback to the surviving half.
+
+This RFC **ratifies and refines** an existing commitment; it does not put it
+up for first-time adoption. The hybrid posture is already binding —
+MANIFIESTO #2 states it, and [RFC-0003](0003-phase-1-ssh-stack-greenfield-vs-russh.md)
+fixed "hybrid PQ KEX only" as part of the greenfield stack. This RFC neither
+supersedes nor re-opens RFC-0003: it extracts the reasoning that was left
+implicit there and assembled at the wire level in
+[ADR-0021](../adr/0021-phase-1-negotiation-profile.md), and gives it one
+owning document. What the comment period is invited to scrutinise is the
+*articulation* — whether the rationale, the boundaries, and the prior-art
+citations are sound — not *whether* QuantumSSH is post-quantum by default,
+which is a foundational commitment and out of scope for revision here (a
+challenge to that belongs in an RFC that amends MANIFIESTO #2 itself). The
+exact algorithm strings, their order, and the wire failure codes remain
+ADR-0021's; the threat model §6.1 and the README state the same posture in
+their own registers.
 
 ## Motivation
 
@@ -27,10 +38,10 @@ README non-goal "if your client cannot speak modern, hybrid-PQ SSH, it does
 not connect" both name the *hybrid* posture, but as assertions. The lane
 rules ([README](README.md)) route "a change to default cryptographic
 algorithms" and "anything that … refines a commitment in `README.md` or
-`MANIFIESTO.es.md`" to the RFC process. Adopting the project's single most
-load-bearing cryptographic posture through assertion alone — with the
+`MANIFIESTO.es.md`" to the RFC process. Leaving the project's single most
+load-bearing cryptographic posture resting on assertion alone — with the
 *why* scattered across four documents and no document owning the
-hybrid-vs-pure decision — is the same gap RFC-0004 closed for the async
+hybrid-vs-pure rationale — is the same gap RFC-0004 closed for the async
 runtime. This RFC closes it for the KEX before the first crate lands.
 
 The threat this posture answers is **Harvest Now, Decrypt Later** (HNDL):
@@ -68,12 +79,15 @@ incidental — see *Reference-level explanation*.
 
 **The construction.** `mlkem768x25519-sha256` is specified by
 `draft-ietf-sshm-mlkem-hybrid-kex`. Both halves run for every handshake: an
-X25519 ECDH and an ML-KEM-768 encapsulation. The two shared secrets are
-concatenated and hashed (SHA-256) into the exchange's shared secret `K`; the
-exact concatenation order, encoding, and exchange-hash binding are fixed by
-[ADR-0021](../adr/0021-phase-1-negotiation-profile.md) and realised in the
-`kex` module of `quantumssh-core` (TBD — no code has landed yet). Neither
-half's secret is usable on its own; an attacker needs both.
+X25519 ECDH and an ML-KEM-768 encapsulation. The shared secret is
+`K = SHA-256(K_PQ || K_CL)` — the post-quantum and classical secrets, each
+as a fixed-length byte array, concatenated post-quantum-first and hashed
+(`draft-ietf-sshm-mlkem-hybrid-kex` §2.4). This order and encoding are
+**mandated by the draft, not chosen here**; ADR-0021 and the `kex` module of
+`quantumssh-core` (TBD — no code has landed yet) inherit them, and ADR-0021
+fixes only what the draft leaves to the profile (the offered name-list, its
+ordering, and the disconnect codes). Neither half's secret is usable on its
+own; an attacker needs both.
 
 **Fail closed, both halves.** Per `docs/threat-model.md` §5.2.1 and ADR-0021,
 a failure of either half aborts the handshake — there is no fallback to the
@@ -146,10 +160,13 @@ signatures.
   out. Tracked as an additive, RFC-gated change in issue #42, not a Phase 1
   default. ADR-0021 Alternative 3 records the same call at the wire level.
 
-The impact of *not* doing this RFC: the posture remains real (asserted in
-four documents) but un-RFC'd, so the first substantive challenge to
-hybrid-vs-pure has no canonical decision to argue against — exactly the
-reconstruct-from-prose cost the RFC process exists to prevent.
+The impact of *not* doing this RFC: the posture stays binding but its
+reasoning stays scattered across four documents, so anyone weighing a future
+*additive* change (a second hybrid, an ML-KEM-1024 profile — issue #42) must
+reconstruct the original rationale from prose rather than read it in one
+owning document. The decision itself is not in question; its discoverability
+is — exactly the reconstruct-from-prose cost the RFC process exists to
+prevent.
 
 ## Prior art
 
