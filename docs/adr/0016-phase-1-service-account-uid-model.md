@@ -30,7 +30,9 @@ We will run `quantumsshd` in Phase 1 as a dedicated non-root service account (ca
 
 The server-side execution flow for `"exec"` channel requests does **not** call `setuid`, `setgid`, `initgroups`, or `chroot`, and does not integrate with PAM. Commands inherit the service account's UID/GID, supplementary groups, and `$HOME`, with a sanitised environment (`PATH`, `HOME`, `USER`, `SHELL`, `LANG`, `LC_*`).
 
-The audit-record requirement from RFC-0002 §2.7 — logging `executing_uid` distinct from `authenticated_identity` — is implemented by reading `nix::unistd::Uid::current()` at the boundary. In Phase 1 the field is a constant per process; the schema is forward-compatible with the Phase 3 per-user value.
+The audit-record requirement from RFC-0002 §2.7 — logging `executing_uid` distinct from `authenticated_identity` — is implemented by reading the process UID at the boundary via `rustix::process::getuid()`. In Phase 1 the field is a constant per process; the schema is forward-compatible with the Phase 3 per-user value.
+
+> **Note (M5, while Proposed):** this ADR originally named `nix::unistd::Uid::current()`. Phase-1 implementation selected `rustix` (`features = ["process"]`) over `nix` for a smaller dependency surface (MANIFIESTO #4); `rustix::process::getuid()` reads the UID without first-party `unsafe`. The channel layer's kill-on-early/abrupt-close (ADR-0023) signals the child's whole **process group** via `rustix::process::kill_process_group` — so a shell that fork+execs its command does not leak an orphaned grandchild holding the stdio pipes open. The kill is issued from the reap task, which still holds the un-waited `Child`, so the leader's pid (= pgid) cannot have been reused (no TOCTOU). Edited in place because this ADR is still `Proposed`; no superseding ADR is needed.
 
 ## Consequences
 

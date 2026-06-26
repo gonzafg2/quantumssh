@@ -14,7 +14,9 @@
 //! only functional code is merged — the project forbids stubs.
 
 pub mod auth;
+mod channel;
 pub mod cipher;
+mod exec;
 pub mod host_key;
 pub mod kex;
 pub mod server;

@@ -14,7 +14,7 @@ publish = false # ADR-0017: not published until Phase 3+
 # ADR-0022: the library links the I/O and task features it needs to
 # define async fns (`rt` gates `tokio::spawn`/`spawn_blocking`); it
 # never constructs a runtime.
-tokio = { workspace = true, features = ["net", "io-util", "time", "sync", "rt"] }
+tokio = { workspace = true, features = ["net", "io-util", "time", "sync", "rt", "macros"] }
 # ADR-0024: the library emits through the `tracing` facade only and
 # never installs a subscriber.
 tracing = { workspace = true }
@@ -37,6 +37,10 @@ aes-gcm = { workspace = true }
 # (threat model section 4.3); never imported by first-party code.
 aes = { workspace = true }
 subtle = { workspace = true }
+# M5 (ADR-0016): process UID for the `executing_uid` audit field and a
+# process-group kill on early/abrupt channel close. Safe wrappers over
+# the syscalls, keeping first-party code `unsafe`-free.
+rustix = { workspace = true }
 
 [dev-dependencies]
 # Integration tests construct their own runtime; the library does not.

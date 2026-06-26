@@ -1,10 +1,12 @@
-//! Integration tests for the M4 contract: the full post-quantum
-//! handshake (M2–M3) plus publickey authentication (M4).
+//! Integration tests for the Phase 1 contract: the full post-quantum
+//! handshake (M2–M3), publickey authentication (M4), and the channel
+//! layer with single-command `exec` (M5).
 //! — version exchange, ADR-0021 KEXINIT negotiation, the hybrid
 //! `mlkem768x25519-sha256` exchange with a verified host-key
-//! signature, NEWKEYS, AEAD transport, service request, and the
-//! `ssh-userauth` publickey loop. Also retains M3-level denial and
-//! rejection paths.
+//! signature, NEWKEYS, AEAD transport, service request, the
+//! `ssh-userauth` publickey loop, and the one `session` channel /
+//! `exec` flow (open → exec → data → exit-status → close, ADR-0023).
+//! Also retains M3-level denial and rejection paths.
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
@@ -592,52 +594,350 @@ fn probe_auth_request(key_blob: &[u8]) -> Vec<u8> {
     w.into_bytes()
 }
 
-#[tokio::test]
-async fn auth_success_then_channel_rejection() {
-    let auth_signing = SigningKey::from_bytes(&[77u8; 32]);
-    let auth_vk = auth_signing.verifying_key();
-    let key_blob = auth_test_blob(&auth_vk);
+// ---- M5: channel layer + exec (ADR-0023) ----
 
-    let (addr, host_key) = start_server(Duration::from_secs(30)).await;
+/// Authenticates with the test key and returns the encrypted client ready
+/// to drive the channel layer.
+async fn authenticate(addr: SocketAddr, host_key: &HostKey) -> (TcpStream, SealedClient) {
+    let auth_signing = SigningKey::from_bytes(&[77u8; 32]);
+    let key_blob = auth_test_blob(&auth_signing.verifying_key());
     let mut stream = connect(addr).await;
     let (mut client, session_id) = establish(
         &mut stream,
-        &host_key,
+        host_key,
         OPENSSH_KEX_PLAIN,
         "chacha20-poly1305@openssh.com",
         "chacha20-poly1305@openssh.com",
     )
     .await;
-
-    // Request ssh-userauth → expect SERVICE_ACCEPT.
     client
         .write_sealed(&mut stream, &service_request_payload())
         .await;
-    let service_reply = client.read_sealed(&mut stream).await;
-    let mut r = Reader::new(&service_reply);
-    assert_eq!(r.byte().unwrap(), 6, "SSH_MSG_SERVICE_ACCEPT");
-
-    // Send a valid signed auth request → expect SUCCESS.
+    assert_eq!(client.read_sealed(&mut stream).await.first(), Some(&6));
     client
         .write_sealed(
             &mut stream,
             &signed_auth_request(&auth_signing, &session_id, &key_blob),
         )
         .await;
-    let auth_reply = client.read_sealed(&mut stream).await;
-    assert_eq!(auth_reply, vec![auth::SSH_MSG_USERAUTH_SUCCESS]);
+    assert_eq!(
+        client.read_sealed(&mut stream).await,
+        vec![auth::SSH_MSG_USERAUTH_SUCCESS]
+    );
+    (stream, client)
+}
 
-    // Send channel-open → expect CHANNEL_OPEN_FAILURE.
-    let mut ch = Writer::new();
-    ch.put_byte(90); // SSH_MSG_CHANNEL_OPEN
-    ch.put_string(b"session");
-    ch.put_uint32(0);
-    ch.put_uint32(2 * 1024 * 1024);
-    ch.put_uint32(32 * 1024);
-    client.write_sealed(&mut stream, &ch.into_bytes()).await;
-    let ch_reply = client.read_sealed(&mut stream).await;
-    let mut cr = Reader::new(&ch_reply);
-    assert_eq!(cr.byte().unwrap(), 92, "SSH_MSG_CHANNEL_OPEN_FAILURE");
+const CH_OPEN: u8 = 90;
+const CH_OPEN_CONFIRMATION: u8 = 91;
+const CH_OPEN_FAILURE: u8 = 92;
+const CH_WINDOW_ADJUST: u8 = 93;
+const CH_DATA: u8 = 94;
+const CH_EXTENDED_DATA: u8 = 95;
+const CH_EOF: u8 = 96;
+const CH_CLOSE: u8 = 97;
+const CH_REQUEST: u8 = 98;
+const CH_FAILURE: u8 = 100;
+
+fn channel_open(sender: u32) -> Vec<u8> {
+    let mut w = Writer::new();
+    w.put_byte(CH_OPEN);
+    w.put_string(b"session");
+    w.put_uint32(sender);
+    w.put_uint32(2 * 1024 * 1024);
+    w.put_uint32(32 * 1024);
+    w.into_bytes()
+}
+
+fn channel_open_type(sender: u32, ctype: &[u8]) -> Vec<u8> {
+    let mut w = Writer::new();
+    w.put_byte(CH_OPEN);
+    w.put_string(ctype);
+    w.put_uint32(sender);
+    w.put_uint32(2 * 1024 * 1024);
+    w.put_uint32(32 * 1024);
+    w.into_bytes()
+}
+
+fn channel_exec(recipient: u32, command: &[u8]) -> Vec<u8> {
+    let mut w = Writer::new();
+    w.put_byte(CH_REQUEST);
+    w.put_uint32(recipient);
+    w.put_string(b"exec");
+    w.put_boolean(true);
+    w.put_string(command);
+    w.into_bytes()
+}
+
+fn channel_request(recipient: u32, rtype: &[u8]) -> Vec<u8> {
+    let mut w = Writer::new();
+    w.put_byte(CH_REQUEST);
+    w.put_uint32(recipient);
+    w.put_string(rtype);
+    w.put_boolean(true);
+    w.into_bytes()
+}
+
+fn channel_data(recipient: u32, data: &[u8]) -> Vec<u8> {
+    let mut w = Writer::new();
+    w.put_byte(CH_DATA);
+    w.put_uint32(recipient);
+    w.put_string(data);
+    w.into_bytes()
+}
+
+fn channel_one_field(msg: u8, recipient: u32) -> Vec<u8> {
+    let mut w = Writer::new();
+    w.put_byte(msg);
+    w.put_uint32(recipient);
+    w.into_bytes()
+}
+
+fn window_adjust(recipient: u32, add: u32) -> Vec<u8> {
+    let mut w = Writer::new();
+    w.put_byte(CH_WINDOW_ADJUST);
+    w.put_uint32(recipient);
+    w.put_uint32(add);
+    w.into_bytes()
+}
+
+/// Reads the `OPEN_CONFIRMATION`, returning the server's channel id.
+async fn expect_open_confirmation(client: &mut SealedClient, stream: &mut TcpStream) -> u32 {
+    let conf = client.read_sealed(stream).await;
+    let mut r = Reader::new(&conf);
+    assert_eq!(r.byte().unwrap(), CH_OPEN_CONFIRMATION);
+    let _recipient = r.uint32().unwrap();
+    r.uint32().unwrap() // server's sender channel id
+}
+
+/// Drains the session: accumulates stdout/stderr (returning window credit
+/// as it goes, so a >2 MiB stream does not stall), captures the
+/// `exit-status`, and stops at `CHANNEL_CLOSE`.
+async fn collect_session(
+    client: &mut SealedClient,
+    stream: &mut TcpStream,
+    server_chan: u32,
+) -> (Vec<u8>, Vec<u8>, Option<i32>) {
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let mut exit = None;
+    loop {
+        let pkt = client.read_sealed(stream).await;
+        let mut r = Reader::new(&pkt);
+        match r.byte().unwrap() {
+            CH_DATA => {
+                let _ = r.uint32().unwrap();
+                let d = r.string(32 * 1024).unwrap();
+                stdout.extend_from_slice(d);
+                let credit = u32::try_from(d.len()).unwrap();
+                client
+                    .write_sealed(stream, &window_adjust(server_chan, credit))
+                    .await;
+            }
+            CH_EXTENDED_DATA => {
+                let _ = r.uint32().unwrap();
+                let _code = r.uint32().unwrap();
+                let d = r.string(32 * 1024).unwrap();
+                stderr.extend_from_slice(d);
+                let credit = u32::try_from(d.len()).unwrap();
+                client
+                    .write_sealed(stream, &window_adjust(server_chan, credit))
+                    .await;
+            }
+            CH_REQUEST => {
+                let _ = r.uint32().unwrap();
+                let req = r.string(64).unwrap().to_vec();
+                let _ = r.boolean().unwrap();
+                if req == b"exit-status" {
+                    exit = Some(i32::from_ne_bytes(r.uint32().unwrap().to_ne_bytes()));
+                }
+            }
+            CH_CLOSE => return (stdout, stderr, exit),
+            _ => {} // CHANNEL_SUCCESS, CHANNEL_EOF: ignore
+        }
+    }
+}
+
+#[tokio::test]
+async fn channel_open_session_then_exec_echo() {
+    let (addr, host_key) = start_server(Duration::from_secs(30)).await;
+    let (mut stream, mut client) = authenticate(addr, &host_key).await;
+
+    client.write_sealed(&mut stream, &channel_open(0)).await;
+    let server_chan = expect_open_confirmation(&mut client, &mut stream).await;
+    client
+        .write_sealed(&mut stream, &channel_exec(server_chan, b"echo hello"))
+        .await;
+
+    let (stdout, _stderr, exit) = collect_session(&mut client, &mut stream, server_chan).await;
+    assert_eq!(stdout, b"hello\n");
+    assert_eq!(exit, Some(0));
+    client
+        .write_sealed(&mut stream, &channel_one_field(CH_CLOSE, server_chan))
+        .await;
+}
+
+#[tokio::test]
+async fn exec_cat_echoes_stdin() {
+    let (addr, host_key) = start_server(Duration::from_secs(30)).await;
+    let (mut stream, mut client) = authenticate(addr, &host_key).await;
+
+    client.write_sealed(&mut stream, &channel_open(0)).await;
+    let server_chan = expect_open_confirmation(&mut client, &mut stream).await;
+    client
+        .write_sealed(&mut stream, &channel_exec(server_chan, b"cat"))
+        .await;
+    client
+        .write_sealed(&mut stream, &channel_data(server_chan, b"ping"))
+        .await;
+    client
+        .write_sealed(&mut stream, &channel_one_field(CH_EOF, server_chan))
+        .await;
+
+    let (stdout, _stderr, exit) = collect_session(&mut client, &mut stream, server_chan).await;
+    assert_eq!(stdout, b"ping");
+    assert_eq!(exit, Some(0));
+    client
+        .write_sealed(&mut stream, &channel_one_field(CH_CLOSE, server_chan))
+        .await;
+}
+
+#[tokio::test]
+async fn exec_stderr_is_extended_data() {
+    let (addr, host_key) = start_server(Duration::from_secs(30)).await;
+    let (mut stream, mut client) = authenticate(addr, &host_key).await;
+
+    client.write_sealed(&mut stream, &channel_open(0)).await;
+    let server_chan = expect_open_confirmation(&mut client, &mut stream).await;
+    client
+        .write_sealed(&mut stream, &channel_exec(server_chan, b"echo oops 1>&2"))
+        .await;
+
+    let (stdout, stderr, exit) = collect_session(&mut client, &mut stream, server_chan).await;
+    assert!(stdout.is_empty());
+    assert_eq!(stderr, b"oops\n");
+    assert_eq!(exit, Some(0));
+    client
+        .write_sealed(&mut stream, &channel_one_field(CH_CLOSE, server_chan))
+        .await;
+}
+
+#[tokio::test]
+async fn second_channel_open_is_refused() {
+    let (addr, host_key) = start_server(Duration::from_secs(30)).await;
+    let (mut stream, mut client) = authenticate(addr, &host_key).await;
+
+    client.write_sealed(&mut stream, &channel_open(0)).await;
+    let _server_chan = expect_open_confirmation(&mut client, &mut stream).await;
+    // A second open is refused; the first channel survives.
+    client.write_sealed(&mut stream, &channel_open(1)).await;
+    let reply = client.read_sealed(&mut stream).await;
+    let mut r = Reader::new(&reply);
+    assert_eq!(r.byte().unwrap(), CH_OPEN_FAILURE);
+    assert_eq!(r.uint32().unwrap(), 1); // recipient echoes our second sender
+    assert_eq!(r.uint32().unwrap(), 1); // ADMINISTRATIVELY_PROHIBITED
+}
+
+#[tokio::test]
+async fn non_session_channel_type_is_refused() {
+    let (addr, host_key) = start_server(Duration::from_secs(30)).await;
+    let (mut stream, mut client) = authenticate(addr, &host_key).await;
+
+    client
+        .write_sealed(&mut stream, &channel_open_type(0, b"direct-tcpip"))
+        .await;
+    let reply = client.read_sealed(&mut stream).await;
+    let mut r = Reader::new(&reply);
+    assert_eq!(r.byte().unwrap(), CH_OPEN_FAILURE);
+    assert_eq!(r.uint32().unwrap(), 0); // recipient echoes our sender
+    assert_eq!(r.uint32().unwrap(), 3); // UNKNOWN_CHANNEL_TYPE
+}
+
+#[tokio::test]
+async fn zero_max_packet_is_rejected() {
+    // A zero maximum_packet_size would stall flush_output forever (DoS);
+    // the server must fail closed at channel open.
+    let (addr, host_key) = start_server(Duration::from_secs(30)).await;
+    let (mut stream, mut client) = authenticate(addr, &host_key).await;
+
+    let mut w = Writer::new();
+    w.put_byte(CH_OPEN);
+    w.put_string(b"session");
+    w.put_uint32(0);
+    w.put_uint32(2 * 1024 * 1024);
+    w.put_uint32(0); // maximum_packet_size = 0
+    client.write_sealed(&mut stream, &w.into_bytes()).await;
+
+    let reply = client.read_sealed(&mut stream).await;
+    assert_eq!(reply.first(), Some(&kex::SSH_MSG_DISCONNECT));
+}
+
+#[tokio::test]
+async fn pty_req_is_refused() {
+    let (addr, host_key) = start_server(Duration::from_secs(30)).await;
+    let (mut stream, mut client) = authenticate(addr, &host_key).await;
+
+    client.write_sealed(&mut stream, &channel_open(0)).await;
+    let server_chan = expect_open_confirmation(&mut client, &mut stream).await;
+    client
+        .write_sealed(&mut stream, &channel_request(server_chan, b"pty-req"))
+        .await;
+    let reply = client.read_sealed(&mut stream).await;
+    assert_eq!(reply.first(), Some(&CH_FAILURE));
+}
+
+#[tokio::test]
+async fn client_early_close_kills_child() {
+    let (addr, host_key) = start_server(Duration::from_secs(30)).await;
+    let (mut stream, mut client) = authenticate(addr, &host_key).await;
+
+    client.write_sealed(&mut stream, &channel_open(0)).await;
+    let server_chan = expect_open_confirmation(&mut client, &mut stream).await;
+    // A long-running command, then an immediate client close.
+    client
+        .write_sealed(&mut stream, &channel_exec(server_chan, b"sleep 30"))
+        .await;
+    client
+        .write_sealed(&mut stream, &channel_one_field(CH_CLOSE, server_chan))
+        .await;
+
+    // The server kills the child and replies with its own CLOSE promptly
+    // (it must not wait out the sleep).
+    let mut saw_close = false;
+    for _ in 0..20 {
+        let pkt = client.read_sealed(&mut stream).await;
+        if pkt.first() == Some(&CH_CLOSE) {
+            saw_close = true;
+            break;
+        }
+    }
+    assert!(saw_close, "server must close after early client close");
+}
+
+#[tokio::test]
+async fn cancel_safety_under_load() {
+    // 3 MiB of output exceeds the 2 MiB window, forcing many
+    // WINDOW_ADJUST round-trips and repeated select! cancellation of the
+    // resumable read — the real test of the cancel-safe framing.
+    const N: usize = 3 * 1024 * 1024;
+    let (addr, host_key) = start_server(Duration::from_secs(30)).await;
+    let (mut stream, mut client) = authenticate(addr, &host_key).await;
+
+    client.write_sealed(&mut stream, &channel_open(0)).await;
+    let server_chan = expect_open_confirmation(&mut client, &mut stream).await;
+    client
+        .write_sealed(
+            &mut stream,
+            &channel_exec(server_chan, b"head -c 3145728 /dev/zero"),
+        )
+        .await;
+
+    let (stdout, _stderr, exit) = collect_session(&mut client, &mut stream, server_chan).await;
+    assert_eq!(stdout.len(), N, "exact byte count must survive the stream");
+    assert!(stdout.iter().all(|&b| b == 0), "stream integrity");
+    assert_eq!(exit, Some(0));
+    client
+        .write_sealed(&mut stream, &channel_one_field(CH_CLOSE, server_chan))
+        .await;
 }
 
 #[tokio::test]

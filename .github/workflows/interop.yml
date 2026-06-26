@@ -1,0 +1,68 @@
+name: Interop
+
+# OpenSSH interop hard gate (ADR-0020): every PR must drive a real
+# OpenSSH 10.x client through connect → publickey auth → exec → clean
+# close against the quantumssh release binary. The default Ubuntu runner
+# ships OpenSSH 9.6p1 (no mlkem768x25519-sha256), so the job runs in a
+# Debian trixie container, which provides OpenSSH 10.0p1.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: short
+
+permissions:
+  contents: read
+
+jobs:
+  openssh-interop:
+    name: openssh-interop
+    runs-on: ubuntu-latest
+    # ADR-0020: pin the base image by digest (the `debian:trixie-slim`
+    # tag is mutable), so the base filesystem is frozen. The OpenSSH
+    # package itself is asserted to the 10.0p line below; freezing its
+    # exact build via snapshot.debian.org is the next hardening step
+    # noted in ADR-0020. Bumping the digest is a reviewed event.
+    container:
+      # debian:trixie-slim
+      image: debian@sha256:28de0877c2189802884ccd20f15ee41c203573bd87bb6b883f5f46362d24c5c2
+    steps:
+      - name: Install OpenSSH client + build prerequisites
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates curl gcc libc6-dev openssh-client
+          # ADR-0020 asserts the client version. The ADR names 10.0p1, but
+          # trixie's openssh-client (package 1:10.0p1-7+deb13uN) now ships
+          # binary OpenSSH_10.0p2 via a security update — so assert the
+          # 10.0p line (p1/p2), which is exactly the drift the digest +
+          # package-version pin is meant to surface as a reviewed event.
+          ssh -V 2>&1
+          ssh -V 2>&1 | grep -qE "OpenSSH_10\.0p[0-9]" \
+            || { echo "::error::expected OpenSSH 10.0p line in trixie"; ssh -V; exit 1; }
+          # The hybrid KEX must be offered, or the gate cannot test it.
+          ssh -Q kex | grep -qx "mlkem768x25519-sha256" \
+            || { echo "::error::mlkem768x25519-sha256 not offered by this client"; exit 1; }
+
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry, index and target
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build release binary
+        run: cargo build --workspace --release
+
+      - name: OpenSSH interop gate
+        run: bash tests/interop/run_openssh_client.sh
