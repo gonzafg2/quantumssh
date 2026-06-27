@@ -79,4 +79,11 @@ ssh "${SSH_OPTS[@]}" tester@127.0.0.1 'exit 3' || rc=$?
 [ "$rc" -eq 3 ] || fail "exit_status: got $rc, want 3"
 echo "ok: exit_status_propagation"
 
+# 5. re-keying (ADR-0026): a low client RekeyLimit forces several
+# client-initiated re-keys mid-transfer; the server must respond and the
+# stream must survive intact.
+n=$(ssh "${SSH_OPTS[@]}" -o RekeyLimit=16K tester@127.0.0.1 'head -c 262144 /dev/zero' | wc -c | tr -d ' ')
+[ "$n" = "262144" ] || fail "rekey: got $n bytes across re-keys, want 262144"
+echo "ok: openssh_rekey"
+
 echo "INTEROP PASS"

@@ -25,15 +25,18 @@ use std::collections::VecDeque;
 
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::mpsc;
+use tokio::time::Instant;
 use tracing::info;
 
 use crate::exec::{self, ChildChunk, ChildIo};
-use crate::transport::{Expect, Session, TransportError};
+use crate::transport::{Expect, RekeyStep, Session, TransportError};
 use crate::wire::{Reader, Writer};
 
 // ---- transport messages that may still appear post-auth ----
 /// `SSH_MSG_DISCONNECT` (RFC 4253 §11.1).
 const SSH_MSG_DISCONNECT: u8 = 1;
+/// `SSH_MSG_KEXINIT` (RFC 4253 §7.1) — a client-initiated re-key (ADR-0026).
+const SSH_MSG_KEXINIT: u8 = 20;
 
 // ---- connection-protocol messages (RFC 4254 §4, §5) ----
 const SSH_MSG_GLOBAL_REQUEST: u8 = 80;
@@ -70,6 +73,9 @@ const CREDIT_BATCH: u32 = 1024 * 1024;
 const LOCAL_CHANNEL: u32 = 0;
 /// Conventional exit status when the child could not be spawned.
 const EXIT_SPAWN_FAILED: i32 = 127;
+/// Cap on reply-generating connection-protocol messages buffered during a
+/// re-key's half-duplex window (RFC 4253 §9) before it is treated as abuse.
+const MAX_DEFERRED: usize = 64;
 
 /// Bound on a channel-type name (RFC 4254 §5.1).
 const CHANNEL_TYPE_BOUND: usize = 64;
@@ -180,6 +186,9 @@ struct Driver {
     command: Option<String>,
     /// `exec.finished` has been emitted (emit exactly once).
     finished_emitted: bool,
+    /// Reply-generating inbound messages buffered during a re-key's
+    /// half-duplex window (RFC 4253 §9), processed once it completes.
+    deferred: Vec<Vec<u8>>,
     /// The spawned child, once `exec` is accepted.
     child: Option<ChildIo>,
 }
@@ -205,8 +214,55 @@ impl Driver {
             consumed_closed: false,
             command: None,
             finished_emitted: false,
+            deferred: Vec::new(),
             child: None,
         }
+    }
+
+    /// During a re-key's half-duplex window (RFC 4253 §9, after we sent our
+    /// KEXINIT), inbound channel data that needs no reply is handled inline;
+    /// anything that would make us send a reply is deferred until after our
+    /// NEWKEYS, so we never emit a non-KEX packet in the window
+    /// (Terrapin-class; CLAUDE.md transport rule).
+    async fn pass_to_channel<S>(
+        &mut self,
+        session: &mut Expect<S, Session>,
+        payload: Vec<u8>,
+    ) -> Result<(), TransportError>
+    where
+        S: AsyncRead + AsyncWrite + Unpin + Send,
+    {
+        // Inbound-only (stdin data, window credit, EOF) sends no reply, so it
+        // is safe in the window; anything else is deferred past our NEWKEYS.
+        if matches!(
+            payload.first().copied(),
+            Some(SSH_MSG_CHANNEL_DATA | SSH_MSG_CHANNEL_WINDOW_ADJUST | SSH_MSG_CHANNEL_EOF)
+        ) {
+            self.handle_inbound(session, &payload).await
+        } else {
+            if self.deferred.len() >= MAX_DEFERRED {
+                return Err(session
+                    .protocol_disconnect("too-many-deferred-during-rekey")
+                    .await);
+            }
+            self.deferred.push(payload);
+            Ok(())
+        }
+    }
+
+    /// Processes the messages buffered during the re-key window, now that
+    /// we may reply again.
+    async fn drain_deferred<S>(
+        &mut self,
+        session: &mut Expect<S, Session>,
+    ) -> Result<(), TransportError>
+    where
+        S: AsyncRead + AsyncWrite + Unpin + Send,
+    {
+        for payload in std::mem::take(&mut self.deferred) {
+            self.handle_inbound(session, &payload).await?;
+        }
+        Ok(())
     }
 }
 
@@ -225,26 +281,50 @@ where
     let mut d = Driver::new(session.identity().to_string());
 
     loop {
-        // (A) Flush child output while the client's window allows.
-        d.flush_output(session).await?;
+        // Outbound channel work is suppressed during a re-key (RFC 4253 §9
+        // half-duplex: once we've sent our KEXINIT we send no channel data
+        // until our NEWKEYS). Feeding the child's stdin (B) is local and
+        // always safe.
+        if !session.rekey_active() {
+            // (A) Flush child output while the client's window allows.
+            d.flush_output(session).await?;
+        }
         // (B) Hand one inbound chunk toward the child's stdin (non-blocking).
         d.handoff_stdin();
-        // (C) Return inbound credit once a batch has been consumed.
-        d.replenish_window(session).await?;
-        // (D) Close sequence when the child is done and output is drained.
-        if d.ready_to_close() {
-            d.send_terminal(session).await?;
-        }
-        if d.state == ChannelState::Closed {
-            d.emit_finished();
-            return Ok(());
+        if !session.rekey_active() {
+            // (C) Return inbound credit once a batch has been consumed.
+            d.replenish_window(session).await?;
+            // (D) Close sequence when the child is done and output is drained.
+            if d.ready_to_close() {
+                d.send_terminal(session).await?;
+            }
+            if d.state == ChannelState::Closed {
+                d.emit_finished();
+                return Ok(());
+            }
+            // Initiate a re-key when a threshold is crossed and the channel
+            // is live (ADR-0026).
+            if session.rekey_due() && matches!(d.state, ChannelState::Running | ChannelState::Idle)
+            {
+                session.begin_rekey().await?;
+            }
         }
 
-        // (E) Wait for the next event. Guards are read into locals first so
-        // they do not borrow `d` while the child receivers are borrowed.
-        let can_read = true;
-        let want_output = d.pending_out.is_none() && d.state.may_emit_output();
+        // (E) Wait for the next event. Guards/timers are read into locals
+        // first so they do not borrow `d`/`session` while the child
+        // receivers are borrowed.
+        let want_output =
+            d.pending_out.is_none() && d.state.may_emit_output() && !session.rekey_active();
         let consumed_active = !d.consumed_closed;
+        let rekey_deadline = session.rekey_deadline();
+        // Only arm the idle interval-trigger in states where `begin_rekey`
+        // could actually fire; otherwise a past wake instant would re-arm
+        // every iteration and busy-spin (the timer never advances `last_kex`).
+        let rekey_wake = if matches!(d.state, ChannelState::Running | ChannelState::Idle) {
+            session.rekey_wake_at()
+        } else {
+            None
+        };
         let (out, consumed) = match d.child.as_mut() {
             Some(c) => (Some(&mut c.out_rx), Some(&mut c.consumed_rx)),
             None => (None, None),
@@ -252,9 +332,22 @@ where
 
         tokio::select! {
             biased;
-            pkt = session.read_packet(), if can_read => {
+            pkt = session.read_packet() => {
                 let payload = pkt?;
-                d.handle_inbound(session, &payload).await?;
+                if session.rekey_active() {
+                    match session.step_rekey(&payload).await? {
+                        RekeyStep::PassToChannel => d.pass_to_channel(session, payload).await?,
+                        // The re-key finished: process anything the peer sent
+                        // during the half-duplex window, now that we may reply.
+                        RekeyStep::Completed => d.drain_deferred(session).await?,
+                        RekeyStep::Continued => {}
+                    }
+                } else if payload.first() == Some(&SSH_MSG_KEXINIT) {
+                    // Client-initiated re-key.
+                    session.step_rekey(&payload).await?;
+                } else {
+                    d.handle_inbound(session, &payload).await?;
+                }
             }
             chunk = recv_opt_out(out), if want_output => {
                 match chunk {
@@ -275,7 +368,22 @@ where
                     None => d.consumed_closed = true,
                 }
             }
+            // A started re-key must finish within the deadline (ADR-0026).
+            () = sleep_until_opt(rekey_deadline), if rekey_deadline.is_some() => {
+                return Err(session.rekey_timeout().await);
+            }
+            // Idle interval trigger: wake so the next iteration re-keys.
+            () = sleep_until_opt(rekey_wake), if rekey_wake.is_some() => {}
         }
+    }
+}
+
+/// Sleeps until `at`, or never resolves if `None` — the `select!` guard
+/// pattern for an optional timer.
+async fn sleep_until_opt(at: Option<Instant>) {
+    match at {
+        Some(at) => tokio::time::sleep_until(at).await,
+        None => std::future::pending().await,
     }
 }
 
