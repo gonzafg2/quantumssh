@@ -12,6 +12,7 @@ use std::sync::Arc;
 use quantumssh_core::auth::AuthorizedKeys;
 use quantumssh_core::host_key::HostKey;
 use quantumssh_core::server::{Config, Server};
+use quantumssh_core::transport::RekeyThresholds;
 use tracing::error;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::registry::LookupSpan;
@@ -240,6 +241,9 @@ async fn main() -> ExitCode {
         handshake_timeout: cli.handshake_timeout,
         host_key,
         authorized_keys,
+        // ADR-0026 BSI defaults (1 GiB / 1 h); the re-key completion budget
+        // mirrors the handshake budget.
+        rekey: RekeyThresholds::bsi_defaults(cli.handshake_timeout),
     };
     let server = match Server::bind(&config).await {
         Ok(server) => server,
