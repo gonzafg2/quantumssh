@@ -55,7 +55,7 @@ zeroize       = { version = "1", default-features = false, features = ["zeroize_
 # the standard AEAD.
 chacha20 = { version = "0.9", default-features = false, features = ["zeroize"] }  # ChaCha20Legacy: the 64-bit-nonce djb variant OpenSSH uses
 poly1305 = { version = "0.8", default-features = false, features = ["zeroize"] }
-aes-gcm  = { version = "0.10", default-features = false, features = ["aes", "alloc", "zeroize"] }
+aes-gcm  = { version = "0.11", default-features = false, features = ["aes", "alloc", "zeroize"] }
 # Declared ONLY to switch on its `zeroize` feature (Cargo feature
 # unification): `aes-gcm/zeroize` erases the GHASH key on drop but
 # does not forward to `aes`, whose round-key schedule is the bulk of
