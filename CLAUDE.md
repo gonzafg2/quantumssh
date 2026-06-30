@@ -20,18 +20,19 @@ It is built greenfield on audited cryptographic primitive crates — it does
 **Status: pre-alpha.** Phase 0 (foundation: manifesto, governance, threat
 model, ADR/RFC catalog, supporting infrastructure) is complete. Phase 1
 (the walking-skeleton server, [issue #9](https://github.com/gonzafg2/quantumssh/issues/9))
-has **landed**: milestones M1–M5 are merged. The `quantumssh-core` library
+has **landed**: milestones M1–M6 are merged. The `quantumssh-core` library
 and the `quantumssh` binary implement the full greenfield path end to end —
 version exchange → `mlkem768x25519-sha256` hybrid KEX → AEAD transport →
 publickey Ed25519 authentication → one `session` channel running one
-`exec` → clean close — and interoperate with a stock OpenSSH 10.x client
+`exec` → clean close, with mid-session re-keying (1 GiB / 1 h, [ADR-0026](docs/adr/0026-phase-1-rekeying-policy.md))
+— and interoperate with a stock OpenSSH 10.x client
 (the `interop` CI gate, [ADR-0020](docs/adr/0020-phase-1-ci-openssh-interop-gate.md)).
 It is **not** hardened for production: no PTY, no SFTP, no config file, no
 per-user privilege separation (Phase 2+).
 
-Note: most Phase-1 ADRs (0016–0024) are still marked `Proposed` though the
-code that implements them has merged — a known status lag to be reconciled
-in a separate governance sweep. Read them as in force.
+The Phase-1 ADRs (0016–0024, 0026) are **Accepted** — flipped from `Proposed`
+in the [#86](https://github.com/gonzafg2/quantumssh/issues/86) governance sweep
+once their implementing milestones merged.
 
 ## The five commitments, as review criteria
 

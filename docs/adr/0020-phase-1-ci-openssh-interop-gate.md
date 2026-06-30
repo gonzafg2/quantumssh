@@ -1,7 +1,7 @@
 # ADR 0020: Gate Phase 1 CI on OpenSSH 10.x interop with a pinned version
 
-- **Status:** Proposed
-- **Date:** TBD (advances to Accepted when the first Phase 1 crate lands)
+- **Status:** Accepted
+- **Date:** 2026-06-30 (accepted in the #86 Phase-1 governance sweep)
 - **Deciders:** Project lead
 - **Related:** Implements [RFC-0003](../rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md) §"Acceptance criteria stay as issue #9 defines them" and resolves its unresolved question 4; sources the project's internal Phase-1 decision notes §"Decisión 5"; adds a workflow alongside `.github/workflows/ci.yml`.
 

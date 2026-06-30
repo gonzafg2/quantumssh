@@ -1,7 +1,7 @@
 # ADR 0026: Re-key after 1 hour or 1 GiB per direction in Phase 1
 
-- **Status:** Proposed
-- **Date:** TBD (advances to Accepted when the re-keying implementation lands; tracked with the Phase-1 ADR status sweep, issue #86)
+- **Status:** Accepted
+- **Date:** 2026-06-30 (accepted in the #86 Phase-1 governance sweep)
 - **Deciders:** Project lead
 - **Related:** Implements [issue #60](https://github.com/gonzafg2/quantumssh/issues/60); builds on [ADR-0021](0021-phase-1-negotiation-profile.md) (the negotiation profile and strict-kex mechanics the re-key reuses) and [ADR-0022](0022-phase-1-async-runtime-tokio.md) (the handshake budget reused as the re-key completion deadline); adds an event to [ADR-0024](0024-phase-1-log-event-schema.md) (log schema); realises `docs/threat-model.md` §2.4/§6.1 (ephemeral-secret hygiene, forward secrecy). Implemented in the `transport`/`channel` modules of `quantumssh-core` (M6).
 

@@ -1,7 +1,7 @@
 # ADR 0016: Run quantumsshd as a dedicated non-root service account in Phase 1
 
-- **Status:** Proposed
-- **Date:** TBD (advances to Accepted when Phase 1 implementation begins)
+- **Status:** Accepted
+- **Date:** 2026-06-30 (accepted in the #86 Phase-1 governance sweep)
 - **Deciders:** Project lead
 - **Related:** Operational counterpart to [RFC-0002](../rfcs/0002-threat-model-phase1-uid-model-and-non-goal.md); this ADR depends on the merge of [PR #24](https://github.com/gonzafg2/quantumssh/pull/24) and should land after it.
 
@@ -32,7 +32,7 @@ The server-side execution flow for `"exec"` channel requests does **not** call `
 
 The audit-record requirement from RFC-0002 §2.7 — logging `executing_uid` distinct from `authenticated_identity` — is implemented by reading the process UID at the boundary via `rustix::process::getuid()`. In Phase 1 the field is a constant per process; the schema is forward-compatible with the Phase 3 per-user value.
 
-> **Note (M5, while Proposed):** this ADR originally named `nix::unistd::Uid::current()`. Phase-1 implementation selected `rustix` (`features = ["process"]`) over `nix` for a smaller dependency surface (MANIFIESTO #4); `rustix::process::getuid()` reads the UID without first-party `unsafe`. The channel layer's kill-on-early/abrupt-close (ADR-0023) signals the child's whole **process group** via `rustix::process::kill_process_group` — so a shell that fork+execs its command does not leak an orphaned grandchild holding the stdio pipes open. The kill is issued from the reap task, which still holds the un-waited `Child`, so the leader's pid (= pgid) cannot have been reused (no TOCTOU). Edited in place because this ADR is still `Proposed`; no superseding ADR is needed.
+> **Note (M5):** this ADR originally named `nix::unistd::Uid::current()`. Phase-1 implementation selected `rustix` (`features = ["process"]`) over `nix` for a smaller dependency surface (MANIFIESTO #4); `rustix::process::getuid()` reads the UID without first-party `unsafe`. The channel layer's kill-on-early/abrupt-close (ADR-0023) signals the child's whole **process group** via `rustix::process::kill_process_group` — so a shell that fork+execs its command does not leak an orphaned grandchild holding the stdio pipes open. The kill is issued from the reap task, which still holds the un-waited `Child`, so the leader's pid (= pgid) cannot have been reused (no TOCTOU). This amendment was made in place while the ADR was `Proposed`; on acceptance (#86) it is frozen as part of the decision ([ADR-0015](0015-permit-annotated-errata-in-adrs.md)).
 
 ## Consequences
 
