@@ -1,10 +1,10 @@
 # RFC 0006: Post-quantum host key signatures — the ML-DSA composite migration target
 
-- **Status:** Draft
+- **Status:** Accepted (2026-06-30)
 - **Authors:** Gonzalo Fleming Garrido
 - **Created:** 2026-06-30
 - **Roadmap issue:** [`#40`](https://github.com/gonzafg2/quantumssh/issues/40)
-- **Implementation PR:** TBD — **gated**; no implementation lands until both adoption gates in §"Reference-level explanation" fire.
+- **Implementation PR:** TBD — **gated**; no implementation lands until both adoption gates in [§Reference-level explanation](#reference-level-explanation) fire.
 
 ## Summary
 
@@ -84,7 +84,7 @@ ship a severe vulnerability) makes betting host identity on ML-DSA alone
 unacceptable. The classical Ed25519 half is the backstop that a
 lattice-implementation catastrophe cannot defeat — and, symmetrically,
 ML-DSA is the backstop against a CRQC breaking Ed25519. **Zero legacy
-([README](../README.md) #3) forbids classical-*only*; it does not forbid
+(MANIFIESTO #3) forbids classical-*only*; it does not forbid
 classical-*plus*-PQ, which is exactly the hybrid posture the project
 already takes for KEX.**
 
@@ -145,7 +145,11 @@ Until **both** gates fire, classical Ed25519 with the documented limit
 fire, a separate **implementation RFC** specifies the wire encoding,
 `known_hosts`/`SSHFP` formats, the primitive crate (paralleling
 [ADR-0019](../adr/0019-phase-1-ml-kem-crate-rustcrypto.md) for ML-KEM),
-and the transition mechanics.
+and the transition mechanics. That RFC will also require a **superseding
+ADR** for the host-key entry that
+[ADR-0021](../adr/0021-phase-1-negotiation-profile.md) currently fixes to
+`ssh-ed25519` only — the negotiation profile is Accepted and immutable
+except by a superseding decision.
 
 **Deprecation backstop.** NIST IR 8547 deprecates quantum-vulnerable
 signatures (including all elliptic-curve signatures) across 2030–2035
