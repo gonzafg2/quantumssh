@@ -1465,7 +1465,10 @@ defend against unknown future cryptanalytic breakthroughs that
 target the chosen primitives directly. The project's commitment is
 to track NIST and IETF guidance and to migrate before deprecation
 deadlines, not to anticipate breakthroughs that have not yet
-occurred.
+occurred. The **mechanism** for that migration — the
+retroactive-exposure decision tree, the supersession mechanics, and the
+dynamic definition of "legacy" — is
+[RFC-0007](rfcs/0007-cryptographic-primitive-migration-procedure.md).
 
 ### 8.11 Hardening of the maintainer's personal endpoint
 
