@@ -38,7 +38,7 @@ La respuesta larga es este proyecto.
 
 **Post-cuántico por defecto, no por opción.** El intercambio de claves híbrido (ML-KEM + X25519) es lo único que soportamos. Quien usa QuantumSSH no necesita saber qué significa post-cuántico. La cosa correcta pasa sola.
 
-**Cero legacy.** Sin SSH-1. Sin RSA-1024. Sin DSA. Sin modos CBC. Sin `diffie-hellman-group1-sha1`. Sin autenticación por contraseña en el perfil por defecto. Nos rehusamos a heredar 25 años de *"sigue ahí porque el router de alguien lo necesita"*. Y "legacy" no es solo esta lista fija: es todo primitivo que NIST o IETF haya deprecado. Esa lista es el piso permanente; la frontera avanza al ritmo de los estándares, y migramos antes de sus fechas límite. El procedimiento está en [RFC-0007](docs/rfcs/0007-cryptographic-primitive-migration-procedure.md).
+**Cero legacy.** Sin SSH-1. Sin RSA-1024. Sin DSA. Sin modos CBC. Sin `diffie-hellman-group1-sha1`. Sin autenticación por contraseña en el perfil por defecto. Nos rehusamos a heredar 25 años de *"sigue ahí porque el router de alguien lo necesita"*. Y "legacy" no es solo esta lista fija: es todo primitivo criptográfico que NIST o IETF haya deprecado. Esa lista es el piso permanente; la frontera avanza al ritmo de los estándares, y migramos antes de sus fechas límite. El procedimiento está en [RFC-0007](docs/rfcs/0007-cryptographic-primitive-migration-procedure.md).
 
 **Superficie pequeña, bordes afilados.** El MVP soporta autenticación por llave pública, ejecución de comandos, shell interactiva con PTY, y SFTP. Punto. Port forwarding, X11 forwarding, agent forwarding y todo lo demás son opt-in explícitos, detrás de feature flags y configuración. Cada feature es un compromiso permanente de mantener, auditar, y razonar.
 

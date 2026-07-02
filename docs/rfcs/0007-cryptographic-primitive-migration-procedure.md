@@ -1,6 +1,6 @@
 # RFC 0007: Cryptographic-primitive migration procedure
 
-- **Status:** Draft
+- **Status:** Accepted (2026-07-01)
 - **Authors:** Gonzalo Fleming Garrido
 - **Created:** 2026-07-01
 - **Roadmap issue:** [`#42`](https://github.com/gonzafg2/quantumssh/issues/42)
@@ -9,12 +9,13 @@
 
 ## Summary
 
-QuantumSSH has migrated a cryptographic primitive twice — the key exchange
-([RFC-0005](0005-hybrid-pq-key-exchange.md), hybrid KEX as the only posture)
-and the host-key signature ([RFC-0006](0006-post-quantum-host-key-signatures.md),
-the composite ML-DSA+Ed25519 target). Both were "ratify a scattered posture"
-RFCs written after the fact. This RFC extracts the **standing procedure** those
-two instances proved, so a third migration does not re-derive the reasoning from
+QuantumSSH has taken a primitive-migration decision twice — the key exchange
+([RFC-0005](0005-hybrid-pq-key-exchange.md) made the hybrid KEX the only posture,
+already implemented) and the host-key signature
+([RFC-0006](0006-post-quantum-host-key-signatures.md) fixed the composite
+ML-DSA+Ed25519 target, gated and not yet implemented). Both RFCs ratified a
+posture that was otherwise scattered across ADRs and prose. This RFC extracts the
+**standing procedure** those two instances proved, so a third migration does not re-derive the reasoning from
 prose. It codifies three things: (1) a **retroactive-exposure decision tree**
 that decides *whether and when* a primitive migrates; (2) the **supersession
 mechanics** at the protocol and dependency layers; and (3) a **dynamic
@@ -96,7 +97,7 @@ For a primitive `P` facing deprecation, or a candidate replacement `P'`:
    - **Yes → retroactive class.** Migrate to the hybrid/replacement posture as
      soon as an *interoperable standard* exists. **No adoption gate.** Failure of
      either hybrid half must abort, never fall back (MANIFIESTO #2). *Precedent:
-     RFC-0005 (KEX).* 
+     RFC-0005 (KEX).*
    - **No (compromise only enables a live attack at connection time) →
      live-only class.** Migration MAY wait behind **both**: (a) WG adoption of
      the replacement's identifier (stability), and (b) a stock release of the
@@ -145,9 +146,9 @@ moving frontier above it.
 The external precedent that "legacy" is a standards-body-maintained moving
 target — not a project opinion — is **[RFC 9142](https://www.rfc-editor.org/rfc/rfc9142.html)**
 (the IETF's maintained SSH key-exchange guidance with its MUST-NOT / SHOULD-NOT
-lists), already cited in threat-model §6.1. The MANIFIESTO edit adds one
-sentence to commitment #3 to this effect; because it refines a MANIFIESTO
-commitment, this RFC travels the highest lane per the RFC process (and per the
+lists), already cited in threat-model §6.1. The MANIFIESTO edit adds a short
+passage (three sentences) to commitment #3 to this effect; because it refines a
+MANIFIESTO commitment, this RFC travels the highest lane per the RFC process (and per the
 precedent RFC-0005 set: a challenge to a MANIFIESTO commitment belongs in an RFC
 that amends it).
 
@@ -166,7 +167,7 @@ that amends it).
   cheapen them.
 - **Amending MANIFIESTO is heavy.** Touching a founding commitment is not
   routine. Justified: the paradox is real (a frozen blocklist cannot stay
-  zero-legacy over 30 years), and the amendment is a one-sentence refinement that
+  zero-legacy over 30 years), and the amendment is a short refinement that
   *strengthens* the commitment, not a retreat from it.
 - **The procedure is a skeleton, not a full generalization.** No config-layer
   design and no named watch-trigger cadence/owner. Accepted: those depend on
@@ -209,8 +210,9 @@ unresolved — MANIFIESTO #3 keeps reading as a list that will go stale.
   [issue #42](https://github.com/gonzafg2/quantumssh/issues/42) — the enumerated
   concrete triggers (HQC, sntrup761, ML-KEM-1024, BSI TR-02102-4) this procedure
   routes.
-- [ADR-0015](../adr/0015-permit-annotated-errata-in-adrs.md) (supersession
-  discipline), [ADR-0019](../adr/0019-phase-1-ml-kem-crate-rustcrypto.md)
+- [ADR-0015](../adr/0015-permit-annotated-errata-in-adrs.md) (the errata /
+  immutability rule that the supersede-don't-edit discipline rests on),
+  [ADR-0019](../adr/0019-phase-1-ml-kem-crate-rustcrypto.md)
   (dependency-layer template), [ADR-0020](../adr/0020-phase-1-ci-openssh-interop-gate.md)
   (client population), [ADR-0021](../adr/0021-phase-1-negotiation-profile.md)
   (the profile being versioned).
@@ -224,7 +226,7 @@ unresolved — MANIFIESTO #3 keeps reading as a list that will go stale.
   one-off. Who owns it and how often is left to `GOVERNANCE.md` (the single-
   maintainer residual in threat-model §7 is the relevant constraint).
 - **Whether the amendment wording belongs in MANIFIESTO's commitment #3 prose or
-  a linked clarification.** This RFC proposes the one-sentence refinement inline;
+  a linked clarification.** This RFC proposes the refinement inline;
   the lead may prefer a footnote.
 
 ## Future possibilities
