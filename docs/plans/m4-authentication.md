@@ -1,8 +1,8 @@
 <!--
   Governance status (2026-07-01):
-  Non-authoritative design note (ADR-0027). Guided M4 (PR #78, merged).
-  Locked-in decisions live in ADRs 0021, 0023, 0024. This file is retained
-  for rationale and is not a source of truth post-merge.
+  Non-authoritative design note (ADR-0027). Guided M4 (PR #78).
+  Authoritative decisions live in ADRs/RFCs: 0021, 0023, 0024.
+  This file is retained for rationale and is not a source of truth.
 -->
 # Plan M4 — Authentication (`auth.rs`)
 

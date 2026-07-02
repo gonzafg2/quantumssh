@@ -1,8 +1,8 @@
 <!--
   Governance status (2026-07-01):
-  Non-authoritative design note (ADR-0027). Guided M5 (PR #84, merged).
-  Locked-in decisions live in ADRs 0016, 0020, 0023, 0024. This file is
-  retained for rationale and is not a source of truth post-merge.
+  Non-authoritative design note (ADR-0027). Guided M5 (PR #84).
+  Authoritative decisions live in ADRs/RFCs: 0016, 0020, 0023, 0024.
+  This file is retained for rationale and is not a source of truth.
 -->
 # Plan M5 — Channel layer + `exec` (`channel.rs`, `exec.rs`)
 

@@ -57,7 +57,7 @@
 
 ### Neutral
 
-- Option 1 (migrate every locked decision to ADRs, then **delete** the plan) is largely satisfied already — the locked decisions of M4/M5 are in ADRs 0021/0023/0024. This ADR declines only the *deletion* half: deleting a merged plan destroys retained rationale for no governance gain, and the M4 deletion was already declined once.
+- Option 1 (migrate every locked decision to ADRs, then **delete** the plan) is largely satisfied already — each plan's locked decisions are already in ADRs (M4: 0021/0023/0024; M5: 0016/0020/0023/0024), as its banner records. This ADR declines only the *deletion* half: deleting a merged plan destroys retained rationale for no governance gain, and the M4 deletion was already declined once.
 
 ## Alternatives considered
 
@@ -77,4 +77,4 @@ Extract every locked decision into ADRs, then remove the plan. **Rejected** for 
 
 - Resolves [issue #79](https://github.com/gonzafg2/quantumssh/issues/79).
 - Governed by / consistent with [ADR-0015](0015-permit-annotated-errata-in-adrs.md) (errata-banner mechanism) and the [`docs/rfcs/README.md`](../rfcs/README.md) anti-split reasoning.
-- `CLAUDE.md` "RFC vs ADR vs plain PR" and "What not to do" sections updated to name this fourth lane.
+- `CLAUDE.md` "RFC vs ADR vs plain PR" section (new Plan bullet) and the Repo-map table updated to name this fourth lane.
