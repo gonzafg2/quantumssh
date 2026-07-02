@@ -19,7 +19,7 @@ posture that was otherwise scattered across ADRs and prose. This RFC extracts th
 prose. It codifies three things: (1) a **retroactive-exposure decision tree**
 that decides *whether and when* a primitive migrates; (2) the **supersession
 mechanics** at the protocol and dependency layers; and (3) a **dynamic
-definition of "legacy"** — anything past its NIST/IETF deprecation date, not a
+definition of "legacy"** — anything past its NIST/IETF disallow date, not a
 frozen list of named algorithms — which **refines MANIFIESTO commitment #3** and
 so travels the highest RFC lane. It deliberately does **not** design
 config-layer migration (no config surface exists until Phase 2) and does not set
@@ -76,10 +76,15 @@ in the reference section — always by *superseding* an Accepted ADR, never by
 editing it.
 
 **Step 3 — the definition of "legacy" is not yours to set.** A primitive is
-"legacy" when NIST/IETF says so (a deprecation/disallow date), not when the
-project feels like it. MANIFIESTO #3's blocklist is the *floor* (those are
-already disallowed); the frontier moves forward on the standards bodies'
-schedule, and §8.10's migrate-before-deadlines commitment tracks it.
+"legacy" when NIST/IETF **disallows** it, not when it is merely *deprecated* and
+not when the project feels like it. The distinction is load-bearing:
+**deprecation** (~2030 for elliptic curves, per NIST IR 8547) is the trigger that
+*begins* a gated migration; **disallowance** (~2035) is the line past which a
+primitive is legacy. A deprecated-but-not-disallowed primitive legitimately stays
+compiled in under the decision tree above (and RFC-0006 keeps `ssh-ed25519` for
+exactly this window). MANIFIESTO #3's blocklist is the *floor* (those are already
+disallowed); the frontier moves forward on the standards bodies' schedule, and
+§8.10's migrate-before-deadlines commitment tracks it.
 
 Nothing about this procedure licenses *crypto-agility* in the pejorative sense:
 adding or swapping an algorithm is still an RFC-gated, one-primitive-at-a-time
@@ -138,10 +143,22 @@ writing a superseding ADR, never by editing the Accepted one). A migration:
 MANIFIESTO commitment #3 ("Cero legacy") today reads as a fixed blocklist (no
 SSH-1, no RSA, no DSA, no CBC, no `diffie-hellman-group1-sha1`, no password
 auth). This RFC **refines** it: the blocklist is the permanent **floor**, and
-"legacy" additionally means **any primitive past its NIST or IETF
-deprecation/disallow date**. Zero-legacy = the deprecated is never compiled in
-(the blocklist floor), and §8.10's migrate-before-deadlines commitment is the
-moving frontier above it.
+"legacy" additionally means **any primitive past its NIST or IETF *disallow*
+date** — deprecation is the trigger that *begins* the gated migration, not the
+legacy line itself (so a deprecated-but-not-disallowed primitive, e.g.
+`ssh-ed25519` in 2030–2035 under RFC-0006, is not yet legacy). Zero-legacy = the
+*disallowed* is never compiled in, and §8.10's migrate-before-deadlines
+commitment is the moving frontier above the floor.
+
+Two clarifications the floor forces. First, **the floor is a policy floor, not a
+uniform compile-out rule**: MANIFIESTO #3 says password auth is barred "en el
+perfil por defecto" (off by default), whereas SSH-1/RSA/DSA/CBC are never
+compiled in at all. Where the policy floor and the implementation differ, the
+[CLAUDE.md hard rule #3](../../CLAUDE.md) ceiling ("not merely configured off")
+governs what may be compiled in. Second, the classical half of an accepted
+*hybrid* (X25519 in the KEX, Ed25519 in the composite signature) is **not**
+legacy while the hybrid is the mechanism — zero-legacy forbids classical-*only*,
+not classical-*plus*-PQ.
 
 The external precedent that "legacy" is a standards-body-maintained moving
 target — not a project opinion — is **[RFC 9142](https://www.rfc-editor.org/rfc/rfc9142.html)**
