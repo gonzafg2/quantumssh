@@ -97,11 +97,12 @@ authoritative reference; the operative rules a reviewer applies:
   docs, tests. When unsure which lane a change belongs in, open an issue and
   ask.
 - **Plan** ([`docs/plans/`](docs/plans/)) — a mutable, **non-authoritative**
-  design note accompanying a milestone's implementation ([ADR-0027](docs/adr/0027-docs-plans-governance-category.md)).
-  Post-merge the code, ADRs, and RFCs are authoritative, never the plan.
-  Every plan carries a dated `Governance status` banner pointing at the
-  ADRs/RFCs that hold its locked-in decisions, and **a plan is never the
-  sole record of a locked-in decision** (that always goes to an ADR/RFC).
+  design note: a milestone plan, or a scoping note for future work
+  ([ADR-0027](docs/adr/0027-docs-plans-governance-category.md)). The code,
+  ADRs, and RFCs are authoritative, never the plan. Every plan carries a
+  dated `Governance status` banner pointing at the ADRs/RFCs (or tracking
+  issue) that hold its decisions, and **a plan is never the sole record of
+  a locked-in decision** (that always goes to an ADR/RFC).
 
 ## Contribution conventions
 

@@ -19,18 +19,19 @@
 
 ## Decision
 
-`docs/plans/` is a **fourth document category**: **mutable, non-authoritative design notes that accompany a milestone's implementation**. Its contract:
+`docs/plans/` is a **fourth document category**: **mutable, non-authoritative design notes**. These are either *milestone plans* that accompany an implementation (the M4/M5 plans) or *pre-implementation scoping notes* that capture the constraint set and options for future work before it is scheduled (e.g. a Phase-3 privilege-separation scoping note; issue #79 asked whether the lane covers such non-milestone notes — it does). Its contract:
 
-1. **Non-authoritative after merge.** A plan guides the work while it is written and merged alongside it, but once the milestone lands the *code, ADRs, and RFCs* are authoritative — not the plan. A plan is retained for its design rationale, not as a source of truth for what the system does.
+1. **Non-authoritative after merge.** A note guides the work while it is written and merged alongside it, but once the work lands the *code, ADRs, and RFCs* are authoritative — not the note. A scoping note for not-yet-scheduled work is non-authoritative from the start: it records a constraint set and options, never a decision. A note is retained for its design rationale, not as a source of truth for what the system does.
 
-2. **A mandatory, dated `Governance status` banner** heads every file in `docs/plans/`, in the same spirit as ADR-0015's errata banners. It states: the date, that the file is non-authoritative post-merge, which milestone it guided, and **which ADRs/RFCs hold the locked-in decisions**. Template:
+2. **A mandatory, dated `Governance status` banner** heads every file in `docs/plans/`, in the same spirit as ADR-0015's errata banners. It states: the date, that the file is non-authoritative, what it guides or scopes, and **which ADRs/RFCs (and/or tracking issue) hold the authoritative decisions**. Template:
 
    ```
    <!--
      Governance status (YYYY-MM-DD):
-     Non-authoritative design note (ADR-0027). Guided <milestone> (PR #NN).
-     Locked-in decisions live in ADRs/RFCs: <list>. This file is retained
-     for rationale and is not a source of truth post-merge.
+     Non-authoritative design note (ADR-0027). <Guided <milestone> (PR #NN)
+     | Scopes <future work>; tracked in #NN>.
+     Authoritative decisions live in ADRs/RFCs: <list, or "none yet">.
+     This file is retained for rationale and is not a source of truth.
    -->
    ```
 
