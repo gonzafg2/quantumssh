@@ -53,9 +53,10 @@ A QuantumSSH certificate is the **native OpenSSH certificate** (the same object
 `ssh-keygen -s` produces): a signed statement binding a public key to a set of
 **principals** (usernames it may act as), a **validity window** (`valid after` /
 `valid before`), and **critical options / extensions** (e.g. `force-command`,
-`source-address`). QuantumSSH verifies the CA signature, the validity window, the
-principal, and the critical options, then treats the certificate's key as
-authenticated.
+`source-address`). QuantumSSH verifies the CA signature, that the certificate is
+a **user** certificate (host-type certificates are rejected), the validity
+window, the principal, and the critical options, then treats the certificate's
+key as authenticated.
 
 The **recommended deployment is short-lived certificates**: an issuing service
 (Teleport, HashiCorp Vault's SSH engine, step-ca, or `ssh-keygen -s` in a script)
@@ -128,6 +129,7 @@ algorithm* be sequenced independently. The decision:
 
 - **Verification lives in the userauth stage** of the type-state machine
   ([RFC-0003](0003-phase-1-ssh-stack-greenfield-vs-russh.md)): CA-trust check,
+  **certificate type (MUST be `user`; host-type certificates are rejected)**,
   validity window, principal match, critical-options, and (if configured)
   revocation, added as new logic in that stage — **without** loosening the
   machine to "accept and branch" (the Terrapin bug class CLAUDE.md forbids).
