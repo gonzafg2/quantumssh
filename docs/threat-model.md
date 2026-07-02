@@ -889,7 +889,8 @@ Keys), `T1078` (Valid Accounts).
 once the key is in the attacker's hands: from the server's
 viewpoint, the attacker is the legitimate user. QuantumSSH's
 contribution is to make compensating controls discoverable —
-short-lived certificates (a Phase 2 feature behind RFC), audit-
+short-lived certificates (a Phase 2 feature designed in
+[RFC-0008](rfcs/0008-ssh-certificate-authentication.md)), audit-
 record fidelity, and configurable per-key restrictions
 (`from=`, `command=`, `no-port-forwarding`, equivalents in
 QuantumSSH's own syntax) — but the primary defence lives in the
