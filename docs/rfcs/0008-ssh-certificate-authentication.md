@@ -9,18 +9,20 @@
 ## Summary
 
 QuantumSSH authenticates users with bare `ssh-ed25519` keys listed in
-`authorized_keys` (M4). This RFC designs the Phase-2 addition the threat model
-names in §5.3.2: **SSH certificate authentication**. It fixes three decisions:
-(1) adopt the **native OpenSSH certificate format** (`*-cert-v01@openssh.com`,
-tracking [`draft-ietf-sshm-cert`](https://datatracker.ietf.org/doc/draft-ietf-sshm-cert/)),
-and **reject X.509** outright on the small-surface commitment; (2) the **CA
-signing key is bound to [RFC-0006](0006-post-quantum-host-key-signatures.md)'s
-composite ML-DSA+Ed25519 posture and its two adoption gates** — because a CA key
-is higher-value than any single host key (one forgery = universal
-impersonation); (3) **short-lived certificates are the primary revocation
-story** (time-replaces-revocation), with KRL as a bounded, opt-in add-on, not a
-launch requirement. It does not add code now; it removes the ambiguity of *what
-format, what CA posture, what revocation*.
+`authorized_keys` (M4). This RFC makes **one shape-determining decision**:
+**adopt SSH certificate authentication into QuantumSSH's Phase-2 authentication
+surface** — the Phase-2 mitigant the threat model names in §5.3.2. It sets the
+*shape* of that adoption (a recommended design), while the implementation-level
+specifics are locked by ADRs that cite it. The recommended shape: the **native
+OpenSSH certificate format** (`*-cert-v01@openssh.com`, tracking
+[`draft-ietf-sshm-cert`](https://datatracker.ietf.org/doc/draft-ietf-sshm-cert/);
+not X.509, on the small-surface commitment); a **CA signing key bound to
+[RFC-0006](0006-post-quantum-host-key-signatures.md)'s composite posture** (a CA
+key is higher-value than any single host key — one forgery = universal
+impersonation); and **short-lived certificates as the primary revocation story**
+(KRL a bounded opt-in). It adds no code now; it decides *that* QuantumSSH will do
+certificate auth, and sketches *how* — the binding sub-choices are recorded as
+this RFC's design and finalised in the implementing ADRs.
 
 ## Motivation
 
@@ -159,23 +161,32 @@ algorithm* be sequenced independently. The decision:
 
 ## Rationale and alternatives
 
-- **Native OpenSSH cert + composite CA bound to RFC-0006 (this RFC).** Chosen:
-  smallest pre-auth surface, aligned with the ADR-0020 client and the WG track,
-  and it puts the highest-value key (the CA) on the strongest posture.
-- **X.509 certificates (`x509v3-mldsa-*`, RFC 6187).** Rejected: the ASN.1 surface
-  squarely contradicts commitment #4 and is heavier than the native format, for no
-  offsetting benefit in QuantumSSH's deployment model.
-- **Ed25519 CA, decided separately from RFC-0006.** Rejected as the *end state*
-  (accepted only as a documented interim): leaving the highest-value key classical
-  with no migration tether is the opposite of the posture RFC-0006 set for
-  host keys, which are individually *lower* value.
-- **KRL as the primary revocation mechanism.** Rejected as primary: it maximises
-  server-side state and attacker-influenced input; short-lived certs achieve
-  revocation with none. KRL remains available opt-in.
+**The decision — adopt certificate authentication in Phase 2 — against its
+alternatives:**
 
-**Impact of not doing this:** #41 stays open, the §5.3.2 stolen-key mitigant stays
-unbuilt, and certificate support added post-`0.1.0` becomes an unplanned breaking
-change to wire, config, and audit schema.
+- **Adopt it (this RFC).** Delivers the §5.3.2 stolen-key mitigant, removes the
+  `authorized_keys`-per-host rotation burden, and fixes the interface before
+  `0.1.0` freezes it.
+- **Defer past `0.1.0`.** Rejected: adding certificates later becomes an
+  unplanned breaking change to the wire format, config, and audit schema at once.
+- **Never — bare keys only.** Rejected: leaves the named Phase-2 mitigant
+  permanently unbuilt and key rotation operationally expensive at any scale.
+
+**Design sub-choices (the shape this RFC recommends; finalised in the
+implementing ADRs, not separate RFC decisions):**
+
+- *Format:* native OpenSSH cert over **X.509** — the ASN.1 surface contradicts
+  commitment #4 for no offsetting benefit; the native format is what the ADR-0020
+  client speaks.
+- *CA key:* bound to RFC-0006's composite posture rather than a standalone
+  Ed25519 CA — the highest-value key gets the strongest posture (an interim
+  Ed25519 CA is a documented waypoint, not the end state).
+- *Revocation:* short-lived certs primary over **KRL-primary** — KRL maximises
+  server-side state and attacker-influenced input; it stays a bounded opt-in.
+
+These sub-choices share one design and land together *because they are the shape
+of a single feature*; each is refined in an implementing ADR that can be revised
+without re-opening the adopt/defer decision.
 
 ## Prior art
 
