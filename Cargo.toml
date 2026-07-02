@@ -28,6 +28,14 @@ tokio              = { version = "~1.52", default-features = false } # ADR-0022 
 tracing            = { version = "0.1", default-features = false }  # ADR-0024: the facade the library emits through
 tracing-subscriber = { version = "0.3", default-features = false }  # ADR-0024: constructed only by the binary
 getrandom          = { version = "0.3", default-features = false }  # OS randomness: BPP padding (RFC 4253 §6), KEXINIT cookie (M2)
+# M5 (ADR-0016 amended): the exec path needs the process UID for the
+# `executing_uid` audit field (`rustix::process::getuid`) and a
+# process-group kill on early/abrupt close (`kill_process_group`, to
+# reap the shell *and* any command it forked). The `process` feature
+# supplies both; chosen over `nix` for the smaller surface (MANIFIESTO
+# #4), and it wraps the raw syscalls so first-party code stays
+# `unsafe`-free (ADR-0018).
+rustix             = { version = "1", default-features = false, features = ["std", "process"] }
 
 # Cryptographic primitive layer — pinned by RFC-0003 §"Guide-level
 # explanation" and ADR-0019. All pure-Rust, no FFI; `hmac` is

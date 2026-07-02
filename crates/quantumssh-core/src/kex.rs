@@ -52,8 +52,12 @@ pub const STRICT_KEX_CLIENT: &str = "kex-strict-c-v00@openssh.com";
 /// the gate for the server's `server-sig-algs` send.
 pub const EXT_INFO_CLIENT: &str = "ext-info-c";
 
-/// `kex_algorithms` as advertised (ADR-0021 §1).
+/// `kex_algorithms` as advertised on the **initial** KEXINIT (ADR-0021 §1).
 pub const KEX_LIST: &str = "mlkem768x25519-sha256,kex-strict-s-v00@openssh.com";
+/// `kex_algorithms` on a **re-key** KEXINIT: the `kex-strict-*` marker is
+/// omitted (ADR-0021: the pseudo-algorithms are ignored on re-key, and
+/// OpenSSH omits them). Just the one real KEX.
+pub const KEX_LIST_REKEY: &str = "mlkem768x25519-sha256";
 /// `server_host_key_algorithms` (ADR-0021 §2).
 pub const HOST_KEY_LIST: &str = "ssh-ed25519";
 /// `encryption_algorithms_*`, both directions (ADR-0021 §3–4).
@@ -163,13 +167,33 @@ pub struct Negotiated {
 /// Fails only if the OS random source fails to produce the 16-byte
 /// cookie (RFC 4253 §7.1 requires it to be random).
 pub fn build_kexinit() -> Result<Vec<u8>, KexError> {
+    build_kexinit_with(KEX_LIST)
+}
+
+/// Builds a **re-key** KEXINIT (RFC 4253 §9).
+///
+/// Identical to [`build_kexinit`] but advertises [`KEX_LIST_REKEY`] — no
+/// `kex-strict-*` marker (ADR-0021). `ext-info-*` is likewise not
+/// advertised; `EXT_INFO` is an initial-handshake concern (RFC 8308) and
+/// is not re-sent on re-key.
+///
+/// # Errors
+///
+/// Fails only if the OS random source fails to produce the 16-byte cookie.
+pub fn build_rekey_kexinit() -> Result<Vec<u8>, KexError> {
+    build_kexinit_with(KEX_LIST_REKEY)
+}
+
+/// Shared KEXINIT body; the `kex_algorithms` list is the only difference
+/// between the initial and re-key variants.
+fn build_kexinit_with(kex_list: &str) -> Result<Vec<u8>, KexError> {
     let mut cookie = [0u8; 16];
     getrandom::fill(&mut cookie).map_err(|_| KexError::Wire(wire::WireError::Truncated))?;
 
     let mut w = Writer::new();
     w.put_byte(SSH_MSG_KEXINIT);
     w.put_bytes(&cookie);
-    w.put_name_list(KEX_LIST);
+    w.put_name_list(kex_list);
     w.put_name_list(HOST_KEY_LIST);
     w.put_name_list(ENCRYPTION_LIST);
     w.put_name_list(ENCRYPTION_LIST);
@@ -360,6 +384,17 @@ mod tests {
         let second = build_kexinit().unwrap();
         assert_ne!(payload, second);
         assert_eq!(payload.len(), second.len());
+    }
+
+    #[test]
+    fn rekey_kexinit_omits_strict_marker() {
+        let payload = build_rekey_kexinit().unwrap();
+        let parsed = parse_kexinit(&payload).unwrap();
+        // The real KEX is offered; the strict-kex marker is NOT (ADR-0021:
+        // markers are absent/ignored on re-key KEXINITs).
+        assert!(parsed.kex_algorithms.contains(KEX_ALGORITHM));
+        assert!(!parsed.kex_algorithms.contains(STRICT_KEX_SERVER));
+        assert!(!parsed.first_kex_packet_follows);
     }
 
     #[test]

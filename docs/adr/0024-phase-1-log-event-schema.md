@@ -1,7 +1,7 @@
 # ADR 0024: Fix the Phase 1 structured-log event schema
 
-- **Status:** Proposed
-- **Date:** TBD (advances to Accepted when the first Phase 1 crate lands)
+- **Status:** Accepted
+- **Date:** 2026-06-30 (accepted in the #86 Phase-1 governance sweep)
 - **Deciders:** Project lead
 - **Related:** Realises `docs/threat-model.md` §2.7 (audit record) and its mandated `authenticated_identity` / `executing_uid` fields; makes the §8.12 per-user-UID gap visible in logs; consumes [ADR-0022](0022-phase-1-async-runtime-tokio.md) (the runtime that emits) and [ADR-0023](0023-phase-1-channel-layer-scope.md) (the exec boundary that produces `exec.*` events). Planned implementation (TBD): `tracing` calls in `quantumssh-core`, subscriber init in the `quantumssh` binary. Neither exists yet.
 

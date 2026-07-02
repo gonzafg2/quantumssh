@@ -1,7 +1,7 @@
 # ADR 0023: Scope the Phase 1 channel layer to a single `session` channel running one `exec`
 
-- **Status:** Proposed
-- **Date:** TBD (advances to Accepted when the first Phase 1 crate lands)
+- **Status:** Accepted
+- **Date:** 2026-06-30 (accepted in the #86 Phase-1 governance sweep)
 - **Deciders:** Project lead
 - **Related:** Fulfils the "ADR-TBD ('scope of single-command execution')" placeholder named in [RFC-0003](../rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md) §"Reference-level explanation"; builds on [ADR-0021](0021-phase-1-negotiation-profile.md) (the transport this rides on) and [ADR-0022](0022-phase-1-async-runtime-tokio.md) (`spawn_blocking` exec model); realises `docs/threat-model.md` §2.5 (command-execution authority) and §5.4 (session-layer attack vectors); bounded by §8.12 (per-user UID non-goal). Planned implementation (TBD): the `channel` module of `quantumssh-core`, which does not exist yet.
 
@@ -34,6 +34,8 @@ Phase 1 implements exactly **one `session` channel per connection, carrying exac
 **Channel requests:**
 
 - **`exec` is the only honoured request, and it is honoured once.** Its `command` string is passed to the child process spawn described in ADR-0022 (`std::process::Command` on `spawn_blocking`). A **second `exec` on the same channel** — while the child is still running or after it has exited — is answered with `SSH_MSG_CHANNEL_FAILURE`: the channel's single `exec` is consumed by the first accepted request. Under threat-model §8.12 the child runs as the QuantumSSH service-account UID, not a per-user UID — Phase 1 is single-user by design. Accepting the `exec` is the **audit boundary**: the server emits `exec.started` and `exec.finished` with `authenticated_identity` and `executing_uid` as separate first-class structured fields and `command` as a structured field, never interpolated — the binding authority is the hard rule in `CLAUDE.md`; the full event schema is being fixed by ADR-0024 (TBD — in review as PR #50).
+
+  > **Note (M5): the command runs through a fixed shell, `/bin/sh -c "<command>"`.** SSH `exec` delivers a single opaque string (`ssh host 'echo hello'` sends `echo hello`); executing it requires an interpreter, and OpenSSH itself runs `exec` through the target user's login shell with `-c`. Phase 1 cannot use a *login* shell: the service account's login shell is `/usr/sbin/nologin` by design (ADR-0016), which refuses commands. So Phase 1 fixes the interpreter to `/bin/sh` and spawns `/bin/sh -c "<command>"`. This is the post-auth authority boundary — attacker-controlled input is interpreted by a shell (metacharacters, pipelines) — bounded by: the service-account UID (no privilege escalation; threat-model §8.12), the **sanitised environment** ADR-0016 already mandates (allowlist `PATH, HOME, USER, SHELL, LANG, LC_*`; no client-supplied `env`, which this ADR refuses), and the one-channel/one-exec scope. It is inherent to SSH `exec` semantics, not a QuantumSSH-specific widening. A future per-user model (Phase 3) would resolve the interpreter per user instead of fixing it.
 - **`exit-status` is sent** as a `SSH_MSG_CHANNEL_REQUEST` (`want_reply = false`) carrying the child's exit code before `SSH_MSG_CHANNEL_CLOSE`. This is required for `ssh host cmd; echo $?` to report correctly and is asserted by the ADR-0020 interop gate.
 - **All other requests are refused** with `SSH_MSG_CHANNEL_FAILURE` when they set `want_reply`, and ignored otherwise. This explicitly includes `pty-req` (Phase 2), `shell` (Phase 2), `subsystem` (SFTP is Phase 2), `env`, `signal`, and `window-change`. Refusing `pty-req` and `shell` is what makes "single-command execution, no interactive shell" true at the protocol level.
 

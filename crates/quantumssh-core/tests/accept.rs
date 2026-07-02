@@ -1,10 +1,12 @@
-//! Integration tests for the M4 contract: the full post-quantum
-//! handshake (M2–M3) plus publickey authentication (M4).
+//! Integration tests for the Phase 1 contract: the full post-quantum
+//! handshake (M2–M3), publickey authentication (M4), and the channel
+//! layer with single-command `exec` (M5).
 //! — version exchange, ADR-0021 KEXINIT negotiation, the hybrid
 //! `mlkem768x25519-sha256` exchange with a verified host-key
-//! signature, NEWKEYS, AEAD transport, service request, and the
-//! `ssh-userauth` publickey loop. Also retains M3-level denial and
-//! rejection paths.
+//! signature, NEWKEYS, AEAD transport, service request, the
+//! `ssh-userauth` publickey loop, and the one `session` channel /
+//! `exec` flow (open → exec → data → exit-status → close, ADR-0023).
+//! Also retains M3-level denial and rejection paths.
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
@@ -20,6 +22,7 @@ use quantumssh_core::cipher;
 use quantumssh_core::host_key::HostKey;
 use quantumssh_core::kex;
 use quantumssh_core::server::{Config, Server};
+use quantumssh_core::transport::RekeyThresholds;
 use quantumssh_core::wire::{self, Reader, Writer};
 use sha2::{Digest, Sha256};
 use std::io::Write;
@@ -32,6 +35,17 @@ const TEST_BUDGET: Duration = Duration::from_secs(5);
 const CLIENT_ID: &[u8] = b"SSH-2.0-testclient_0.1";
 
 async fn start_server(handshake_timeout: Duration) -> (SocketAddr, Arc<HostKey>) {
+    start_server_rekey(
+        handshake_timeout,
+        RekeyThresholds::bsi_defaults(handshake_timeout),
+    )
+    .await
+}
+
+async fn start_server_rekey(
+    handshake_timeout: Duration,
+    rekey: RekeyThresholds,
+) -> (SocketAddr, Arc<HostKey>) {
     let host_key = Arc::new(HostKey::from_seed([11u8; 32]));
     // Create a temp authorized_keys with the test key so the server
     // can start (authorized_keys is mandatory). Use a well-known seed.
@@ -43,6 +57,7 @@ async fn start_server(handshake_timeout: Duration) -> (SocketAddr, Arc<HostKey>)
         handshake_timeout,
         host_key: Arc::clone(&host_key),
         authorized_keys,
+        rekey,
     };
     let server = Server::bind(&config).await.expect("bind ephemeral port");
     let addr = server.local_addr().expect("local addr");
@@ -173,14 +188,15 @@ impl SealedClient {
 
 /// Drives the complete handshake from the client side — verifying the
 /// server's Ed25519 signature over the recomputed exchange hash — and
-/// returns the installed client-side AEAD transport and the `session_id`.
+/// returns the installed client-side AEAD transport, the `session_id`,
+/// and the server identification line (for recomputing a re-key `H_r`).
 async fn establish(
     stream: &mut TcpStream,
     host_key: &HostKey,
     kex_list: &str,
     ciphers: &str,
     negotiated_cipher: &str,
-) -> (SealedClient, [u8; 32]) {
+) -> (SealedClient, [u8; 32], Vec<u8>) {
     // Version exchange.
     let server_id = read_server_id(stream).await;
     assert!(server_id.starts_with(b"SSH-2.0-quantumssh_"));
@@ -287,6 +303,7 @@ async fn establish(
             seq_rx: 0,
         },
         session_id,
+        server_id,
     )
 }
 
@@ -344,7 +361,7 @@ fn assert_service_denied(payload: &[u8]) {
 async fn full_handshake_then_encrypted_ext_info_and_service_denial_chacha20() {
     let (addr, host_key) = start_server(Duration::from_secs(30)).await;
     let mut stream = connect(addr).await;
-    let (mut client, _session_id) = establish(
+    let (mut client, _session_id, _server_id) = establish(
         &mut stream,
         &host_key,
         OPENSSH_KEX_EXT_INFO,
@@ -378,7 +395,7 @@ async fn full_handshake_with_aes256_gcm_and_no_ext_info() {
     let mut stream = connect(addr).await;
     // Client prefers AES-GCM and does not offer ext-info-c: no
     // EXT_INFO may arrive, and the GCM path must carry the exchange.
-    let (mut client, _session_id) = establish(
+    let (mut client, _session_id, _server_id) = establish(
         &mut stream,
         &host_key,
         OPENSSH_KEX_PLAIN,
@@ -398,7 +415,7 @@ async fn full_handshake_with_aes256_gcm_and_no_ext_info() {
 async fn tampered_encrypted_packet_drops_the_connection() {
     let (addr, host_key) = start_server(Duration::from_secs(30)).await;
     let mut stream = connect(addr).await;
-    let (mut client, _session_id) = establish(
+    let (mut client, _session_id, _server_id) = establish(
         &mut stream,
         &host_key,
         OPENSSH_KEX_PLAIN,
@@ -592,52 +609,350 @@ fn probe_auth_request(key_blob: &[u8]) -> Vec<u8> {
     w.into_bytes()
 }
 
-#[tokio::test]
-async fn auth_success_then_channel_rejection() {
-    let auth_signing = SigningKey::from_bytes(&[77u8; 32]);
-    let auth_vk = auth_signing.verifying_key();
-    let key_blob = auth_test_blob(&auth_vk);
+// ---- M5: channel layer + exec (ADR-0023) ----
 
-    let (addr, host_key) = start_server(Duration::from_secs(30)).await;
+/// Authenticates with the test key and returns the encrypted client ready
+/// to drive the channel layer.
+async fn authenticate(addr: SocketAddr, host_key: &HostKey) -> (TcpStream, SealedClient) {
+    let auth_signing = SigningKey::from_bytes(&[77u8; 32]);
+    let key_blob = auth_test_blob(&auth_signing.verifying_key());
     let mut stream = connect(addr).await;
-    let (mut client, session_id) = establish(
+    let (mut client, session_id, _server_id) = establish(
         &mut stream,
-        &host_key,
+        host_key,
         OPENSSH_KEX_PLAIN,
         "chacha20-poly1305@openssh.com",
         "chacha20-poly1305@openssh.com",
     )
     .await;
-
-    // Request ssh-userauth → expect SERVICE_ACCEPT.
     client
         .write_sealed(&mut stream, &service_request_payload())
         .await;
-    let service_reply = client.read_sealed(&mut stream).await;
-    let mut r = Reader::new(&service_reply);
-    assert_eq!(r.byte().unwrap(), 6, "SSH_MSG_SERVICE_ACCEPT");
-
-    // Send a valid signed auth request → expect SUCCESS.
+    assert_eq!(client.read_sealed(&mut stream).await.first(), Some(&6));
     client
         .write_sealed(
             &mut stream,
             &signed_auth_request(&auth_signing, &session_id, &key_blob),
         )
         .await;
-    let auth_reply = client.read_sealed(&mut stream).await;
-    assert_eq!(auth_reply, vec![auth::SSH_MSG_USERAUTH_SUCCESS]);
+    assert_eq!(
+        client.read_sealed(&mut stream).await,
+        vec![auth::SSH_MSG_USERAUTH_SUCCESS]
+    );
+    (stream, client)
+}
 
-    // Send channel-open → expect CHANNEL_OPEN_FAILURE.
-    let mut ch = Writer::new();
-    ch.put_byte(90); // SSH_MSG_CHANNEL_OPEN
-    ch.put_string(b"session");
-    ch.put_uint32(0);
-    ch.put_uint32(2 * 1024 * 1024);
-    ch.put_uint32(32 * 1024);
-    client.write_sealed(&mut stream, &ch.into_bytes()).await;
-    let ch_reply = client.read_sealed(&mut stream).await;
-    let mut cr = Reader::new(&ch_reply);
-    assert_eq!(cr.byte().unwrap(), 92, "SSH_MSG_CHANNEL_OPEN_FAILURE");
+const CH_OPEN: u8 = 90;
+const CH_OPEN_CONFIRMATION: u8 = 91;
+const CH_OPEN_FAILURE: u8 = 92;
+const CH_WINDOW_ADJUST: u8 = 93;
+const CH_DATA: u8 = 94;
+const CH_EXTENDED_DATA: u8 = 95;
+const CH_EOF: u8 = 96;
+const CH_CLOSE: u8 = 97;
+const CH_REQUEST: u8 = 98;
+const CH_FAILURE: u8 = 100;
+
+fn channel_open(sender: u32) -> Vec<u8> {
+    let mut w = Writer::new();
+    w.put_byte(CH_OPEN);
+    w.put_string(b"session");
+    w.put_uint32(sender);
+    w.put_uint32(2 * 1024 * 1024);
+    w.put_uint32(32 * 1024);
+    w.into_bytes()
+}
+
+fn channel_open_type(sender: u32, ctype: &[u8]) -> Vec<u8> {
+    let mut w = Writer::new();
+    w.put_byte(CH_OPEN);
+    w.put_string(ctype);
+    w.put_uint32(sender);
+    w.put_uint32(2 * 1024 * 1024);
+    w.put_uint32(32 * 1024);
+    w.into_bytes()
+}
+
+fn channel_exec(recipient: u32, command: &[u8]) -> Vec<u8> {
+    let mut w = Writer::new();
+    w.put_byte(CH_REQUEST);
+    w.put_uint32(recipient);
+    w.put_string(b"exec");
+    w.put_boolean(true);
+    w.put_string(command);
+    w.into_bytes()
+}
+
+fn channel_request(recipient: u32, rtype: &[u8]) -> Vec<u8> {
+    let mut w = Writer::new();
+    w.put_byte(CH_REQUEST);
+    w.put_uint32(recipient);
+    w.put_string(rtype);
+    w.put_boolean(true);
+    w.into_bytes()
+}
+
+fn channel_data(recipient: u32, data: &[u8]) -> Vec<u8> {
+    let mut w = Writer::new();
+    w.put_byte(CH_DATA);
+    w.put_uint32(recipient);
+    w.put_string(data);
+    w.into_bytes()
+}
+
+fn channel_one_field(msg: u8, recipient: u32) -> Vec<u8> {
+    let mut w = Writer::new();
+    w.put_byte(msg);
+    w.put_uint32(recipient);
+    w.into_bytes()
+}
+
+fn window_adjust(recipient: u32, add: u32) -> Vec<u8> {
+    let mut w = Writer::new();
+    w.put_byte(CH_WINDOW_ADJUST);
+    w.put_uint32(recipient);
+    w.put_uint32(add);
+    w.into_bytes()
+}
+
+/// Reads the `OPEN_CONFIRMATION`, returning the server's channel id.
+async fn expect_open_confirmation(client: &mut SealedClient, stream: &mut TcpStream) -> u32 {
+    let conf = client.read_sealed(stream).await;
+    let mut r = Reader::new(&conf);
+    assert_eq!(r.byte().unwrap(), CH_OPEN_CONFIRMATION);
+    let _recipient = r.uint32().unwrap();
+    r.uint32().unwrap() // server's sender channel id
+}
+
+/// Drains the session: accumulates stdout/stderr (returning window credit
+/// as it goes, so a >2 MiB stream does not stall), captures the
+/// `exit-status`, and stops at `CHANNEL_CLOSE`.
+async fn collect_session(
+    client: &mut SealedClient,
+    stream: &mut TcpStream,
+    server_chan: u32,
+) -> (Vec<u8>, Vec<u8>, Option<i32>) {
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let mut exit = None;
+    loop {
+        let pkt = client.read_sealed(stream).await;
+        let mut r = Reader::new(&pkt);
+        match r.byte().unwrap() {
+            CH_DATA => {
+                let _ = r.uint32().unwrap();
+                let d = r.string(32 * 1024).unwrap();
+                stdout.extend_from_slice(d);
+                let credit = u32::try_from(d.len()).unwrap();
+                client
+                    .write_sealed(stream, &window_adjust(server_chan, credit))
+                    .await;
+            }
+            CH_EXTENDED_DATA => {
+                let _ = r.uint32().unwrap();
+                let _code = r.uint32().unwrap();
+                let d = r.string(32 * 1024).unwrap();
+                stderr.extend_from_slice(d);
+                let credit = u32::try_from(d.len()).unwrap();
+                client
+                    .write_sealed(stream, &window_adjust(server_chan, credit))
+                    .await;
+            }
+            CH_REQUEST => {
+                let _ = r.uint32().unwrap();
+                let req = r.string(64).unwrap().to_vec();
+                let _ = r.boolean().unwrap();
+                if req == b"exit-status" {
+                    exit = Some(i32::from_ne_bytes(r.uint32().unwrap().to_ne_bytes()));
+                }
+            }
+            CH_CLOSE => return (stdout, stderr, exit),
+            _ => {} // CHANNEL_SUCCESS, CHANNEL_EOF: ignore
+        }
+    }
+}
+
+#[tokio::test]
+async fn channel_open_session_then_exec_echo() {
+    let (addr, host_key) = start_server(Duration::from_secs(30)).await;
+    let (mut stream, mut client) = authenticate(addr, &host_key).await;
+
+    client.write_sealed(&mut stream, &channel_open(0)).await;
+    let server_chan = expect_open_confirmation(&mut client, &mut stream).await;
+    client
+        .write_sealed(&mut stream, &channel_exec(server_chan, b"echo hello"))
+        .await;
+
+    let (stdout, _stderr, exit) = collect_session(&mut client, &mut stream, server_chan).await;
+    assert_eq!(stdout, b"hello\n");
+    assert_eq!(exit, Some(0));
+    client
+        .write_sealed(&mut stream, &channel_one_field(CH_CLOSE, server_chan))
+        .await;
+}
+
+#[tokio::test]
+async fn exec_cat_echoes_stdin() {
+    let (addr, host_key) = start_server(Duration::from_secs(30)).await;
+    let (mut stream, mut client) = authenticate(addr, &host_key).await;
+
+    client.write_sealed(&mut stream, &channel_open(0)).await;
+    let server_chan = expect_open_confirmation(&mut client, &mut stream).await;
+    client
+        .write_sealed(&mut stream, &channel_exec(server_chan, b"cat"))
+        .await;
+    client
+        .write_sealed(&mut stream, &channel_data(server_chan, b"ping"))
+        .await;
+    client
+        .write_sealed(&mut stream, &channel_one_field(CH_EOF, server_chan))
+        .await;
+
+    let (stdout, _stderr, exit) = collect_session(&mut client, &mut stream, server_chan).await;
+    assert_eq!(stdout, b"ping");
+    assert_eq!(exit, Some(0));
+    client
+        .write_sealed(&mut stream, &channel_one_field(CH_CLOSE, server_chan))
+        .await;
+}
+
+#[tokio::test]
+async fn exec_stderr_is_extended_data() {
+    let (addr, host_key) = start_server(Duration::from_secs(30)).await;
+    let (mut stream, mut client) = authenticate(addr, &host_key).await;
+
+    client.write_sealed(&mut stream, &channel_open(0)).await;
+    let server_chan = expect_open_confirmation(&mut client, &mut stream).await;
+    client
+        .write_sealed(&mut stream, &channel_exec(server_chan, b"echo oops 1>&2"))
+        .await;
+
+    let (stdout, stderr, exit) = collect_session(&mut client, &mut stream, server_chan).await;
+    assert!(stdout.is_empty());
+    assert_eq!(stderr, b"oops\n");
+    assert_eq!(exit, Some(0));
+    client
+        .write_sealed(&mut stream, &channel_one_field(CH_CLOSE, server_chan))
+        .await;
+}
+
+#[tokio::test]
+async fn second_channel_open_is_refused() {
+    let (addr, host_key) = start_server(Duration::from_secs(30)).await;
+    let (mut stream, mut client) = authenticate(addr, &host_key).await;
+
+    client.write_sealed(&mut stream, &channel_open(0)).await;
+    let _server_chan = expect_open_confirmation(&mut client, &mut stream).await;
+    // A second open is refused; the first channel survives.
+    client.write_sealed(&mut stream, &channel_open(1)).await;
+    let reply = client.read_sealed(&mut stream).await;
+    let mut r = Reader::new(&reply);
+    assert_eq!(r.byte().unwrap(), CH_OPEN_FAILURE);
+    assert_eq!(r.uint32().unwrap(), 1); // recipient echoes our second sender
+    assert_eq!(r.uint32().unwrap(), 1); // ADMINISTRATIVELY_PROHIBITED
+}
+
+#[tokio::test]
+async fn non_session_channel_type_is_refused() {
+    let (addr, host_key) = start_server(Duration::from_secs(30)).await;
+    let (mut stream, mut client) = authenticate(addr, &host_key).await;
+
+    client
+        .write_sealed(&mut stream, &channel_open_type(0, b"direct-tcpip"))
+        .await;
+    let reply = client.read_sealed(&mut stream).await;
+    let mut r = Reader::new(&reply);
+    assert_eq!(r.byte().unwrap(), CH_OPEN_FAILURE);
+    assert_eq!(r.uint32().unwrap(), 0); // recipient echoes our sender
+    assert_eq!(r.uint32().unwrap(), 3); // UNKNOWN_CHANNEL_TYPE
+}
+
+#[tokio::test]
+async fn zero_max_packet_is_rejected() {
+    // A zero maximum_packet_size would stall flush_output forever (DoS);
+    // the server must fail closed at channel open.
+    let (addr, host_key) = start_server(Duration::from_secs(30)).await;
+    let (mut stream, mut client) = authenticate(addr, &host_key).await;
+
+    let mut w = Writer::new();
+    w.put_byte(CH_OPEN);
+    w.put_string(b"session");
+    w.put_uint32(0);
+    w.put_uint32(2 * 1024 * 1024);
+    w.put_uint32(0); // maximum_packet_size = 0
+    client.write_sealed(&mut stream, &w.into_bytes()).await;
+
+    let reply = client.read_sealed(&mut stream).await;
+    assert_eq!(reply.first(), Some(&kex::SSH_MSG_DISCONNECT));
+}
+
+#[tokio::test]
+async fn pty_req_is_refused() {
+    let (addr, host_key) = start_server(Duration::from_secs(30)).await;
+    let (mut stream, mut client) = authenticate(addr, &host_key).await;
+
+    client.write_sealed(&mut stream, &channel_open(0)).await;
+    let server_chan = expect_open_confirmation(&mut client, &mut stream).await;
+    client
+        .write_sealed(&mut stream, &channel_request(server_chan, b"pty-req"))
+        .await;
+    let reply = client.read_sealed(&mut stream).await;
+    assert_eq!(reply.first(), Some(&CH_FAILURE));
+}
+
+#[tokio::test]
+async fn client_early_close_kills_child() {
+    let (addr, host_key) = start_server(Duration::from_secs(30)).await;
+    let (mut stream, mut client) = authenticate(addr, &host_key).await;
+
+    client.write_sealed(&mut stream, &channel_open(0)).await;
+    let server_chan = expect_open_confirmation(&mut client, &mut stream).await;
+    // A long-running command, then an immediate client close.
+    client
+        .write_sealed(&mut stream, &channel_exec(server_chan, b"sleep 30"))
+        .await;
+    client
+        .write_sealed(&mut stream, &channel_one_field(CH_CLOSE, server_chan))
+        .await;
+
+    // The server kills the child and replies with its own CLOSE promptly
+    // (it must not wait out the sleep).
+    let mut saw_close = false;
+    for _ in 0..20 {
+        let pkt = client.read_sealed(&mut stream).await;
+        if pkt.first() == Some(&CH_CLOSE) {
+            saw_close = true;
+            break;
+        }
+    }
+    assert!(saw_close, "server must close after early client close");
+}
+
+#[tokio::test]
+async fn cancel_safety_under_load() {
+    // 3 MiB of output exceeds the 2 MiB window, forcing many
+    // WINDOW_ADJUST round-trips and repeated select! cancellation of the
+    // resumable read — the real test of the cancel-safe framing.
+    const N: usize = 3 * 1024 * 1024;
+    let (addr, host_key) = start_server(Duration::from_secs(30)).await;
+    let (mut stream, mut client) = authenticate(addr, &host_key).await;
+
+    client.write_sealed(&mut stream, &channel_open(0)).await;
+    let server_chan = expect_open_confirmation(&mut client, &mut stream).await;
+    client
+        .write_sealed(
+            &mut stream,
+            &channel_exec(server_chan, b"head -c 3145728 /dev/zero"),
+        )
+        .await;
+
+    let (stdout, _stderr, exit) = collect_session(&mut client, &mut stream, server_chan).await;
+    assert_eq!(stdout.len(), N, "exact byte count must survive the stream");
+    assert!(stdout.iter().all(|&b| b == 0), "stream integrity");
+    assert_eq!(exit, Some(0));
+    client
+        .write_sealed(&mut stream, &channel_one_field(CH_CLOSE, server_chan))
+        .await;
 }
 
 #[tokio::test]
@@ -648,7 +963,7 @@ async fn auth_failure_on_wrong_signature() {
 
     let (addr, host_key) = start_server(Duration::from_secs(30)).await;
     let mut stream = connect(addr).await;
-    let (mut client, _session_id) = establish(
+    let (mut client, _session_id, _server_id) = establish(
         &mut stream,
         &host_key,
         OPENSSH_KEX_PLAIN,
@@ -690,7 +1005,7 @@ async fn auth_rejects_non_publickey_method() {
 
     let (addr, host_key) = start_server(Duration::from_secs(30)).await;
     let mut stream = connect(addr).await;
-    let (mut client, _session_id) = establish(
+    let (mut client, _session_id, _server_id) = establish(
         &mut stream,
         &host_key,
         OPENSSH_KEX_PLAIN,
@@ -731,7 +1046,7 @@ async fn auth_pk_ok_then_signed_succeeds() {
 
     let (addr, host_key) = start_server(Duration::from_secs(30)).await;
     let mut stream = connect(addr).await;
-    let (mut client, session_id) = establish(
+    let (mut client, session_id, _server_id) = establish(
         &mut stream,
         &host_key,
         OPENSSH_KEX_PLAIN,
@@ -772,7 +1087,7 @@ async fn max_auth_attempts_disconnects() {
 
     let (addr, host_key) = start_server(Duration::from_secs(30)).await;
     let mut stream = connect(addr).await;
-    let (mut client, _session_id) = establish(
+    let (mut client, _session_id, _server_id) = establish(
         &mut stream,
         &host_key,
         OPENSSH_KEX_PLAIN,
@@ -817,4 +1132,249 @@ async fn max_auth_attempts_disconnects() {
             return;
         }
     }
+}
+
+// ---- M6: re-keying (ADR-0026) ----
+
+/// Like `authenticate`, but returns the `session_id` and server id line a
+/// re-key needs, and the cipher is selectable.
+async fn authenticate_full(
+    addr: SocketAddr,
+    host_key: &HostKey,
+    cipher: &str,
+) -> (TcpStream, SealedClient, [u8; 32], Vec<u8>) {
+    let auth_signing = SigningKey::from_bytes(&[77u8; 32]);
+    let key_blob = auth_test_blob(&auth_signing.verifying_key());
+    let mut stream = connect(addr).await;
+    let (mut client, session_id, server_id) =
+        establish(&mut stream, host_key, OPENSSH_KEX_PLAIN, cipher, cipher).await;
+    client
+        .write_sealed(&mut stream, &service_request_payload())
+        .await;
+    assert_eq!(client.read_sealed(&mut stream).await.first(), Some(&6));
+    client
+        .write_sealed(
+            &mut stream,
+            &signed_auth_request(&auth_signing, &session_id, &key_blob),
+        )
+        .await;
+    assert_eq!(
+        client.read_sealed(&mut stream).await,
+        vec![auth::SSH_MSG_USERAUTH_SUCCESS]
+    );
+    (stream, client, session_id, server_id)
+}
+
+/// Re-key thresholds for tests: generous deadline; bytes and interval set
+/// by the caller (`u64::MAX` / 1 h disables a trigger).
+const fn test_rekey(max_bytes: u64) -> RekeyThresholds {
+    RekeyThresholds {
+        max_bytes,
+        max_interval: Duration::from_hours(1),
+        completion_deadline: Duration::from_secs(5),
+    }
+}
+
+impl SealedClient {
+    /// Drives a client-initiated encrypted re-key (RFC 4253 §9): send our
+    /// KEXINIT, exchange the hybrid, verify the signature over the
+    /// recomputed `H_r`, swap NEWKEYS, and install the new ciphers derived
+    /// with the ORIGINAL `session_id` and the new `H_r`.
+    async fn rekey_as_client(
+        &mut self,
+        stream: &mut TcpStream,
+        session_id: &[u8; 32],
+        server_id: &[u8],
+        cipher: &str,
+        server_kexinit: Option<Vec<u8>>,
+    ) {
+        // 1. Our KEXINIT (encrypted); the strict marker is ignored on re-key.
+        let i_c = client_kexinit(OPENSSH_KEX_PLAIN, cipher);
+        self.write_sealed(stream, &i_c).await;
+        // 2. Server's KEXINIT — already received if the server initiated.
+        let i_s = if let Some(is) = server_kexinit {
+            is
+        } else {
+            let is = self.read_sealed(stream).await;
+            assert_eq!(is.first(), Some(&kex::SSH_MSG_KEXINIT));
+            is
+        };
+        // 3. HYBRID_INIT with a fresh keypair.
+        let seed = ml_kem::Seed::try_from(&[9u8; 64][..]).unwrap();
+        let (dk, ek) = MlKem768::from_seed(&seed);
+        let x_secret = XSecret::from([42u8; 32]);
+        let mut c_init = Vec::with_capacity(kex::CLIENT_INIT_LEN);
+        c_init.extend_from_slice(ek.to_bytes().as_slice());
+        c_init.extend_from_slice(XPublic::from(&x_secret).as_bytes());
+        let mut init = Writer::new();
+        init.put_byte(kex::SSH_MSG_KEX_HYBRID_INIT);
+        init.put_string(&c_init);
+        self.write_sealed(stream, &init.into_bytes()).await;
+        // 4. HYBRID_REPLY: recompute H_r, verify the signature.
+        let reply = self.read_sealed(stream).await;
+        let mut r = Reader::new(&reply);
+        assert_eq!(r.byte().unwrap(), kex::SSH_MSG_KEX_HYBRID_REPLY);
+        let k_s = r.string(256).unwrap();
+        let s_reply = r.string(kex::SERVER_REPLY_LEN).unwrap();
+        let sig_blob = r.string(256).unwrap();
+        r.finish().unwrap();
+        let (ct_bytes, server_x) = s_reply.split_at(kex::MLKEM_CT_LEN);
+        let ct = ml_kem::Ciphertext::<MlKem768>::try_from(ct_bytes).unwrap();
+        let k_pq = dk.decapsulate(&ct);
+        let server_pk: [u8; 32] = server_x.try_into().unwrap();
+        let k_cl = x_secret.diffie_hellman(&XPublic::from(server_pk));
+        let mut h = Sha256::new();
+        h.update(k_pq.as_slice());
+        h.update(k_cl.as_bytes());
+        let shared: [u8; 32] = h.finalize().into();
+        let h_r = kex::exchange_hash(&kex::ExchangeHashInputs {
+            client_id: CLIENT_ID,
+            server_id,
+            client_kexinit: &i_c,
+            server_kexinit: &i_s,
+            host_key_blob: k_s,
+            client_init: &c_init,
+            server_reply: s_reply,
+            shared_secret: &shared,
+        });
+        let mut sig_reader = Reader::new(sig_blob);
+        assert_eq!(sig_reader.string(64).unwrap(), b"ssh-ed25519");
+        let sig_bytes: [u8; 64] = sig_reader.string(128).unwrap().try_into().unwrap();
+        let mut ks_reader = Reader::new(k_s);
+        ks_reader.string(64).unwrap();
+        let vk_bytes: [u8; 32] = ks_reader.string(64).unwrap().try_into().unwrap();
+        let vk = ed25519_dalek::VerifyingKey::from_bytes(&vk_bytes).unwrap();
+        vk.verify(&h_r, &ed25519_dalek::Signature::from_bytes(&sig_bytes))
+            .expect("re-key signature over H_r must verify");
+
+        // The new key schedule uses the ORIGINAL session id and the new H_r.
+        let derive = |letter: u8, len: usize| {
+            let mut out = kex::derive_key(&shared, &h_r, letter, session_id, len);
+            out.truncate(len);
+            out
+        };
+        // 5. Server NEWKEYS → install our new rx (server→client, D/B); reset.
+        assert_eq!(self.read_sealed(stream).await, vec![kex::SSH_MSG_NEWKEYS]);
+        self.rx = cipher::PacketCipher::new(
+            cipher,
+            &derive(b'D', cipher::PacketCipher::key_len(cipher)),
+            &derive(b'B', cipher::PacketCipher::iv_len(cipher)),
+        )
+        .expect("client re-key rx");
+        self.seq_rx = 0;
+        // 6. Our NEWKEYS under the OLD tx → install our new tx (C/A); reset.
+        self.write_sealed(stream, &[kex::SSH_MSG_NEWKEYS]).await;
+        self.tx = cipher::PacketCipher::new(
+            cipher,
+            &derive(b'C', cipher::PacketCipher::key_len(cipher)),
+            &derive(b'A', cipher::PacketCipher::iv_len(cipher)),
+        )
+        .expect("client re-key tx");
+        self.seq_tx = 0;
+    }
+}
+
+/// Runs a client-initiated re-key mid-session and confirms data flows under
+/// the new keys, for the given cipher.
+async fn rekey_roundtrip(cipher: &str) {
+    let (addr, host_key) = start_server_rekey(Duration::from_secs(30), test_rekey(u64::MAX)).await;
+    let (mut stream, mut client, session_id, server_id) =
+        authenticate_full(addr, &host_key, cipher).await;
+
+    client.write_sealed(&mut stream, &channel_open(0)).await;
+    let server_chan = expect_open_confirmation(&mut client, &mut stream).await;
+    client
+        .write_sealed(&mut stream, &channel_exec(server_chan, b"cat"))
+        .await;
+    // CHANNEL_SUCCESS arrives before we re-key.
+    assert_eq!(client.read_sealed(&mut stream).await.first(), Some(&99));
+
+    client
+        .rekey_as_client(&mut stream, &session_id, &server_id, cipher, None)
+        .await;
+
+    // Data flows under the new keys: stdin echoed back by `cat`.
+    client
+        .write_sealed(&mut stream, &channel_data(server_chan, b"after-rekey"))
+        .await;
+    client
+        .write_sealed(&mut stream, &channel_one_field(CH_EOF, server_chan))
+        .await;
+    let (stdout, _stderr, exit) = collect_session(&mut client, &mut stream, server_chan).await;
+    assert_eq!(stdout, b"after-rekey");
+    assert_eq!(exit, Some(0));
+}
+
+#[tokio::test]
+async fn client_initiated_rekey_chacha() {
+    rekey_roundtrip("chacha20-poly1305@openssh.com").await;
+}
+
+#[tokio::test]
+async fn client_initiated_rekey_gcm() {
+    // Guards the AES-GCM invocation-counter reset across a re-key.
+    rekey_roundtrip("aes256-gcm@openssh.com").await;
+}
+
+#[tokio::test]
+async fn byte_threshold_triggers_server_rekey() {
+    // A low byte threshold makes the server initiate a re-key mid-stream.
+    let cipher = "chacha20-poly1305@openssh.com";
+    let (addr, host_key) = start_server_rekey(Duration::from_secs(30), test_rekey(4096)).await;
+    let (mut stream, mut client, session_id, server_id) =
+        authenticate_full(addr, &host_key, cipher).await;
+
+    client.write_sealed(&mut stream, &channel_open(0)).await;
+    let server_chan = expect_open_confirmation(&mut client, &mut stream).await;
+    // > 4 KiB of output crosses the server's outbound byte threshold.
+    client
+        .write_sealed(
+            &mut stream,
+            &channel_exec(server_chan, b"head -c 20000 /dev/zero"),
+        )
+        .await;
+
+    // Read until the server initiates a re-key (inbound KEXINIT), complete
+    // it, then keep reading under the new keys to the clean close.
+    let mut stdout = Vec::new();
+    let mut exit = None;
+    let mut rekeyed = false;
+    loop {
+        let pkt = client.read_sealed(&mut stream).await;
+        match pkt.first().copied() {
+            Some(20) => {
+                // Server-initiated re-key: we already hold its KEXINIT.
+                client
+                    .rekey_as_client(&mut stream, &session_id, &server_id, cipher, Some(pkt))
+                    .await;
+                rekeyed = true;
+            }
+            Some(94) => {
+                let mut r = Reader::new(&pkt);
+                let _ = r.byte();
+                let _ = r.uint32();
+                let d = r.string(32 * 1024).unwrap();
+                stdout.extend_from_slice(d);
+                let credit = u32::try_from(d.len()).unwrap();
+                client
+                    .write_sealed(&mut stream, &window_adjust(server_chan, credit))
+                    .await;
+            }
+            Some(98) => {
+                let mut r = Reader::new(&pkt);
+                let _ = r.byte();
+                let _ = r.uint32();
+                if r.string(64).unwrap() == b"exit-status" {
+                    let _ = r.boolean();
+                    exit = Some(i32::from_ne_bytes(r.uint32().unwrap().to_ne_bytes()));
+                }
+            }
+            Some(97) => break, // CHANNEL_CLOSE
+            _ => {}            // SUCCESS, EOF
+        }
+    }
+    assert!(rekeyed, "server must have initiated a re-key");
+    assert_eq!(stdout.len(), 20000, "all output survives the key switch");
+    assert!(stdout.iter().all(|&b| b == 0));
+    assert_eq!(exit, Some(0));
 }
