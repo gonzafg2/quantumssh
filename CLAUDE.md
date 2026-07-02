@@ -96,6 +96,12 @@ authoritative reference; the operative rules a reviewer applies:
 - **Plain PR or issue** — bug fixes, refactors with no behaviour change,
   docs, tests. When unsure which lane a change belongs in, open an issue and
   ask.
+- **Plan** ([`docs/plans/`](docs/plans/)) — a mutable, **non-authoritative**
+  design note accompanying a milestone's implementation ([ADR-0027](docs/adr/0027-docs-plans-governance-category.md)).
+  Post-merge the code, ADRs, and RFCs are authoritative, never the plan.
+  Every plan carries a dated `Governance status` banner pointing at the
+  ADRs/RFCs that hold its locked-in decisions, and **a plan is never the
+  sole record of a locked-in decision** (that always goes to an ADR/RFC).
 
 ## Contribution conventions
 
@@ -117,6 +123,7 @@ authoritative reference; the operative rules a reviewer applies:
 | [`docs/threat-model.md`](docs/threat-model.md) | Defensive posture — authoritative |
 | [`docs/adr/`](docs/adr/) | Architecture Decision Records + their README |
 | [`docs/rfcs/`](docs/rfcs/) | RFCs + the lightweight RFC process |
+| [`docs/plans/`](docs/plans/) | Mutable, non-authoritative milestone design notes ([ADR-0027](docs/adr/0027-docs-plans-governance-category.md)) |
 | [`docs/infrastructure.md`](docs/infrastructure.md), [`docs/operations.md`](docs/operations.md) | Ops topology and verification recipes |
 | `deny.toml`, `clippy.toml`, `rust-toolchain.toml`, `Cargo.toml` | Tooling and workspace config |
 | `crates/quantumssh-core/` | The library — modules `wire`, `kex`, `cipher`, `host_key`, `transport` (type-state machine), `auth`, `channel`, `exec`, `server` |

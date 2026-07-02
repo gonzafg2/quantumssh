@@ -1,10 +1,8 @@
 <!--
-  Governance status (2026-06-26):
-  This file lives in docs/plans/ — a category whose governance contract
-  is not yet defined. See issue #79 for the decision.
-  This plan guides M5 (channel layer + exec). It is not authoritative
-  post-merge; locked-in decisions are recorded in ADRs 0016, 0020,
-  0023, 0024.
+  Governance status (2026-07-01):
+  Non-authoritative design note (ADR-0027). Guided M5 (PR #84, merged).
+  Locked-in decisions live in ADRs 0016, 0020, 0023, 0024. This file is
+  retained for rationale and is not a source of truth post-merge.
 -->
 # Plan M5 — Channel layer + `exec` (`channel.rs`, `exec.rs`)
 
