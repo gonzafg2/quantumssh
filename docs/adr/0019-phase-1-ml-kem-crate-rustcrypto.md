@@ -1,7 +1,7 @@
 # ADR 0019: Use `RustCrypto/ml-kem` 0.3.0 for ML-KEM-768
 
-- **Status:** Proposed
-- **Date:** TBD (advances to Accepted when the first Phase 1 crate lands)
+- **Status:** Accepted
+- **Date:** 2026-06-30 (accepted in the #86 Phase-1 governance sweep)
 - **Deciders:** Project lead
 - **Related:** Implements [RFC-0003](../rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md) §"Operational dependencies of this decision"; sources the project's internal Phase-1 decision notes §"Decisión 3"; constrained by [ADR-0010](0010-toolchain-pinning-resolver-3-edition-2024-msrv-1-92.md) (MSRV 1.92) and [ADR-0018](0018-phase-1-unsafe-code-forbid-workspace.md) (`unsafe_code = "forbid"`).
 

@@ -22,7 +22,7 @@ use tracing::{Instrument, debug, info, info_span, warn};
 
 use crate::auth::AuthorizedKeys;
 use crate::host_key::HostKey;
-use crate::transport::{self, TransportError};
+use crate::transport::{self, RekeyThresholds, TransportError};
 
 /// Server configuration assembled by the binary from its CLI.
 #[derive(Debug, Clone)]
@@ -36,6 +36,8 @@ pub struct Config {
     pub host_key: Arc<HostKey>,
     /// The parsed `authorized_keys` file (M4: publickey auth).
     pub authorized_keys: Arc<AuthorizedKeys>,
+    /// Re-keying thresholds (ADR-0026: 1 GiB / 1 hour by default).
+    pub rekey: RekeyThresholds,
 }
 
 /// A bound, not-yet-serving server.
@@ -45,6 +47,7 @@ pub struct Server {
     handshake_timeout: Duration,
     host_key: Arc<HostKey>,
     authorized_keys: Arc<AuthorizedKeys>,
+    rekey: RekeyThresholds,
 }
 
 impl Server {
@@ -68,6 +71,7 @@ impl Server {
             handshake_timeout: config.handshake_timeout,
             host_key: Arc::clone(&config.host_key),
             authorized_keys: Arc::clone(&config.authorized_keys),
+            rekey: config.rekey,
         })
     }
 
@@ -89,6 +93,7 @@ impl Server {
     /// fails at the listener level.
     pub async fn serve(self) -> io::Result<()> {
         let budget = self.handshake_timeout;
+        let rekey = self.rekey;
         loop {
             let (stream, peer_addr) = self.listener.accept().await?;
             let host_key = Arc::clone(&self.host_key);
@@ -96,7 +101,7 @@ impl Server {
             let span = info_span!("connection", peer_addr = %peer_addr);
             let connection = async move {
                 info!("connection.accepted");
-                handle(stream, host_key, authorized_keys, budget).await;
+                handle(stream, host_key, authorized_keys, budget, rekey).await;
             };
             if let Err(join_err) = tokio::spawn(connection.instrument(span)).await {
                 warn!(peer_addr = %peer_addr, reason = %join_err, "connection.closed");
@@ -112,8 +117,10 @@ async fn handle(
     host_key: Arc<HostKey>,
     authorized_keys: Arc<AuthorizedKeys>,
     budget: Duration,
+    rekey: RekeyThresholds,
 ) {
-    let reason = match run_connection(&mut stream, &host_key, &authorized_keys, budget).await {
+    let reason = match run_connection(&mut stream, host_key, &authorized_keys, budget, rekey).await
+    {
         Ok(()) => "session closed".to_string(),
         Err(TransportError::Rejected(reason)) => format!("rejected: {reason}"),
         Err(TransportError::Io(e)) => e,
@@ -131,14 +138,15 @@ async fn handle(
 /// `Ok(())` on a clean session close.
 async fn run_connection(
     stream: &mut TcpStream,
-    host_key: &HostKey,
+    host_key: Arc<HostKey>,
     authorized_keys: &AuthorizedKeys,
     budget: Duration,
+    rekey: RekeyThresholds,
 ) -> Result<(), TransportError> {
     let auth_phase = async {
         let t = transport::version_exchange(stream).await?;
         let t = t.exchange_kexinit().await?;
-        let t = t.run_hybrid(host_key).await?;
+        let t = t.run_hybrid(&host_key).await?;
         let (negotiated, t) = t.exchange_newkeys().await?;
         info!(
             kex_algorithm = negotiated.kex_algorithm,
@@ -168,7 +176,7 @@ async fn run_connection(
 
     match authed {
         // Authentication succeeded: run the channel layer un-timed.
-        Some(t) => t.serve().await,
+        Some(t) => t.serve(host_key, rekey).await,
         // `responder.deny()` already returned `Err`, so this arm is
         // unreachable; kept total for the type.
         None => Ok(()),

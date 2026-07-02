@@ -1,7 +1,7 @@
 # ADR 0022: Use multi-threaded Tokio with a minimal feature set for the Phase 1 runtime
 
-- **Status:** Proposed
-- **Date:** TBD (advances to Accepted when the first Phase 1 crate lands)
+- **Status:** Accepted
+- **Date:** 2026-06-30 (accepted in the #86 Phase-1 governance sweep)
 - **Deciders:** Project lead
 - **Related:** Subsidiary to [RFC-0004](../rfcs/0004-phase-1-async-runtime-tokio.md), which decides the *adoption* of Tokio (trust-base impact, alternatives); this ADR fixes the operative detail — version, features, threading. Constrained by [ADR-0010](0010-toolchain-pinning-resolver-3-edition-2024-msrv-1-92.md) (MSRV 1.92) and [ADR-0018](0018-phase-1-unsafe-code-forbid-workspace.md) (`unsafe_code = "forbid"`); the `server.rs` accept loop in [ADR-0017](0017-phase-1-workspace-topology-two-crates-flat.md)'s `quantumssh-core` is built on it. Will touch (TBD — `crates/` does not exist yet) `crates/quantumssh/Cargo.toml` and `crates/quantumssh-core/Cargo.toml`.
 

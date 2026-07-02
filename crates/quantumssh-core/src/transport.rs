@@ -33,7 +33,11 @@
 //! a reset bug cannot ship: the first encrypted packet would not
 //! decrypt and every integration test would fail.
 
+use std::sync::Arc;
+use std::time::Duration;
+
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::time::Instant;
 use tracing::{debug, info, warn};
 use zeroize::Zeroizing;
 
@@ -113,6 +117,9 @@ pub struct NewKeys {
     /// with `K` as input, so it gets the same erase-on-drop handling
     /// as the secret itself (threat model §4.3).
     exchange_hash: Zeroizing<[u8; 32]>,
+    /// Peer identification line (no CRLF). Carried forward so a re-key
+    /// can rebuild the exchange hash, which binds it (ADR-0026).
+    client_id: Vec<u8>,
 }
 
 /// Stage 4 — first encrypted stage: the only acceptable packet is
@@ -124,6 +131,7 @@ pub struct ServiceRequest {
     /// §7.2). Flows through every encrypted stage so `authenticate()`
     /// can verify signatures without plumbing the caller.
     session_id: Zeroizing<[u8; 32]>,
+    client_id: Vec<u8>,
 }
 
 /// Stage 5: a service was requested; the machine can answer it.
@@ -132,6 +140,7 @@ pub struct ServiceResponse {
     rx: PacketCipher,
     tx: PacketCipher,
     session_id: Zeroizing<[u8; 32]>,
+    client_id: Vec<u8>,
 }
 
 /// Stage 6 (M4): the transport is ready to authenticate. The only
@@ -140,6 +149,7 @@ pub struct UserAuth {
     rx: PacketCipher,
     tx: PacketCipher,
     session_id: Zeroizing<[u8; 32]>,
+    client_id: Vec<u8>,
 }
 
 /// Stage 7 (M4): authentication succeeded. [`Expect::serve`] transitions
@@ -151,6 +161,11 @@ pub struct AuthAccepted {
     /// `authenticate()` so the `exec.*` audit events can attribute the
     /// command to the key that authorised it (ADR-0024).
     identity: String,
+    /// The session id (first `H`) and peer id line, carried for re-keying
+    /// (ADR-0026): a re-key derives keys with this session id and binds
+    /// `client_id` into the new exchange hash.
+    session_id: Zeroizing<[u8; 32]>,
+    client_id: Vec<u8>,
 }
 
 /// Stage 8 (M5): the connection-protocol phase.
@@ -168,6 +183,81 @@ pub struct Session {
     /// Bounded to one full frame (`4 + body_len`) at a time; progress
     /// survives `select!` cancellation.
     inbuf: Vec<u8>,
+    /// Host key — re-signs the exchange hash on every re-key (ADR-0026).
+    host_key: Arc<HostKey>,
+    /// Peer id line, bound into each re-key's exchange hash.
+    client_id: Vec<u8>,
+    /// The session id (first `H`), invariant for the connection's life
+    /// (RFC 4253 §7.2); re-key key derivation uses it. `session_id` is the
+    /// RFC term, so the struct-name-prefix lint does not apply.
+    #[allow(clippy::struct_field_names)]
+    session_id: Zeroizing<[u8; 32]>,
+    /// Re-keying accounting and sub-state machine (ADR-0026).
+    rekey: RekeyState,
+}
+
+/// Thresholds that trigger a re-key (ADR-0026). Injectable so tests can
+/// fire at a few KiB instead of 1 GiB.
+#[derive(Clone, Copy, Debug)]
+pub struct RekeyThresholds {
+    /// Re-key when either direction reaches this many payload bytes.
+    pub max_bytes: u64,
+    /// Re-key when this much wall-clock elapses since the last exchange.
+    pub max_interval: Duration,
+    /// A started re-key must finish within this budget, else disconnect.
+    pub completion_deadline: Duration,
+}
+
+impl RekeyThresholds {
+    /// BSI TR-02102-4 §3.3.1 defaults: 1 GiB / 1 hour; the re-key
+    /// completion budget mirrors the handshake budget (ADR-0022).
+    #[must_use]
+    pub const fn bsi_defaults(handshake_budget: Duration) -> Self {
+        Self {
+            max_bytes: 1024 * 1024 * 1024,
+            max_interval: Duration::from_hours(1),
+            completion_deadline: handshake_budget,
+        }
+    }
+}
+
+/// Re-key accounting + the sub-state machine for one connection.
+struct RekeyState {
+    bytes_rx: u64,
+    bytes_tx: u64,
+    /// When the last exchange completed — drives the interval trigger and
+    /// the inter-re-key rate limit.
+    last_kex: Instant,
+    /// When the current re-key began — drives the completion deadline.
+    /// Meaningful only while `phase != Idle`.
+    started: Instant,
+    /// Who started the current re-key (`server`|`peer`) and what triggered
+    /// it (`bytes`|`time`|`peer`) — for the `rekey.completed` audit event.
+    initiator: &'static str,
+    trigger: &'static str,
+    thresholds: RekeyThresholds,
+    phase: RekeyPhase,
+}
+
+/// The re-key handshake's position. `Idle` between exchanges.
+enum RekeyPhase {
+    Idle,
+    /// We sent our KEXINIT; awaiting the peer's.
+    SentKexInit {
+        i_s: Vec<u8>,
+    },
+    /// KEXINITs exchanged; awaiting `SSH_MSG_KEX_HYBRID_INIT`.
+    AwaitHybridInit {
+        i_c: Vec<u8>,
+        i_s: Vec<u8>,
+        negotiated: Negotiated,
+        skip_guessed: bool,
+    },
+    /// We sent our NEWKEYS (tx installed); awaiting the peer's NEWKEYS to
+    /// install the staged receive cipher.
+    AwaitNewKeys {
+        new_rx: PacketCipher,
+    },
 }
 
 /// Performs the RFC 4253 §4.2 identification exchange and produces
@@ -335,6 +425,7 @@ where
                 negotiated: self.stage.negotiated,
                 shared_secret: outcome.shared_secret,
                 exchange_hash,
+                client_id: self.stage.peer_id_line,
             },
         })
     }
@@ -373,31 +464,15 @@ where
         // strict-kex: peer NEWKEYS received — incoming counter resets.
         self.seq_rx = 0;
 
-        // Key schedule (RFC 4253 §7.2; HASH = SHA-256). The first
-        // exchange hash is the session identifier.
-        let session_id = &self.stage.exchange_hash;
-        let k = &self.stage.shared_secret;
-        let h = &self.stage.exchange_hash;
-        let derive = |letter: u8, len: usize| -> Zeroizing<Vec<u8>> {
-            let mut out = kex::derive_key(k, h, letter, session_id, len);
-            out.truncate(len);
-            out
-        };
-
-        let c2s = &self.stage.negotiated.cipher_c2s;
-        let s2c = &self.stage.negotiated.cipher_s2c;
-        let rx = PacketCipher::new(
-            c2s,
-            &derive(b'C', PacketCipher::key_len(c2s)),
-            &derive(b'A', PacketCipher::iv_len(c2s)),
-        )
-        .map_err(|e| TransportError::Io(format!("cipher install failed: {e}")))?;
-        let tx = PacketCipher::new(
-            s2c,
-            &derive(b'D', PacketCipher::key_len(s2c)),
-            &derive(b'B', PacketCipher::iv_len(s2c)),
-        )
-        .map_err(|e| TransportError::Io(format!("cipher install failed: {e}")))?;
+        // Key schedule (RFC 4253 §7.2). On the initial KEX the session id
+        // *is* the exchange hash; both are the same `H` here.
+        let (rx, tx) = derive_cipher_pair(
+            &self.stage.shared_secret,
+            &self.stage.exchange_hash,
+            &self.stage.exchange_hash,
+            &self.stage.negotiated.cipher_c2s,
+            &self.stage.negotiated.cipher_s2c,
+        )?;
 
         let negotiated = self.stage.negotiated;
         let mut next = Expect {
@@ -408,6 +483,7 @@ where
                 rx,
                 tx,
                 session_id: self.stage.exchange_hash,
+                client_id: self.stage.client_id,
             },
         };
 
@@ -465,6 +541,7 @@ where
             rx: self.stage.rx,
             tx: self.stage.tx,
             session_id: self.stage.session_id,
+            client_id: self.stage.client_id,
         };
         Ok((
             service,
@@ -529,6 +606,7 @@ where
             rx: self.stage.rx,
             tx: self.stage.tx,
             session_id: self.stage.session_id,
+            client_id: self.stage.client_id,
         };
         Ok(Expect {
             stream: self.stream,
@@ -760,6 +838,8 @@ where
                         rx: self.stage.rx,
                         tx: self.stage.tx,
                         identity: ak.fingerprint.clone(),
+                        session_id: self.stage.session_id,
+                        client_id: self.stage.client_id,
                     };
                     return Ok(Expect {
                         stream: self.stream,
@@ -835,7 +915,11 @@ where
     /// `SSH_MSG_DISCONNECT` is already sent), or [`TransportError::Io`]
     /// if the connection fails mid-session. Returns `Ok(())` on a clean
     /// session close.
-    pub async fn serve(self) -> Result<(), TransportError> {
+    pub async fn serve(
+        self,
+        host_key: Arc<HostKey>,
+        thresholds: RekeyThresholds,
+    ) -> Result<(), TransportError> {
         let mut session = Expect {
             stream: self.stream,
             seq_tx: self.seq_tx,
@@ -845,6 +929,19 @@ where
                 tx: self.stage.tx,
                 identity: self.stage.identity,
                 inbuf: Vec::new(),
+                host_key,
+                client_id: self.stage.client_id,
+                session_id: self.stage.session_id,
+                rekey: RekeyState {
+                    bytes_rx: 0,
+                    bytes_tx: 0,
+                    last_kex: Instant::now(),
+                    started: Instant::now(),
+                    initiator: "server",
+                    trigger: "bytes",
+                    thresholds,
+                    phase: RekeyPhase::Idle,
+                },
             },
         };
         crate::channel::drive(&mut session).await
@@ -885,6 +982,12 @@ where
         let mut frame: Vec<u8> = self.stage.inbuf.drain(..total).collect();
         let payload = open_frame(&mut self.stage.rx, seqnr, len4, &mut frame[4..])?;
         self.seq_rx = self.seq_rx.wrapping_add(1);
+        // Re-key accounting (ADR-0026): inbound payload bytes under this key.
+        self.stage.rekey.bytes_rx = self
+            .stage
+            .rekey
+            .bytes_rx
+            .saturating_add(payload.len() as u64);
         Ok(payload)
     }
 
@@ -917,6 +1020,12 @@ where
     ///
     /// [`TransportError::Io`] if sealing or writing fails.
     pub(crate) async fn write_packet(&mut self, payload: &[u8]) -> Result<(), TransportError> {
+        // Re-key accounting (ADR-0026): outbound payload bytes under this key.
+        self.stage.rekey.bytes_tx = self
+            .stage
+            .rekey
+            .bytes_tx
+            .saturating_add(payload.len() as u64);
         self.write_sealed(payload).await
     }
 
@@ -940,6 +1049,282 @@ where
         }
         TransportError::Rejected(rejection.reason)
     }
+
+    // ---- re-keying (ADR-0026) ----
+
+    /// A re-key handshake is in progress.
+    pub(crate) const fn rekey_active(&self) -> bool {
+        !matches!(self.stage.rekey.phase, RekeyPhase::Idle)
+    }
+
+    /// The session is settled and a threshold has been crossed, so the
+    /// server should initiate a re-key.
+    pub(crate) fn rekey_due(&self) -> bool {
+        matches!(self.stage.rekey.phase, RekeyPhase::Idle)
+            && rekey_due(
+                self.stage.rekey.bytes_rx,
+                self.stage.rekey.bytes_tx,
+                self.stage.rekey.last_kex.elapsed(),
+                &self.stage.rekey.thresholds,
+            )
+    }
+
+    /// While a re-key is active, the instant it must finish by.
+    pub(crate) fn rekey_deadline(&self) -> Option<Instant> {
+        self.rekey_active()
+            .then(|| self.stage.rekey.started + self.stage.rekey.thresholds.completion_deadline)
+    }
+
+    /// While idle, the instant the interval trigger fires (so a quiet
+    /// connection still re-keys on schedule).
+    pub(crate) fn rekey_wake_at(&self) -> Option<Instant> {
+        matches!(self.stage.rekey.phase, RekeyPhase::Idle)
+            .then(|| self.stage.rekey.last_kex + self.stage.rekey.thresholds.max_interval)
+    }
+
+    /// Server-initiated re-key: send our KEXINIT and enter `SentKexInit`.
+    ///
+    /// # Errors
+    ///
+    /// [`TransportError::Io`] if building or writing the KEXINIT fails.
+    pub(crate) async fn begin_rekey(&mut self) -> Result<(), TransportError> {
+        let i_s = kex::build_rekey_kexinit()
+            .map_err(|e| TransportError::Io(format!("rekey kexinit build failed: {e}")))?;
+        self.write_packet(&i_s).await?;
+        self.stage.rekey.started = Instant::now();
+        self.stage.rekey.initiator = "server";
+        self.stage.rekey.trigger =
+            if self.stage.rekey.last_kex.elapsed() >= self.stage.rekey.thresholds.max_interval {
+                "time"
+            } else {
+                "bytes"
+            };
+        self.stage.rekey.phase = RekeyPhase::SentKexInit { i_s };
+        Ok(())
+    }
+
+    /// Feeds one inbound packet to the re-key sub-state machine (RFC 4253
+    /// §9). Total and fail-closed: only the message expected in the current
+    /// phase advances it; anything else past the peer's KEXINIT terminates
+    /// the connection.
+    ///
+    /// # Errors
+    ///
+    /// [`TransportError::Rejected`] on a protocol/negotiation violation
+    /// (DISCONNECT already sent); [`TransportError::Io`] on a write failure.
+    pub(crate) async fn step_rekey(&mut self, payload: &[u8]) -> Result<RekeyStep, TransportError> {
+        let msg = payload.first().copied().unwrap_or(0);
+        let phase = std::mem::replace(&mut self.stage.rekey.phase, RekeyPhase::Idle);
+        match (phase, msg) {
+            // Client-initiated re-key (we were idle). RFC 4253 §9 lets a
+            // peer re-key whenever it likes (e.g. a low client `RekeyLimit`,
+            // which can fire sub-second); the only abuse bound is the
+            // one-re-key-at-a-time the phase machine already enforces — each
+            // re-key is a full handshake, so a flood costs the peer too.
+            (RekeyPhase::Idle, SSH_MSG_KEXINIT) => {
+                self.stage.rekey.started = Instant::now();
+                self.stage.rekey.initiator = "peer";
+                self.stage.rekey.trigger = "peer";
+                let i_s = kex::build_rekey_kexinit()
+                    .map_err(|e| TransportError::Io(format!("rekey kexinit build failed: {e}")))?;
+                self.write_packet(&i_s).await?;
+                let negotiated = self.negotiate_rekey(payload).await?;
+                self.stage.rekey.phase = RekeyPhase::AwaitHybridInit {
+                    i_c: payload.to_vec(),
+                    i_s,
+                    skip_guessed: negotiated.skip_guessed_packet,
+                    negotiated,
+                };
+                Ok(RekeyStep::Continued)
+            }
+            // Peer's KEXINIT in response to ours (or simultaneous).
+            (RekeyPhase::SentKexInit { i_s }, SSH_MSG_KEXINIT) => {
+                let negotiated = self.negotiate_rekey(payload).await?;
+                self.stage.rekey.phase = RekeyPhase::AwaitHybridInit {
+                    i_c: payload.to_vec(),
+                    i_s,
+                    skip_guessed: negotiated.skip_guessed_packet,
+                    negotiated,
+                };
+                Ok(RekeyStep::Continued)
+            }
+            // We've sent our KEXINIT but the peer hasn't yet; it may still
+            // send channel data (RFC 4253 §9: we MAY receive higher-layer
+            // messages until we send NEWKEYS). Hand it to the channel layer.
+            (phase @ RekeyPhase::SentKexInit { .. }, _) => {
+                self.stage.rekey.phase = phase;
+                Ok(RekeyStep::PassToChannel)
+            }
+            // The guessed/optimistic KEX packet (rare); drop it.
+            (
+                RekeyPhase::AwaitHybridInit {
+                    i_c,
+                    i_s,
+                    negotiated,
+                    skip_guessed: true,
+                },
+                _,
+            ) => {
+                self.stage.rekey.phase = RekeyPhase::AwaitHybridInit {
+                    i_c,
+                    i_s,
+                    negotiated,
+                    skip_guessed: false,
+                };
+                Ok(RekeyStep::Continued)
+            }
+            (
+                RekeyPhase::AwaitHybridInit {
+                    i_c,
+                    i_s,
+                    negotiated,
+                    skip_guessed: false,
+                },
+                SSH_MSG_KEX_HYBRID_INIT,
+            ) => {
+                self.complete_rekey_reply(payload, &i_c, &i_s, &negotiated)
+                    .await
+            }
+            // Peer's NEWKEYS: install the staged receive cipher; done.
+            (RekeyPhase::AwaitNewKeys { new_rx }, SSH_MSG_NEWKEYS) => {
+                if payload != [SSH_MSG_NEWKEYS] {
+                    return Err(self.protocol_disconnect("expected-newkeys").await);
+                }
+                self.stage.rx = new_rx;
+                self.seq_rx = 0;
+                let seconds = self.stage.rekey.last_kex.elapsed().as_secs();
+                info!(
+                    target: "audit",
+                    kex_algorithm = kex::KEX_ALGORITHM,
+                    host_key_algorithm = kex::HOST_KEY_LIST,
+                    initiator = self.stage.rekey.initiator,
+                    trigger = self.stage.rekey.trigger,
+                    bytes_rx = self.stage.rekey.bytes_rx,
+                    bytes_tx = self.stage.rekey.bytes_tx,
+                    seconds,
+                    "rekey.completed"
+                );
+                self.stage.rekey.bytes_rx = 0;
+                self.stage.rekey.bytes_tx = 0;
+                self.stage.rekey.last_kex = Instant::now();
+                self.stage.rekey.phase = RekeyPhase::Idle;
+                Ok(RekeyStep::Completed)
+            }
+            // Anything else once we are past the peer's KEXINIT is illegal.
+            _ => Err(self.protocol_disconnect("unexpected-during-rekey").await),
+        }
+    }
+
+    /// Parses + negotiates a peer re-key KEXINIT; rejects (code 3) on a bad
+    /// offer, protocol-errors (code 2) on a malformed one.
+    async fn negotiate_rekey(&mut self, payload: &[u8]) -> Result<Negotiated, TransportError> {
+        match kex::parse_kexinit(payload).and_then(|peer| kex::negotiate(&peer, false)) {
+            Ok(n) => Ok(n),
+            Err(KexError::Rejected(r)) => Err(self.rekey_reject(r).await),
+            Err(KexError::Wire(_)) => {
+                Err(self.protocol_disconnect("malformed-rekey-kexinit").await)
+            }
+        }
+    }
+
+    /// Runs the hybrid exchange for a re-key, sends the signed
+    /// `HYBRID_REPLY` and our `NEWKEYS`, installs the new send cipher, and
+    /// stages the receive cipher in `AwaitNewKeys`.
+    async fn complete_rekey_reply(
+        &mut self,
+        init_payload: &[u8],
+        i_c: &[u8],
+        i_s: &[u8],
+        negotiated: &Negotiated,
+    ) -> Result<RekeyStep, TransportError> {
+        let mut r = Reader::new(init_payload);
+        let _ = r.byte();
+        let Ok(client_init) = r
+            .string(kex::CLIENT_INIT_LEN)
+            .and_then(|ci| r.finish().map(|()| ci))
+        else {
+            return Err(self.protocol_disconnect("malformed-hybrid-init").await);
+        };
+        let outcome = match kex::hybrid_exchange(client_init) {
+            Ok(o) => o,
+            Err(KexError::Rejected(rej)) => return Err(self.rekey_reject(rej).await),
+            Err(KexError::Wire(_)) => {
+                return Err(self.protocol_disconnect("malformed-hybrid-init").await);
+            }
+        };
+        let host_key_blob = self.stage.host_key.public_key_blob();
+        let h_r = Zeroizing::new(kex::exchange_hash(&ExchangeHashInputs {
+            client_id: &self.stage.client_id,
+            server_id: wire::SERVER_ID.as_bytes(),
+            client_kexinit: i_c,
+            server_kexinit: i_s,
+            host_key_blob: &host_key_blob,
+            client_init,
+            server_reply: &outcome.server_reply,
+            shared_secret: &outcome.shared_secret,
+        }));
+        let signature = self.stage.host_key.sign(h_r.as_ref());
+
+        // Derive the new pair with the ORIGINAL session id and the NEW H_r.
+        let (new_rx, new_tx) = derive_cipher_pair(
+            &outcome.shared_secret,
+            &h_r,
+            &self.stage.session_id,
+            &negotiated.cipher_c2s,
+            &negotiated.cipher_s2c,
+        )?;
+
+        let mut reply = Writer::new();
+        reply.put_byte(kex::SSH_MSG_KEX_HYBRID_REPLY);
+        reply.put_string(&host_key_blob);
+        reply.put_string(&outcome.server_reply);
+        reply.put_string(&signature);
+        self.write_packet(&reply.into_bytes()).await?;
+
+        // Send NEWKEYS under the OLD send cipher, then switch tx (strict-kex
+        // resets the send counter on our NEWKEYS).
+        self.write_packet(&[SSH_MSG_NEWKEYS]).await?;
+        self.stage.tx = new_tx;
+        self.seq_tx = 0;
+
+        self.stage.rekey.phase = RekeyPhase::AwaitNewKeys { new_rx };
+        Ok(RekeyStep::Continued)
+    }
+
+    /// Sends an encrypted `SSH_MSG_DISCONNECT` with `KEY_EXCHANGE_FAILED`
+    /// (3) for a re-key negotiation rejection, logging `kex.failed`.
+    async fn rekey_reject(&mut self, rejection: Rejection) -> TransportError {
+        warn!(
+            target: "audit",
+            reason = rejection.reason,
+            disconnect_code = rejection.disconnect_code,
+            "kex.failed"
+        );
+        if let Err(e) = self.write_sealed(&disconnect_payload(&rejection)).await {
+            debug!(error = %e, "disconnect write failed");
+        }
+        TransportError::Rejected(rejection.reason)
+    }
+
+    /// A re-key did not complete within the deadline (ADR-0026).
+    pub(crate) async fn rekey_timeout(&mut self) -> TransportError {
+        self.rekey_reject(Rejection {
+            reason: "rekey-timeout",
+            disconnect_code: kex::DISCONNECT_KEY_EXCHANGE_FAILED,
+        })
+        .await
+    }
+}
+
+/// Outcome of feeding one packet to [`Expect::step_rekey`].
+pub(crate) enum RekeyStep {
+    /// The re-key advanced; consume the next packet.
+    Continued,
+    /// The re-key finished; new keys are installed.
+    Completed,
+    /// Not a re-key message — the channel layer should handle it (the peer
+    /// is still allowed to send channel data until it sends its KEXINIT).
+    PassToChannel,
 }
 
 /// ---- shared plumbing (private: stages cannot be bypassed) ----
@@ -962,11 +1347,51 @@ fn disconnect_payload(rejection: &Rejection) -> Vec<u8> {
     w.into_bytes()
 }
 
+/// Derives the RFC 4253 §7.2 key schedule and builds the AEAD cipher
+/// pair: `rx` (client→server, keys `C`/`A`), `tx` (server→client, `D`/`B`).
+/// `session_id` is the connection's first `H` (invariant for its life);
+/// `h` is the current exchange hash — equal to `session_id` on the initial
+/// KEX, a fresh `H_r` on a re-key (ADR-0026). Shared by `exchange_newkeys`
+/// and the re-key routine.
+fn derive_cipher_pair(
+    k: &[u8; 32],
+    h: &[u8; 32],
+    session_id: &[u8; 32],
+    c2s: &str,
+    s2c: &str,
+) -> Result<(PacketCipher, PacketCipher), TransportError> {
+    let derive = |letter: u8, len: usize| -> Zeroizing<Vec<u8>> {
+        let mut out = kex::derive_key(k, h, letter, session_id, len);
+        out.truncate(len);
+        out
+    };
+    let rx = PacketCipher::new(
+        c2s,
+        &derive(b'C', PacketCipher::key_len(c2s)),
+        &derive(b'A', PacketCipher::iv_len(c2s)),
+    )
+    .map_err(|e| TransportError::Io(format!("cipher install failed: {e}")))?;
+    let tx = PacketCipher::new(
+        s2c,
+        &derive(b'D', PacketCipher::key_len(s2c)),
+        &derive(b'B', PacketCipher::iv_len(s2c)),
+    )
+    .map_err(|e| TransportError::Io(format!("cipher install failed: {e}")))?;
+    Ok((rx, tx))
+}
+
+/// Whether a re-key is due given the per-direction byte counts and the
+/// elapsed time since the last completed exchange (ADR-0026: 1 GiB in
+/// either direction, or `max_interval`, whichever first). Pure for unit
+/// testing.
+fn rekey_due(bytes_rx: u64, bytes_tx: u64, elapsed: Duration, t: &RekeyThresholds) -> bool {
+    bytes_rx >= t.max_bytes || bytes_tx >= t.max_bytes || elapsed >= t.max_interval
+}
+
 /// Validates the sealed length field and returns the body length (body
 /// plus tag), the bound applied **before** any body is allocated or
 /// read. Shared by [`Expect::read_sealed`] (`read_exact`) and
-/// [`Expect::read_packet`] (`read_buf`-style) so the length discipline
-/// has a single source — the cipher's own `body_len`.
+/// [`Expect::read_packet`] so the length discipline has a single source.
 fn frame_body_len(
     cipher: &PacketCipher,
     seqnr: u32,
@@ -1233,4 +1658,26 @@ where
         line.pop();
     }
     Ok(line)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{RekeyThresholds, rekey_due};
+    use std::time::Duration;
+
+    #[test]
+    fn rekey_due_thresholds() {
+        let t = RekeyThresholds {
+            max_bytes: 1000,
+            max_interval: Duration::from_hours(1),
+            completion_deadline: Duration::from_secs(30),
+        };
+        // Below every threshold.
+        assert!(!rekey_due(500, 500, Duration::from_secs(0), &t));
+        // Either byte direction crossing is enough.
+        assert!(rekey_due(1000, 0, Duration::from_secs(0), &t));
+        assert!(rekey_due(0, 1000, Duration::from_secs(0), &t));
+        // The interval alone is enough.
+        assert!(rekey_due(0, 0, Duration::from_hours(1), &t));
+    }
 }

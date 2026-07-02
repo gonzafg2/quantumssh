@@ -889,7 +889,8 @@ Keys), `T1078` (Valid Accounts).
 once the key is in the attacker's hands: from the server's
 viewpoint, the attacker is the legitimate user. QuantumSSH's
 contribution is to make compensating controls discoverable —
-short-lived certificates (a Phase 2 feature behind RFC), audit-
+short-lived certificates (a Phase 2 feature designed in
+[RFC-0008](rfcs/0008-ssh-certificate-authentication.md)), audit-
 record fidelity, and configurable per-key restrictions
 (`from=`, `command=`, `no-port-forwarding`, equivalents in
 QuantumSSH's own syntax) — but the primary defence lives in the
@@ -1199,7 +1200,9 @@ repeating it.
   references); adopting one prematurely would break interoperability
   with every deployed client for no present-day security gain. The
   residual exposure and the migration trigger are recorded in §7;
-  the migration path will be defined in a future RFC, tracked under
+  the migration path is defined in
+  [RFC-0006](rfcs/0006-post-quantum-host-key-signatures.md) (the
+  composite `ssh-mldsa44-ed25519@openssh.com` target), tracked under
   issue #42.
 - **Forward secrecy.** Ephemeral KEM secrets are not persisted and
   are zeroised after derivation. Defends §5.5.3.
@@ -1337,8 +1340,9 @@ operators must account for. The principal items, by category, are:
   replacement Ed25519 key is exactly as derivable as the one it
   replaces.) The migration trigger is a settled IETF standard
   deployed by the reference client (the competing drafts are listed
-  in §9); the migration path will be defined in a future RFC,
-  tracked under issue #42.
+  in §9); the migration path is defined in
+  [RFC-0006](rfcs/0006-post-quantum-host-key-signatures.md), tracked
+  under issue #42.
 - **Implementation flaws not caught by review, tests, or fuzzing.**
   The Phase-3 security audit is the principal compensating control;
   the project's posture is that bugs will exist and the goal is to
@@ -1460,9 +1464,12 @@ cryptanalytic capability (classical advances on lattice problems,
 quantum advances per Shor's algorithm and successors). It cannot
 defend against unknown future cryptanalytic breakthroughs that
 target the chosen primitives directly. The project's commitment is
-to track NIST and IETF guidance and to migrate before deprecation
-deadlines, not to anticipate breakthroughs that have not yet
-occurred.
+to track NIST and IETF guidance and to migrate before the applicable
+NIST/IETF disallow dates, not to anticipate breakthroughs that have not yet
+occurred. The **mechanism** for that migration — the
+retroactive-exposure decision tree, the supersession mechanics, and the
+dynamic definition of "legacy" — is
+[RFC-0007](rfcs/0007-cryptographic-primitive-migration-procedure.md).
 
 ### 8.11 Hardening of the maintainer's personal endpoint
 
@@ -1596,7 +1603,10 @@ full rationale and operational counterpart.
   Ed25519+ML-DSA (`draft-josefsson-ssh-ed25519mldsa65`,
   `draft-sun-ssh-composite-sigs`). Per §6.1 and §7, QuantumSSH
   adopts none until one is settled and deployed by the reference
-  client; the adopting RFC is future work, tracked under issue #42.
+  client; [RFC-0006](rfcs/0006-post-quantum-host-key-signatures.md)
+  fixes the migration target as the composite
+  `ssh-mldsa44-ed25519@openssh.com` (`draft-miller-sshm`), gated on that
+  settlement and deployment; tracked under issue #42.
 
 ### Project-internal references
 
