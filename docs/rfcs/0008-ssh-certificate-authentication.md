@@ -1,10 +1,10 @@
 # RFC 0008: SSH certificate authentication
 
-- **Status:** Draft
+- **Status:** Accepted (2026-07-01)
 - **Authors:** Gonzalo Fleming Garrido
 - **Created:** 2026-07-01
 - **Roadmap issue:** [`#41`](https://github.com/gonzafg2/quantumssh/issues/41)
-- **Implementation PR:** TBD — a Phase-2 feature; see the config-surface dependency in §"Reference-level explanation".
+- **Implementation PR:** TBD — a Phase-2 feature; see the config-surface dependency in [§Reference-level explanation](#reference-level-explanation).
 
 ## Summary
 
