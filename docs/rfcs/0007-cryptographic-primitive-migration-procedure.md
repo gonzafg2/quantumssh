@@ -29,8 +29,9 @@ contradict an Accepted, immutable RFC).
 ## Motivation
 
 **The gap ([#42](https://github.com/gonzafg2/quantumssh/issues/42)).** The
-threat model commits to "track NIST and IETF guidance and migrate before
-deprecation deadlines" (§8.10) — a commitment with no mechanism. How a primitive
+threat model commits (§8.10) to tracking NIST and IETF guidance and migrating
+before the applicable disallow dates — a commitment with no mechanism. How a
+primitive
 is actually replaced, across the protocol, dependency, and (eventually) config
 layers, is undefined.
 
@@ -107,9 +108,15 @@ For a primitive `P` facing deprecation, or a candidate replacement `P'`:
      live-only class.** Migration MAY wait behind **both**: (a) WG adoption of
      the replacement's identifier (stability), and (b) a stock release of the
      [ADR-0020](../adr/0020-phase-1-ci-openssh-interop-gate.md) reference client
-     shipping it (a real client population). A **NIST IR 8547 disallow-date
-     backstop** overrides the gates: migrate before that date regardless.
-     *Precedent: RFC-0006 (host-key signatures).*
+     shipping it (a real client population). Two overrides collapse the wait:
+     a **NIST IR 8547 disallow-date backstop** (migrate before that date
+     regardless), and — taking priority over everything — an **emergency
+     path**: if the primitive is *practically broken now* (a real
+     cryptanalytic or implementation break, not a calendar date), the gates
+     are void and migration is immediate, exactly as for the retroactive
+     class. A gate is a schedule for an *orderly* migration, never a licence
+     to keep using a broken primitive. *Precedent: RFC-0006 (host-key
+     signatures).*
 
 This asymmetry — no gate for retroactive, gated for live-only — **is** the
 generalizable core. A single uniform gate is explicitly rejected because it
@@ -142,13 +149,17 @@ writing a superseding ADR, never by editing the Accepted one). A migration:
 
 MANIFIESTO commitment #3 ("Cero legacy") today reads as a fixed blocklist (no
 SSH-1, no RSA, no DSA, no CBC, no `diffie-hellman-group1-sha1`, no password
-auth). This RFC **refines** it: the blocklist is the permanent **floor**, and
-"legacy" additionally means **any primitive past its NIST or IETF *disallow*
-date** — deprecation is the trigger that *begins* the gated migration, not the
+auth). This RFC **refines** it: the blocklist is the permanent **floor** — and
+the *operative* floor is [CLAUDE.md hard rule #3](../../CLAUDE.md), which
+enumerates more than the MANIFIESTO prose (it adds **ECDSA-NIST**, `ssh-rsa`,
+and compression); the MANIFIESTO list is illustrative, CLAUDE.md rule #3 is the
+compile-time blocklist. On top of that floor, "legacy" additionally means **any
+primitive past its NIST or IETF *disallow* date** — deprecation is the trigger
+that *begins* the gated migration, not the
 legacy line itself (so a deprecated-but-not-disallowed primitive, e.g.
 `ssh-ed25519` in 2030–2035 under RFC-0006, is not yet legacy). Zero-legacy = the
-*disallowed* is never compiled in, and §8.10's migrate-before-deadlines
-commitment is the moving frontier above the floor.
+floor plus the *disallowed* is never compiled in, and §8.10's
+migrate-before-disallow commitment is the moving frontier above the floor.
 
 Two clarifications the floor forces. First, **the floor is a policy floor, not a
 uniform compile-out rule**: MANIFIESTO #3 says password auth is barred "en el
