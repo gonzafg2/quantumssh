@@ -1463,8 +1463,8 @@ cryptanalytic capability (classical advances on lattice problems,
 quantum advances per Shor's algorithm and successors). It cannot
 defend against unknown future cryptanalytic breakthroughs that
 target the chosen primitives directly. The project's commitment is
-to track NIST and IETF guidance and to migrate before deprecation
-deadlines, not to anticipate breakthroughs that have not yet
+to track NIST and IETF guidance and to migrate before the applicable
+NIST/IETF disallow dates, not to anticipate breakthroughs that have not yet
 occurred. The **mechanism** for that migration — the
 retroactive-exposure decision tree, the supersession mechanics, and the
 dynamic definition of "legacy" — is
