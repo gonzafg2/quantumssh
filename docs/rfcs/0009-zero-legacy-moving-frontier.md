@@ -1,6 +1,6 @@
 # RFC 0009: "Zero legacy" is a standards-defined moving frontier — MANIFIESTO #3 amendment
 
-- **Status:** Accepted (2026-07-02)
+- **Status:** Draft (comment period through 2026-07-16; advances to Accepted at close by lazy consensus per [`docs/rfcs/README.md`](README.md) §5, absent substantive objection — highest lane: amends a MANIFIESTO commitment)
 - **Authors:** Gonzalo Fleming Garrido
 - **Created:** 2026-07-02
 - **Roadmap issue:** deferred from [RFC-0007](0007-cryptographic-primitive-migration-procedure.md) §Future possibilities; research recorded in [`#42`](https://github.com/gonzafg2/quantumssh/issues/42)
