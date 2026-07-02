@@ -12,8 +12,9 @@
 nothing here is a decision. It exists to (a) record why a full RFC is premature,
 (b) lock the load-bearing constraint that any design must satisfy, and (c)
 enumerate the option space and the Phase-2 gating decisions the RFC depends on.
-The RFC itself is tracked in [#43](https://github.com/gonzafg2/quantumssh/issues/43)
-and closes threat-model §8.12.
+The RFC itself is tracked in [#43](https://github.com/gonzafg2/quantumssh/issues/43);
+it — not this note — is what will eventually close threat-model §8.12, together
+with the Phase-3 implementation (§8.12's stated closure condition).
 
 ## The gap being scoped
 
@@ -95,7 +96,8 @@ exist.
 
 ## References
 
-- Closes threat-model §8.12; builds on
+- Scopes the eventual closure of threat-model §8.12 (closed by the Phase-3 RFC
+  plus its implementation, not by this note); builds on
   [RFC-0002](../rfcs/0002-threat-model-phase1-uid-model-and-non-goal.md) (the
   Phase-1 UID model and non-goal) and
   [ADR-0016](../adr/0016-phase-1-service-account-uid-model.md) (service-account
