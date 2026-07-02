@@ -46,15 +46,22 @@ jobs:
           # kept in lockstep with the digest pin above.
           SNAPSHOT=20260507T000000Z
           OPENSSH_VERSION='1:10.0p1-7+deb13u4'   # ships binary OpenSSH_10.0p2
-          # Replace trixie's live sources (deb822 in trixie-slim) with the
+          # ca-certificates first, from the base image's own index: the slim
+          # image ships no CA bundle, so apt cannot verify snapshot.debian.org
+          # over HTTPS without it. It is a cert bundle, not the client under
+          # test, so sourcing it from the (digest-pinned) base is fine.
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates
+          # Now replace trixie's live sources (deb822 in trixie-slim) with the
           # frozen snapshot; check-valid-until off because archived Release
-          # files are past their Valid-Until.
+          # files are past their Valid-Until. The client + build tools come
+          # from the frozen snapshot.
           rm -f /etc/apt/sources.list.d/debian.sources
           echo "deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/${SNAPSHOT}/ trixie main" \
             > /etc/apt/sources.list.d/snapshot.list
           apt-get -o Acquire::Check-Valid-Until=false update
           apt-get install -y --no-install-recommends \
-            ca-certificates curl gcc libc6-dev "openssh-client=${OPENSSH_VERSION}"
+            curl gcc libc6-dev "openssh-client=${OPENSSH_VERSION}"
           # Assert the exact pinned version resolved (fail-closed on drift).
           dpkg-query -W -f='${Version}\n' openssh-client | grep -Fqx "${OPENSSH_VERSION}" \
             || { echo "::error::openssh-client is not the pinned ${OPENSSH_VERSION}"; dpkg-query -W openssh-client; exit 1; }
