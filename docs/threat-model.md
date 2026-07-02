@@ -1199,7 +1199,9 @@ repeating it.
   references); adopting one prematurely would break interoperability
   with every deployed client for no present-day security gain. The
   residual exposure and the migration trigger are recorded in §7;
-  the migration path will be defined in a future RFC, tracked under
+  the migration path is defined in
+  [RFC-0006](rfcs/0006-post-quantum-host-key-signatures.md) (the
+  composite `ssh-mldsa44-ed25519@openssh.com` target), tracked under
   issue #42.
 - **Forward secrecy.** Ephemeral KEM secrets are not persisted and
   are zeroised after derivation. Defends §5.5.3.
@@ -1337,8 +1339,9 @@ operators must account for. The principal items, by category, are:
   replacement Ed25519 key is exactly as derivable as the one it
   replaces.) The migration trigger is a settled IETF standard
   deployed by the reference client (the competing drafts are listed
-  in §9); the migration path will be defined in a future RFC,
-  tracked under issue #42.
+  in §9); the migration path is defined in
+  [RFC-0006](rfcs/0006-post-quantum-host-key-signatures.md), tracked
+  under issue #42.
 - **Implementation flaws not caught by review, tests, or fuzzing.**
   The Phase-3 security audit is the principal compensating control;
   the project's posture is that bugs will exist and the goal is to
@@ -1596,7 +1599,10 @@ full rationale and operational counterpart.
   Ed25519+ML-DSA (`draft-josefsson-ssh-ed25519mldsa65`,
   `draft-sun-ssh-composite-sigs`). Per §6.1 and §7, QuantumSSH
   adopts none until one is settled and deployed by the reference
-  client; the adopting RFC is future work, tracked under issue #42.
+  client; [RFC-0006](rfcs/0006-post-quantum-host-key-signatures.md)
+  fixes the migration target as the composite
+  `ssh-mldsa44-ed25519@openssh.com` (`draft-miller-sshm`), gated on that
+  settlement and deployment; tracked under issue #42.
 
 ### Project-internal references
 
