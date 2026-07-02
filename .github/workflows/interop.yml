@@ -27,27 +27,40 @@ jobs:
     name: openssh-interop
     runs-on: ubuntu-latest
     # ADR-0020: pin the base image by digest (the `debian:trixie-slim`
-    # tag is mutable), so the base filesystem is frozen. The OpenSSH
-    # package itself is asserted to the 10.0p line below; freezing its
-    # exact build via snapshot.debian.org is the next hardening step
-    # noted in ADR-0020. Bumping the digest is a reviewed event.
+    # tag is mutable), so the base filesystem is frozen; and pin the
+    # OpenSSH client to an exact package version from a frozen
+    # snapshot.debian.org timestamp (the install step below) — the
+    # hardening ADR-0020 named. Bumping the digest, the snapshot, or the
+    # pinned version is a reviewed event.
     container:
       # debian:trixie-slim
       image: debian@sha256:28de0877c2189802884ccd20f15ee41c203573bd87bb6b883f5f46362d24c5c2
     steps:
-      - name: Install OpenSSH client + build prerequisites
+      - name: Install OpenSSH client + build prerequisites (snapshot-pinned)
         run: |
-          apt-get update
+          # ADR-0020 hardening: freeze the package set to a snapshot.debian.org
+          # timestamp and pin openssh-client to an exact version, so the client
+          # under test is fully reproducible and a version change is a reviewed
+          # event (the install fails, surfacing the drift) rather than silent.
+          # Bumping SNAPSHOT / OPENSSH_VERSION is the reviewed event; both are
+          # kept in lockstep with the digest pin above.
+          SNAPSHOT=20260507T000000Z
+          OPENSSH_VERSION='1:10.0p1-7+deb13u4'   # ships binary OpenSSH_10.0p2
+          # Replace trixie's live sources (deb822 in trixie-slim) with the
+          # frozen snapshot; check-valid-until off because archived Release
+          # files are past their Valid-Until.
+          rm -f /etc/apt/sources.list.d/debian.sources
+          echo "deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/${SNAPSHOT}/ trixie main" \
+            > /etc/apt/sources.list.d/snapshot.list
+          apt-get -o Acquire::Check-Valid-Until=false update
           apt-get install -y --no-install-recommends \
-            ca-certificates curl gcc libc6-dev openssh-client
-          # ADR-0020 asserts the client version. The ADR names 10.0p1, but
-          # trixie's openssh-client (package 1:10.0p1-7+deb13uN) now ships
-          # binary OpenSSH_10.0p2 via a security update — so assert the
-          # 10.0p line (p1/p2), which is exactly the drift the digest +
-          # package-version pin is meant to surface as a reviewed event.
+            ca-certificates curl gcc libc6-dev "openssh-client=${OPENSSH_VERSION}"
+          # Assert the exact pinned version resolved (fail-closed on drift).
+          dpkg-query -W -f='${Version}\n' openssh-client | grep -Fqx "${OPENSSH_VERSION}" \
+            || { echo "::error::openssh-client is not the pinned ${OPENSSH_VERSION}"; dpkg-query -W openssh-client; exit 1; }
           ssh -V 2>&1
           ssh -V 2>&1 | grep -qE "OpenSSH_10\.0p[0-9]" \
-            || { echo "::error::expected OpenSSH 10.0p line in trixie"; ssh -V; exit 1; }
+            || { echo "::error::expected OpenSSH 10.0p line"; ssh -V; exit 1; }
           # The hybrid KEX must be offered, or the gate cannot test it.
           ssh -Q kex | grep -qx "mlkem768x25519-sha256" \
             || { echo "::error::mlkem768x25519-sha256 not offered by this client"; exit 1; }
