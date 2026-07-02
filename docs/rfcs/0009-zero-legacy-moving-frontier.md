@@ -9,15 +9,15 @@
 ## Summary
 
 This RFC makes **one shape-determining decision**: it refines MANIFIESTO
-commitment #3 ("Cero legacy") from a **fixed blocklist** of named algorithms into
-a **fixed floor plus a standards-defined moving frontier**. The floor (SSH-1,
-RSA, DSA, ECDSA-NIST, CBC, `diffie-hellman-group1/14-sha1`, `ssh-rsa`, password
-auth, compression) is permanent; above it, an algorithm becomes "legacy" once
-NIST or IETF **disallows** it. It fixes two distinctions the fixed-list wording
-cannot express — *deprecation* (which merely triggers a managed migration) versus
-*disallowance* (which is the legacy line), and *classical-only* (forbidden)
-versus *classical-plus-PQ* (the hybrid posture, permitted). It makes no code
-change and amends only one existing document — `MANIFIESTO.es.md`; the *how* of a migration is
+commitment #3 ("Cero legacy") so that legacy is **not only the fixed list** the
+prose names, but also **anything NIST or IETF has *disallowed*** — a
+standards-defined moving frontier on top of the existing list. It fixes the one
+distinction the fixed-list wording cannot express: *deprecation* (which merely
+triggers a managed migration) versus *disallowance* (which is the legacy line).
+It scopes deliberately narrow — it does **not** re-enumerate or re-authority the
+existing blocklist, touch CLAUDE.md, or reopen the classical-signature interim;
+those are separate concerns. It makes no code change and amends only one existing
+document — `MANIFIESTO.es.md`; the *how* of a migration is
 [RFC-0007](0007-cryptographic-primitive-migration-procedure.md), and this RFC is
 the *what-counts-as-legacy* the manifesto now states.
 
@@ -58,12 +58,13 @@ definition of legacy. On top of the floor:
   algorithm legacy. So a deprecated-but-not-yet-disallowed primitive (Ed25519 in
   the 2030–2035 window) is legitimately still in use while its managed migration
   runs.
-- The **classical half of a hybrid** is not legacy while the hybrid is the
-  mechanism. Zero-legacy forbids classical-*only* (a bare RSA or bare Ed25519
-  posture); it does not forbid classical-*plus*-PQ, which is exactly the hybrid
-  KEX and composite-signature posture the project already commits to.
+- A classical algorithm participating in a **hybrid** is not made legacy by that
+  participation — e.g. X25519 inside the `mlkem768x25519-sha256` KEX. Zero-legacy
+  forbids classical-*only* where a hybrid is the established mechanism; it does
+  not forbid classical-*plus*-PQ. (This says nothing about the classical
+  *signature* interim — RFC-0006 governs that, and this RFC does not reopen it.)
 
-For a reader, the commitment now answers "is X legacy?" with "is X on the floor,
+For a reader, the commitment now answers "is X legacy?" with "is X on the list,
 or has a standards body disallowed it?" — a question with a checkable answer that
 does not depend on the manifesto being re-edited every time the field moves.
 
@@ -74,48 +75,37 @@ does not depend on the manifesto being re-edited every time the field moves.
 `MANIFIESTO.es.md` commitment #3 gains a short passage after its fixed list. The
 prose (Spanish, matching the manifesto) reads:
 
-> Y "legacy" no es solo esta lista: esta lista **ilustra** un piso permanente
-> cuya forma completa y autoritativa enumera RFC-0009 (más amplia que estos
-> ejemplos). Sobre ese piso, es legacy todo primitivo criptográfico que NIST o
-> IETF haya **prohibido** (*disallowed*): la **deprecación** de un algoritmo
-> activa su migración gestionada; la **prohibición** marca la línea que no
-> cruzamos. La mitad clásica de un híbrido (X25519, Ed25519) **no** es legacy
-> mientras el híbrido sea el mecanismo: cero legacy prohíbe lo clásico-*solo*, no
-> lo clásico-*más*-PQ. El procedimiento de migración está en RFC-0007; esta
-> definición, en RFC-0009.
+> Y "legacy" no es solo esta lista fija: sobre ella, es legacy todo primitivo
+> criptográfico que NIST o IETF haya **prohibido** (*disallowed*). La
+> **deprecación** de un algoritmo activa su migración gestionada; la
+> **prohibición** marca la línea que no cruzamos. (Que un algoritmo clásico
+> participe de un híbrido —como X25519 en el KEX— no lo vuelve legacy: cero
+> legacy prohíbe lo clásico-*solo* donde el híbrido es el mecanismo, no lo
+> clásico-*más*-PQ.) La definición está en RFC-0009; el procedimiento de
+> migración, en RFC-0007.
 
-The manifesto's fixed list is **illustrative**; the authoritative floor below is
-broader, and the amendment says so rather than implying the manifesto list is
-exhaustive.
+The amendment adds the moving frontier *on top of* the existing list; it does
+not restate, broaden, or re-authority the list itself.
 
-### The floor, stated normatively here
+### Scope boundary (what this RFC deliberately does not touch)
 
-The permanent floor — never compiled in — is: **SSH-1, RSA, DSA, ECDSA-NIST, CBC
-modes, `diffie-hellman-group1/14-sha1`, `ssh-rsa`, password authentication, and
-compression.** This RFC is the authoritative enumeration; the identical list in
-[CLAUDE.md hard rule #3](../../CLAUDE.md) is a reviewer-facing mirror, **not** the
-source of authority. This ordering matters: a plain PR editing CLAUDE.md must not
-be able to change the legacy floor — that requires a superseding RFC. (An earlier
-draft got this backwards; the fix is to state the floor in the RFC and treat
-CLAUDE.md as the mirror.)
+To keep the decision single, this RFC does **not**:
 
-### Precedent and consistency
+- **Re-enumerate or re-authority the existing blocklist.** Whatever the floor is
+  today (per the manifesto prose and CLAUDE.md hard rule #3) stays exactly as it
+  is; this RFC only adds the disallow-frontier on top. Reconciling any gaps
+  between the manifesto prose and CLAUDE.md's list (e.g. `RSA-1024` vs all RSA,
+  password "en el perfil por defecto" vs never-compiled) is a **separate**
+  concern, not opened here.
+- **Touch CLAUDE.md** or relocate authority between documents.
+- **Reopen the classical-signature interim** — RFC-0006 governs `ssh-ed25519`
+  host/user keys until its gates fire; this RFC's frontier does not change that.
 
-- The floor is broader than the MANIFIESTO prose in several places — it bars
-  **all RSA** (not only the `RSA-1024` the prose names), `diffie-hellman-group1`
-  **and `-group14`** `-sha1`, **ECDSA-NIST**, `ssh-rsa`, and compression; and it
-  bars password auth outright, where the prose says only "en el perfil por
-  defecto". This is not new policy — CLAUDE.md rule #3 already enumerates it and
-  states "not merely configured off"; this RFC simply makes the RFC layer, not
-  CLAUDE.md, the authority, and marks the manifesto list as illustrative so the
-  two no longer appear to disagree.
-- [RFC 9142](https://www.rfc-editor.org/rfc/rfc9142.html) (the IETF's maintained
-  SSH-KEX MUST-NOT / SHOULD-NOT lists, already cited in threat-model §6.1) is the
-  external precedent that "legacy" is a standards-body-maintained moving target.
-- This RFC makes **no code change**; the only existing document it amends is
-  `MANIFIESTO.es.md` (it also adds this RFC file). The migration *mechanism*
-  (decision tree, gates, emergency path, supersession) stays in RFC-0007; this
-  RFC only fixes the *definition* the manifesto asserts.
+The one external anchor: [RFC 9142](https://www.rfc-editor.org/rfc/rfc9142.html)
+(the IETF's maintained SSH-KEX MUST-NOT / SHOULD-NOT lists, already cited in
+threat-model §6.1) is the precedent that "legacy" is a standards-body-maintained
+moving target. This RFC makes no code change and amends only `MANIFIESTO.es.md`;
+the migration *mechanism* stays in RFC-0007.
 
 ## Drawbacks
 
