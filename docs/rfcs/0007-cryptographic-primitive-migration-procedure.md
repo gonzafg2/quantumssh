@@ -4,8 +4,7 @@
 - **Authors:** Gonzalo Fleming Garrido
 - **Created:** 2026-07-01
 - **Roadmap issue:** [`#42`](https://github.com/gonzafg2/quantumssh/issues/42)
-- **Implementation PR:** N/A — this RFC defines a *procedure* and amends MANIFIESTO #3; it changes no code.
-- **Amends:** MANIFIESTO commitment #3 ("Cero legacy") — see §"Reference-level explanation".
+- **Implementation PR:** N/A — this RFC defines a *procedure*; it changes no code.
 
 ## Summary
 
@@ -16,15 +15,17 @@ already implemented) and the host-key signature
 ML-DSA+Ed25519 target, gated and not yet implemented). Both RFCs ratified a
 posture that was otherwise scattered across ADRs and prose. This RFC extracts the
 **standing procedure** those two instances proved, so a third migration does not re-derive the reasoning from
-prose. It codifies three things: (1) a **retroactive-exposure decision tree**
-that decides *whether and when* a primitive migrates; (2) the **supersession
-mechanics** at the protocol and dependency layers; and (3) a **dynamic
-definition of "legacy"** — anything past its NIST/IETF disallow date, not a
-frozen list of named algorithms — which **refines MANIFIESTO commitment #3** and
-so travels the highest RFC lane. It deliberately does **not** design
-config-layer migration (no config surface exists until Phase 2) and does not set
-a uniform migration gate (RFC-0005 deliberately had none; a uniform rule would
-contradict an Accepted, immutable RFC).
+prose. It codifies two things: (1) a **retroactive-exposure decision tree**
+that decides *whether and when* a primitive migrates; and (2) the **supersession
+mechanics** at the protocol and dependency layers. It also describes, without
+formalising, how the procedure treats **"legacy" as a moving frontier** (anything
+past its NIST/IETF disallow date) — the formal refinement of MANIFIESTO
+commitment #3 to that effect is **out of scope here and deferred to a dedicated
+RFC**, since amending a founding commitment deserves its own decision rather than
+riding a procedure RFC. It deliberately does **not** design config-layer
+migration (no config surface exists until Phase 2) and does not set a uniform
+migration gate (RFC-0005 deliberately had none; a uniform rule would contradict
+an Accepted, immutable RFC).
 
 ## Motivation
 
@@ -145,40 +146,37 @@ writing a superseding ADR, never by editing the Accepted one). A migration:
   speculative (MANIFIESTO #4 / YAGNI). The Phase-2 configuration RFC owns it, and
   this procedure will be extended then.
 
-### 3. The definition of "legacy" — amendment to MANIFIESTO #3 (normative)
+### 3. How the procedure treats "legacy" (descriptive; formal amendment deferred)
 
-MANIFIESTO commitment #3 ("Cero legacy") today reads as a fixed blocklist (no
-SSH-1, no RSA, no DSA, no CBC, no `diffie-hellman-group1-sha1`, no password
-auth). This RFC **refines** it: the blocklist is the permanent **floor** — and
-the *operative* floor is [CLAUDE.md hard rule #3](../../CLAUDE.md), which
-enumerates more than the MANIFIESTO prose (it adds **ECDSA-NIST**, `ssh-rsa`,
-and compression); the MANIFIESTO list is illustrative, CLAUDE.md rule #3 is the
-compile-time blocklist. On top of that floor, "legacy" additionally means **any
-primitive past its NIST or IETF *disallow* date** — deprecation is the trigger
-that *begins* the gated migration, not the
-legacy line itself (so a deprecated-but-not-disallowed primitive, e.g.
-`ssh-ed25519` in 2030–2035 under RFC-0006, is not yet legacy). Zero-legacy = the
-floor plus the *disallowed* is never compiled in, and §8.10's
-migrate-before-disallow commitment is the moving frontier above the floor.
+The decision tree above needs a working notion of when a primitive has become
+*legacy* (must be gone) versus merely *deprecated* (migration has been
+triggered). The procedure uses this frontier:
 
-Two clarifications the floor forces. First, **the floor is a policy floor, not a
-uniform compile-out rule**: MANIFIESTO #3 says password auth is barred "en el
-perfil por defecto" (off by default), whereas SSH-1/RSA/DSA/CBC are never
-compiled in at all. Where the policy floor and the implementation differ, the
-[CLAUDE.md hard rule #3](../../CLAUDE.md) ceiling ("not merely configured off")
-governs what may be compiled in. Second, the classical half of an accepted
-*hybrid* (X25519 in the KEX, Ed25519 in the composite signature) is **not**
-legacy while the hybrid is the mechanism — zero-legacy forbids classical-*only*,
-not classical-*plus*-PQ.
+- A primitive is **legacy** once it is past its NIST/IETF **disallow** date, or
+  it is on the project's standing blocklist. **Deprecation** (~2030 for elliptic
+  curves per NIST IR 8547) is the *trigger* that begins a gated migration, not
+  the legacy line itself — so a deprecated-but-not-disallowed primitive (e.g.
+  `ssh-ed25519` in 2030–2035 under RFC-0006) is not yet legacy and legitimately
+  stays compiled in.
+- The classical half of an accepted **hybrid** (X25519 in the KEX, Ed25519 in
+  the composite signature) is **not** legacy while the hybrid is the mechanism —
+  zero-legacy forbids classical-*only*, not classical-*plus*-PQ.
 
-The external precedent that "legacy" is a standards-body-maintained moving
-target — not a project opinion — is **[RFC 9142](https://www.rfc-editor.org/rfc/rfc9142.html)**
-(the IETF's maintained SSH key-exchange guidance with its MUST-NOT / SHOULD-NOT
-lists), already cited in threat-model §6.1. The MANIFIESTO edit adds a short
-passage (three sentences) to commitment #3 to this effect; because it refines a
-MANIFIESTO commitment, this RFC travels the highest lane per the RFC process (and per the
-precedent RFC-0005 set: a challenge to a MANIFIESTO commitment belongs in an RFC
-that amends it).
+The **standing blocklist** — the items that must never be compiled in — is the
+one CLAUDE.md hard rule #3 already enumerates for reviewers (SSH-1, RSA, DSA,
+**ECDSA-NIST**, CBC modes, `diffie-hellman-group1/14-sha1`, `ssh-rsa`, password
+auth, compression); it is broader than the MANIFIESTO #3 prose, which is
+illustrative. [RFC 9142](https://www.rfc-editor.org/rfc/rfc9142.html) (the IETF's
+maintained SSH-KEX MUST-NOT / SHOULD-NOT lists, already cited in threat-model
+§6.1) is the external precedent that "legacy" is a standards-body-maintained
+moving target, not a project opinion.
+
+**This section is descriptive, not an amendment.** Formalising the moving-frontier
+notion of "legacy" *into MANIFIESTO commitment #3* refines a founding commitment,
+which is the highest RFC lane and deserves its own decision — it is **out of scope
+here and deferred to a dedicated RFC** (see Future possibilities). Nothing in this
+RFC edits `MANIFIESTO.es.md` or relocates authority: CLAUDE.md and the MANIFIESTO
+remain what they are, and the RFCs remain authoritative over both.
 
 ## Drawbacks
 
@@ -193,10 +191,12 @@ that amends it).
   (small surface). Guarded explicitly: every migration remains RFC-gated and
   one-primitive-at-a-time; the procedure disciplines migrations, it does not
   cheapen them.
-- **Amending MANIFIESTO is heavy.** Touching a founding commitment is not
-  routine. Justified: the paradox is real (a frozen blocklist cannot stay
-  zero-legacy over 30 years), and the amendment is a short refinement that
-  *strengthens* the commitment, not a retreat from it.
+- **The moving-frontier "legacy" notion is described here but not yet
+  normative in MANIFIESTO.** §3 explains how the procedure treats legacy, but
+  the manifesto prose still reads as a frozen list until a dedicated RFC amends
+  commitment #3. Accepted deliberately: amending a founding commitment is the
+  highest RFC lane and deserves its own decision, not a rider on a procedure RFC
+  (this separation is itself the "one decision per RFC" discipline).
 - **The procedure is a skeleton, not a full generalization.** No config-layer
   design and no named watch-trigger cadence/owner. Accepted: those depend on
   artifacts (the config file) and governance (a cadence owner) that do not exist
@@ -218,8 +218,9 @@ that amends it).
   the reconstruct-from-prose cost the project has already paid to fix twice.
 
 **Impact of not doing this:** the next migration re-derives the exposure logic
-and supersession mechanics from scratch, and the zero-legacy paradox stays
-unresolved — MANIFIESTO #3 keeps reading as a list that will go stale.
+and supersession mechanics from scratch. (The zero-legacy paradox in the
+MANIFIESTO prose stays open regardless — its formal resolution is the deferred
+amendment RFC, not this one.)
 
 ## Prior art
 
@@ -253,12 +254,15 @@ unresolved — MANIFIESTO #3 keeps reading as a list that will go stale.
   reviews NIST/IETF movement on a cadence; today the headroom review was a
   one-off. Who owns it and how often is left to `GOVERNANCE.md` (the single-
   maintainer residual in threat-model §7 is the relevant constraint).
-- **Whether the amendment wording belongs in MANIFIESTO's commitment #3 prose or
-  a linked clarification.** This RFC proposes the refinement inline;
-  the lead may prefer a footnote.
+- **The formal amendment of MANIFIESTO commitment #3** (making the
+  moving-frontier "legacy" notion normative) is deferred to a dedicated RFC; its
+  exact wording and lane are that RFC's to settle, not this one's.
 
 ## Future possibilities
 
+- A **dedicated RFC amending MANIFIESTO commitment #3** to make the
+  moving-frontier definition of "legacy" (described in §3) normative — the
+  highest-lane decision this procedure deliberately does not fold in.
 - The **Phase-2 configuration RFC** extends this procedure with the config layer
   (operator-visible algorithm selection, if any, and its migration).
 - A **third migration instance** (ML-KEM-768→1024, an HQC cross-family hedge, or
