@@ -57,8 +57,12 @@ jobs:
           # files are past their Valid-Until. The client + build tools come
           # from the frozen snapshot.
           rm -f /etc/apt/sources.list.d/debian.sources
-          echo "deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/${SNAPSHOT}/ trixie main" \
-            > /etc/apt/sources.list.d/snapshot.list
+          # main + security: the deb13uN openssh-client is a security update
+          # (trixie-security), so both snapshot archives are needed.
+          {
+            echo "deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/${SNAPSHOT}/ trixie main"
+            echo "deb [check-valid-until=no] https://snapshot.debian.org/archive/debian-security/${SNAPSHOT}/ trixie-security main"
+          } > /etc/apt/sources.list.d/snapshot.list
           apt-get -o Acquire::Check-Valid-Until=false update
           apt-get install -y --no-install-recommends \
             curl gcc libc6-dev "openssh-client=${OPENSSH_VERSION}"
