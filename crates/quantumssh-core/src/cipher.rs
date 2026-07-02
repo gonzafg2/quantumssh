@@ -22,7 +22,8 @@
 //! read, and the tag check happens before decryption is attempted
 //! (encrypt-then-MAC order in both constructions).
 
-use aes_gcm::aead::AeadInPlace;
+use aes_gcm::aead::AeadInOut;
+use aes_gcm::aead::inout::InOutBuf;
 use aes_gcm::{Aes256Gcm, KeyInit as _, Nonce};
 use chacha20::ChaCha20Legacy;
 use chacha20::cipher::{KeyIvInit, StreamCipher, StreamCipherSeek};
@@ -261,7 +262,7 @@ impl ChaCha20Poly1305Openssh {
     /// key's keystream at block counter 0 for this sequence number.
     fn poly_key(&self, nonce: [u8; 8]) -> Zeroizing<[u8; 32]> {
         let mut key = Zeroizing::new([0u8; 32]);
-        let mut stream = ChaCha20Legacy::new(self.k_main.as_ref().into(), (&nonce).into());
+        let mut stream = ChaCha20Legacy::new((&*self.k_main).into(), (&nonce).into());
         stream.apply_keystream(key.as_mut());
         key
     }
@@ -274,12 +275,12 @@ impl ChaCha20Poly1305Openssh {
 
         // Length: encrypted under the header key, block counter 0.
         let mut length_bytes = packet_length.to_be_bytes();
-        ChaCha20Legacy::new(self.k_header.as_ref().into(), (&nonce).into())
+        ChaCha20Legacy::new((&*self.k_header).into(), (&nonce).into())
             .apply_keystream(&mut length_bytes);
 
         // Body: main key, keystream starting at block 1 (the first
         // block is reserved for the Poly1305 key).
-        let mut stream = ChaCha20Legacy::new(self.k_main.as_ref().into(), (&nonce).into());
+        let mut stream = ChaCha20Legacy::new((&*self.k_main).into(), (&nonce).into());
         stream.seek(64u32);
         stream.apply_keystream(&mut body);
 
@@ -297,7 +298,7 @@ impl ChaCha20Poly1305Openssh {
     fn body_len(&self, seqnr: u32, length_bytes: [u8; 4]) -> Result<usize, CipherError> {
         let nonce = u64::from(seqnr).to_be_bytes();
         let mut decrypted = length_bytes;
-        ChaCha20Legacy::new(self.k_header.as_ref().into(), (&nonce).into())
+        ChaCha20Legacy::new((&*self.k_header).into(), (&nonce).into())
             .apply_keystream(&mut decrypted);
         let packet_length = u32::from_be_bytes(decrypted);
         validate_aead_length(packet_length, Self::BLOCK)
@@ -324,7 +325,7 @@ impl ChaCha20Poly1305Openssh {
             return Err(CipherError::BadTag);
         }
 
-        let mut stream = ChaCha20Legacy::new(self.k_main.as_ref().into(), (&nonce).into());
+        let mut stream = ChaCha20Legacy::new((&*self.k_main).into(), (&nonce).into());
         stream.seek(64u32);
         stream.apply_keystream(ciphertext);
         Ok(wire::decode_packet_body(ciphertext)?.to_vec())
@@ -338,7 +339,10 @@ fn finalize_openssh_poly(key: &[u8; 32], length_bytes: [u8; 4], ciphertext: &[u8
     let mut msg = Vec::with_capacity(4 + ciphertext.len());
     msg.extend_from_slice(&length_bytes);
     msg.extend_from_slice(ciphertext);
-    Poly1305::new(key.into()).compute_unpadded(&msg).into()
+    Poly1305::new_from_slice(key)
+        .expect("poly1305 key is exactly 32 bytes")
+        .compute_unpadded(&msg)
+        .into()
 }
 
 /// `aes256-gcm@openssh.com` (RFC 5647, with the RFC 5116 §5.1 nonce:
@@ -356,7 +360,7 @@ impl Aes256GcmOpenssh {
     const BLOCK: usize = 16;
 
     fn new(key: &[u8], iv: &[u8]) -> Self {
-        let cipher = Aes256Gcm::new(key.into());
+        let cipher = Aes256Gcm::new_from_slice(key).expect("aes-256-gcm key is exactly 32 bytes");
         let mut fixed = [0u8; 4];
         fixed.copy_from_slice(&iv[..4]);
         let mut counter = [0u8; 8];
@@ -391,9 +395,14 @@ impl Aes256GcmOpenssh {
         let length_bytes = packet_length.to_be_bytes();
 
         let nonce = self.nonce();
+        let nonce_arr = Nonce::try_from(&nonce[..]).expect("gcm nonce is 12 bytes");
         let tag = self
             .cipher
-            .encrypt_in_place_detached(Nonce::from_slice(&nonce), &length_bytes, &mut body)
+            .encrypt_inout_detached(
+                &nonce_arr,
+                &length_bytes,
+                InOutBuf::from(body.as_mut_slice()),
+            )
             .map_err(|_| CipherError::BadTag)?;
         self.invocation = self.invocation.wrapping_add(1);
 
@@ -421,12 +430,14 @@ impl Aes256GcmOpenssh {
         let (ciphertext, tag) = body.split_at_mut(ct_len);
 
         let nonce = self.nonce();
+        let nonce_arr = Nonce::try_from(&nonce[..]).expect("gcm nonce is 12 bytes");
+        let tag_arr = aes_gcm::Tag::try_from(&*tag).map_err(|_| CipherError::BadTag)?;
         self.cipher
-            .decrypt_in_place_detached(
-                Nonce::from_slice(&nonce),
+            .decrypt_inout_detached(
+                &nonce_arr,
                 &length_bytes,
-                ciphertext,
-                aes_gcm::Tag::from_slice(tag),
+                InOutBuf::from(&mut *ciphertext),
+                &tag_arr,
             )
             .map_err(|_| CipherError::BadTag)?;
         self.invocation = self.invocation.wrapping_add(1);
