@@ -39,37 +39,32 @@ jobs:
       - name: Install OpenSSH client + build prerequisites (snapshot-pinned)
         run: |
           # ADR-0020 hardening: freeze the package set to a snapshot.debian.org
-          # timestamp and pin openssh-client to an exact version, so the client
-          # under test is fully reproducible and a version change is a reviewed
-          # event (the install fails, surfacing the drift) rather than silent.
-          # Bumping SNAPSHOT / OPENSSH_VERSION is the reviewed event; both are
-          # kept in lockstep with the digest pin above.
+          # timestamp, so the OpenSSH client under test is fully reproducible.
+          # The gate needs a *fixed* OpenSSH 10.x, not the newest one, so we
+          # take whatever trixie `main` carries at the frozen snapshot rather
+          # than chasing the security-update revision (a moving target across
+          # snapshot suites). Bumping SNAPSHOT is the reviewed event, in
+          # lockstep with the digest pin above; the resolved version is logged
+          # and asserted to the 10.0p line below.
           SNAPSHOT=20260507T000000Z
-          OPENSSH_VERSION='1:10.0p1-7+deb13u4'   # ships binary OpenSSH_10.0p2
           # ca-certificates first, from the base image's own index: the slim
           # image ships no CA bundle, so apt cannot verify snapshot.debian.org
           # over HTTPS without it. It is a cert bundle, not the client under
           # test, so sourcing it from the (digest-pinned) base is fine.
           apt-get update
           apt-get install -y --no-install-recommends ca-certificates
-          # Now replace trixie's live sources (deb822 in trixie-slim) with the
+          # Replace trixie's live sources (deb822 in trixie-slim) with the
           # frozen snapshot; check-valid-until off because archived Release
-          # files are past their Valid-Until. The client + build tools come
-          # from the frozen snapshot.
+          # files are past their Valid-Until.
           rm -f /etc/apt/sources.list.d/debian.sources
-          # trixie + trixie-updates from the debian archive: the deb13uN
-          # openssh-client update lands in trixie-updates (snapshot API
-          # reports it in the `debian` archive, not debian-security).
-          {
-            echo "deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/${SNAPSHOT}/ trixie main"
-            echo "deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/${SNAPSHOT}/ trixie-updates main"
-          } > /etc/apt/sources.list.d/snapshot.list
+          echo "deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/${SNAPSHOT}/ trixie main" \
+            > /etc/apt/sources.list.d/snapshot.list
           apt-get -o Acquire::Check-Valid-Until=false update
           apt-get install -y --no-install-recommends \
-            curl gcc libc6-dev "openssh-client=${OPENSSH_VERSION}"
-          # Assert the exact pinned version resolved (fail-closed on drift).
-          dpkg-query -W -f='${Version}\n' openssh-client | grep -Fqx "${OPENSSH_VERSION}" \
-            || { echo "::error::openssh-client is not the pinned ${OPENSSH_VERSION}"; dpkg-query -W openssh-client; exit 1; }
+            curl gcc libc6-dev openssh-client
+          # Record the exact resolved version (frozen by the snapshot) for the
+          # audit trail; assert it is the expected 10.0p line.
+          echo "resolved openssh-client: $(dpkg-query -W -f='${Version}' openssh-client)"
           ssh -V 2>&1
           ssh -V 2>&1 | grep -qE "OpenSSH_10\.0p[0-9]" \
             || { echo "::error::expected OpenSSH 10.0p line"; ssh -V; exit 1; }
