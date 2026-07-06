@@ -71,13 +71,16 @@ impl HostKey {
     /// [`HostKeyError::Inconsistent`] when check bytes or the embedded
     /// public key disagree with the seed.
     pub fn from_openssh_pem(pem: &str) -> Result<Self, HostKeyError> {
-        let body: String = pem
-            .lines()
-            .map(str::trim)
-            .skip_while(|l| *l != PEM_HEADER)
-            .skip(1)
-            .take_while(|l| *l != PEM_FOOTER)
-            .collect();
+        // Zeroizing: the base64 body encodes the private-seed container;
+        // erase it on drop like the decoded `raw` below (threat model §4.3).
+        let body = Zeroizing::new(
+            pem.lines()
+                .map(str::trim)
+                .skip_while(|l| *l != PEM_HEADER)
+                .skip(1)
+                .take_while(|l| *l != PEM_FOOTER)
+                .collect::<String>(),
+        );
         if body.is_empty() {
             return Err(HostKeyError::BadContainer);
         }
