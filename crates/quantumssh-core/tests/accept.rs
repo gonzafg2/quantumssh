@@ -1143,6 +1143,80 @@ async fn max_auth_attempts_disconnects() {
     }
 }
 
+#[tokio::test]
+async fn channel_messages_before_open_are_rejected() {
+    // RFC 4254 §5.1: recipient ids exist only after CHANNEL_OPEN. Every
+    // channel message for a never-opened channel is a protocol
+    // violation, not something to answer (the type-state discipline).
+    // Each frame is WELL-FORMED — the guard rejects on the message type
+    // before parsing, so a malformed frame would not prove it is the
+    // guard (not a parse error) doing the work. All five guarded types
+    // are covered.
+    let cases: [(&str, Vec<u8>); 5] = [
+        ("CHANNEL_REQUEST", channel_request(0, b"exec")),
+        ("CHANNEL_DATA", channel_data(0, b"x")),
+        ("CHANNEL_WINDOW_ADJUST", window_adjust(0, 1)),
+        ("CHANNEL_EOF", channel_one_field(CH_EOF, 0)),
+        ("CHANNEL_CLOSE", channel_one_field(CH_CLOSE, 0)),
+    ];
+    for (label, frame) in cases {
+        let (addr, host_key) = start_server(Duration::from_secs(30)).await;
+        let (mut stream, mut client) = authenticate(addr, &host_key).await;
+        client.write_sealed(&mut stream, &frame).await;
+        let reply = client.read_sealed(&mut stream).await;
+        assert_eq!(
+            reply.first(),
+            Some(&kex::SSH_MSG_DISCONNECT),
+            "{label} must disconnect before open"
+        );
+    }
+}
+
+#[tokio::test]
+async fn pk_ok_probes_spend_the_attempt_budget() {
+    // A known-key probe (PK_OK) must count against MAX_AUTH_ATTEMPTS:
+    // it is otherwise the only pre-auth message repeatable without
+    // budget (threat model §5.3.1).
+    let auth_signing = SigningKey::from_bytes(&[77u8; 32]);
+    let auth_vk = auth_signing.verifying_key();
+    let key_blob = auth_test_blob(&auth_vk);
+
+    let (addr, host_key) = start_server(Duration::from_secs(30)).await;
+    let mut stream = connect(addr).await;
+    let (mut client, _session_id, _server_id) = establish(
+        &mut stream,
+        &host_key,
+        OPENSSH_KEX_PLAIN,
+        "chacha20-poly1305@openssh.com",
+        "chacha20-poly1305@openssh.com",
+    )
+    .await;
+
+    client
+        .write_sealed(&mut stream, &service_request_payload())
+        .await;
+    let reply = client.read_sealed(&mut stream).await;
+    assert_eq!(reply.first(), Some(&6));
+
+    for i in 0..12 {
+        client
+            .write_sealed(&mut stream, &probe_auth_request(&key_blob))
+            .await;
+        let reply = client.read_sealed(&mut stream).await;
+        if i < 11 {
+            assert_eq!(
+                reply.first(),
+                Some(&auth::SSH_MSG_USERAUTH_PK_OK),
+                "probe {i}"
+            );
+        } else {
+            let mut r = Reader::new(&reply);
+            assert_eq!(r.byte().unwrap(), kex::SSH_MSG_DISCONNECT, "probe {i}");
+            assert_eq!(r.uint32().unwrap(), 11, "DISCONNECT_BY_APPLICATION");
+        }
+    }
+}
+
 // ---- M6: re-keying (ADR-0026) ----
 
 /// Like `authenticate`, but returns the `session_id` and server id line a
