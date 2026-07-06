@@ -48,9 +48,6 @@ pub enum CipherError {
     /// The authentication tag did not verify, or decryption failed.
     /// Fail closed: nothing about the packet is trustworthy.
     BadTag,
-    /// Sequence-number mismatch detected at the packet level: the GCM
-    /// invocation delta does not equal the expected `seqnr`.
-    BadSequence,
     /// The (decrypted or cleartext) length field is invalid.
     Wire(WireError),
 }
@@ -65,7 +62,6 @@ impl std::fmt::Display for CipherError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::BadTag => write!(f, "packet authentication failed"),
-            Self::BadSequence => write!(f, "packet sequence number mismatch"),
             Self::Wire(e) => write!(f, "invalid packet length: {e}"),
         }
     }
@@ -536,12 +532,12 @@ mod tests {
         let mut length_bytes = [0u8; 4];
         length_bytes.copy_from_slice(&packet[..4]);
         // Sealed with seqnr 5, read with seqnr 6: the wrong nonce
-        // decrypts the length to garbage, which fails length validation
-        // and is reported as the length error it is (not BadSequence,
-        // which is reserved for the GCM invocation-delta check).
+        // decrypts the length to garbage, which body_len can only reject
+        // as a bad packet length (the sole failure `validate_aead_length`
+        // returns).
         assert!(matches!(
             rx.body_len(6, length_bytes),
-            Err(CipherError::Wire(_))
+            Err(CipherError::Wire(WireError::BadPacketLength(_)))
         ));
     }
 
