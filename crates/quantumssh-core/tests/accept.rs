@@ -715,6 +715,15 @@ fn window_adjust(recipient: u32, add: u32) -> Vec<u8> {
     w.into_bytes()
 }
 
+/// `SSH_MSG_GLOBAL_REQUEST` (RFC 4254 §4).
+fn global_request(name: &[u8], want_reply: bool) -> Vec<u8> {
+    let mut w = Writer::new();
+    w.put_byte(80);
+    w.put_string(name);
+    w.put_boolean(want_reply);
+    w.into_bytes()
+}
+
 /// Reads the `OPEN_CONFIRMATION`, returning the server's channel id.
 async fn expect_open_confirmation(client: &mut SealedClient, stream: &mut TcpStream) -> u32 {
     let conf = client.read_sealed(stream).await;
@@ -1171,6 +1180,7 @@ const fn test_rekey(max_bytes: u64) -> RekeyThresholds {
     RekeyThresholds {
         max_bytes,
         max_interval: Duration::from_hours(1),
+        max_packets: u32::MAX,
         completion_deadline: Duration::from_secs(5),
     }
 }
@@ -1376,5 +1386,152 @@ async fn byte_threshold_triggers_server_rekey() {
     assert!(rekeyed, "server must have initiated a re-key");
     assert_eq!(stdout.len(), 20000, "all output survives the key switch");
     assert!(stdout.iter().all(|&b| b == 0));
+    assert_eq!(exit, Some(0));
+}
+
+#[tokio::test]
+async fn ignore_debug_unimplemented_are_tolerated_post_auth() {
+    // RFC 4253 §11.2–§11.4: IGNORE and DEBUG MUST be accepted at any
+    // time outside the KEX handshake; none of the three may kill the
+    // session.
+    let (addr, host_key) = start_server(Duration::from_secs(30)).await;
+    let (mut stream, mut client) = authenticate(addr, &host_key).await;
+
+    let mut ignore = Writer::new();
+    ignore.put_byte(2); // SSH_MSG_IGNORE
+    ignore.put_string(b"chaff");
+    client.write_sealed(&mut stream, &ignore.into_bytes()).await;
+
+    let mut debug = Writer::new();
+    debug.put_byte(4); // SSH_MSG_DEBUG
+    debug.put_boolean(false);
+    debug.put_string(b"client-side debug message");
+    debug.put_string(b"");
+    client.write_sealed(&mut stream, &debug.into_bytes()).await;
+
+    let mut unimpl = Writer::new();
+    unimpl.put_byte(3); // SSH_MSG_UNIMPLEMENTED
+    unimpl.put_uint32(7);
+    client.write_sealed(&mut stream, &unimpl.into_bytes()).await;
+
+    // The session survived: a normal exec round-trip still works.
+    client.write_sealed(&mut stream, &channel_open(0)).await;
+    let server_chan = expect_open_confirmation(&mut client, &mut stream).await;
+    client
+        .write_sealed(&mut stream, &channel_exec(server_chan, b"echo alive"))
+        .await;
+    let (stdout, _stderr, exit) = collect_session(&mut client, &mut stream, server_chan).await;
+    assert_eq!(stdout, b"alive\n");
+    assert_eq!(exit, Some(0));
+}
+
+#[tokio::test]
+async fn global_request_replies_only_when_want_reply() {
+    let (addr, host_key) = start_server(Duration::from_secs(30)).await;
+    let (mut stream, mut client) = authenticate(addr, &host_key).await;
+
+    // want_reply = TRUE → exactly one REQUEST_FAILURE (RFC 4254 §4).
+    client
+        .write_sealed(&mut stream, &global_request(b"keepalive@openssh.com", true))
+        .await;
+    assert_eq!(client.read_sealed(&mut stream).await, vec![82]);
+
+    // want_reply = FALSE → no reply at all: the server's next packet
+    // belongs to the channel open that follows (a spurious
+    // REQUEST_FAILURE here would fail expect_open_confirmation).
+    client
+        .write_sealed(
+            &mut stream,
+            &global_request(b"no-more-sessions@openssh.com", false),
+        )
+        .await;
+    client.write_sealed(&mut stream, &channel_open(0)).await;
+    let server_chan = expect_open_confirmation(&mut client, &mut stream).await;
+    client
+        .write_sealed(&mut stream, &channel_exec(server_chan, b"echo paired"))
+        .await;
+    let (stdout, _stderr, exit) = collect_session(&mut client, &mut stream, server_chan).await;
+    assert_eq!(stdout, b"paired\n");
+    assert_eq!(exit, Some(0));
+}
+
+#[tokio::test]
+async fn truncated_global_request_is_rejected() {
+    // Fail closed: a GLOBAL_REQUEST without name/want_reply is a
+    // protocol violation, not something to guess a reply for.
+    let (addr, host_key) = start_server(Duration::from_secs(30)).await;
+    let (mut stream, mut client) = authenticate(addr, &host_key).await;
+
+    client.write_sealed(&mut stream, &[80]).await;
+    let reply = client.read_sealed(&mut stream).await;
+    assert_eq!(reply.first(), Some(&kex::SSH_MSG_DISCONNECT));
+}
+
+#[tokio::test]
+async fn packet_threshold_triggers_server_rekey() {
+    // Byte and time triggers disabled; only the RFC 4253 §9 packet
+    // backstop can fire. Enough output crosses it on the tx side.
+    let cipher = "chacha20-poly1305@openssh.com";
+    let thresholds = RekeyThresholds {
+        max_bytes: u64::MAX,
+        max_interval: Duration::from_hours(1),
+        max_packets: 40,
+        completion_deadline: Duration::from_secs(5),
+    };
+    let (addr, host_key) = start_server_rekey(Duration::from_secs(30), thresholds).await;
+    let (mut stream, mut client, session_id, server_id) =
+        authenticate_full(addr, &host_key, cipher).await;
+
+    client.write_sealed(&mut stream, &channel_open(0)).await;
+    let server_chan = expect_open_confirmation(&mut client, &mut stream).await;
+    client
+        .write_sealed(
+            &mut stream,
+            &channel_exec(server_chan, b"head -c 2000000 /dev/zero"),
+        )
+        .await;
+
+    let mut stdout = Vec::new();
+    let mut exit = None;
+    let mut rekeyed = false;
+    loop {
+        let pkt = client.read_sealed(&mut stream).await;
+        match pkt.first().copied() {
+            Some(20) => {
+                client
+                    .rekey_as_client(&mut stream, &session_id, &server_id, cipher, Some(pkt))
+                    .await;
+                rekeyed = true;
+            }
+            Some(94) => {
+                let mut r = Reader::new(&pkt);
+                let _ = r.byte();
+                let _ = r.uint32();
+                let d = r.string(32 * 1024).unwrap();
+                stdout.extend_from_slice(d);
+                let credit = u32::try_from(d.len()).unwrap();
+                client
+                    .write_sealed(&mut stream, &window_adjust(server_chan, credit))
+                    .await;
+            }
+            Some(98) => {
+                let mut r = Reader::new(&pkt);
+                let _ = r.byte();
+                let _ = r.uint32();
+                if r.string(64).unwrap() == b"exit-status" {
+                    let _ = r.boolean();
+                    exit = Some(i32::from_ne_bytes(r.uint32().unwrap().to_ne_bytes()));
+                }
+            }
+            Some(97) => break, // CHANNEL_CLOSE
+            _ => {}            // SUCCESS, EOF
+        }
+    }
+    assert!(rekeyed, "the packet backstop must have initiated a re-key");
+    assert_eq!(
+        stdout.len(),
+        2_000_000,
+        "all output survives the key switch"
+    );
     assert_eq!(exit, Some(0));
 }
