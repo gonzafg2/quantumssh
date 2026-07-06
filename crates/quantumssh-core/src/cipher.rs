@@ -48,10 +48,8 @@ pub enum CipherError {
     /// The authentication tag did not verify, or decryption failed.
     /// Fail closed: nothing about the packet is trustworthy.
     BadTag,
-    /// Sequence-number mismatch detected at the packet level:
-    /// the GCM invocation delta does not equal the expected `seqnr`,
-    /// or the `ChaCha20` decrypted length fails validation — the
-    /// keystream was derived from the wrong nonce.
+    /// Sequence-number mismatch detected at the packet level: the GCM
+    /// invocation delta does not equal the expected `seqnr`.
     BadSequence,
     /// The (decrypted or cleartext) length field is invalid.
     Wire(WireError),
@@ -301,9 +299,7 @@ impl ChaCha20Poly1305Openssh {
         ChaCha20Legacy::new((&*self.k_header).into(), (&nonce).into())
             .apply_keystream(&mut decrypted);
         let packet_length = u32::from_be_bytes(decrypted);
-        validate_aead_length(packet_length, Self::BLOCK)
-            .map(|len| len + TAG_LEN)
-            .map_err(|_| CipherError::BadSequence)
+        validate_aead_length(packet_length, Self::BLOCK).map(|len| len + TAG_LEN)
     }
 
     fn open(
@@ -540,11 +536,12 @@ mod tests {
         let mut length_bytes = [0u8; 4];
         length_bytes.copy_from_slice(&packet[..4]);
         // Sealed with seqnr 5, read with seqnr 6: the wrong nonce
-        // produces garbage for the decrypted length — the cipher
-        // rejects as BadSequence (likely wrong keystream).
+        // decrypts the length to garbage, which fails length validation
+        // and is reported as the length error it is (not BadSequence,
+        // which is reserved for the GCM invocation-delta check).
         assert!(matches!(
             rx.body_len(6, length_bytes),
-            Err(CipherError::BadSequence)
+            Err(CipherError::Wire(_))
         ));
     }
 

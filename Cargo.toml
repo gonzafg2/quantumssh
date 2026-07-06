@@ -55,10 +55,13 @@ zeroize       = { version = "1", default-features = false, features = ["zeroize_
 # the standard AEAD.
 chacha20 = { version = "0.10", default-features = false, features = ["legacy"] }  # ChaCha20Legacy (64-bit-nonce djb variant OpenSSH uses) lives behind the `legacy` feature in 0.10, which pulls in `cipher`
 # ponytail: chacha20 0.10 dropped its `zeroize` feature upstream, so the
-# transient expanded ChaCha20 stream state is no longer erased on drop. The
-# ceiling: this is per-operation, short-lived keystream state (not the keys —
-# k_main/k_header stay in Zeroizing, threat model §4.3). Upgrade path: a
-# chacha20 release that restores zeroize, or a first-party Drop wrapper.
+# transient expanded ChaCha20 state is no longer erased on drop. The ceiling:
+# a fresh `ChaCha20Legacy::new` per packet (seal, open, body_len, poly_key)
+# copies the key words k_main/k_header into that state matrix, so short-lived
+# copies of key material — not just keystream — go unerased per operation. The
+# long-lived keys stay in Zeroizing (threat model §4.3); only these
+# per-operation copies leak. Upgrade path: a chacha20 release that restores
+# zeroize, or a first-party Drop wrapper.
 poly1305 = { version = "0.9", default-features = false, features = ["zeroize"] }
 aes-gcm  = { version = "0.11", default-features = false, features = ["aes", "alloc", "zeroize"] }
 # Declared ONLY to switch on its `zeroize` feature (Cargo feature
