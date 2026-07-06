@@ -568,6 +568,22 @@ impl Driver {
         };
         match msg {
             SSH_MSG_CHANNEL_OPEN => self.on_channel_open(session, &mut r).await,
+            // Before CHANNEL_OPEN no recipient id has meaning
+            // (RFC 4254 §5.1 assigns them at open): answering CLOSE or
+            // REQUEST for a channel that never existed is the
+            // accept-and-branch shape the type-state discipline
+            // forbids. Fail closed instead.
+            SSH_MSG_CHANNEL_REQUEST
+            | SSH_MSG_CHANNEL_DATA
+            | SSH_MSG_CHANNEL_WINDOW_ADJUST
+            | SSH_MSG_CHANNEL_EOF
+            | SSH_MSG_CHANNEL_CLOSE
+                if self.state == ChannelState::BeforeOpen =>
+            {
+                Err(session
+                    .protocol_disconnect("channel-message-before-open")
+                    .await)
+            }
             SSH_MSG_CHANNEL_REQUEST => self.on_channel_request(session, &mut r).await,
             SSH_MSG_CHANNEL_DATA => self.on_channel_data(session, &mut r).await,
             SSH_MSG_CHANNEL_WINDOW_ADJUST => self.on_window_adjust(session, &mut r).await,

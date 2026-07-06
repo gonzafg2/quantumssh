@@ -1143,6 +1143,26 @@ async fn max_auth_attempts_disconnects() {
     }
 }
 
+#[tokio::test]
+async fn channel_messages_before_open_are_rejected() {
+    // RFC 4254 §5.1: recipient ids exist only after CHANNEL_OPEN. A
+    // CLOSE or REQUEST for a never-opened channel is a protocol
+    // violation, not something to answer (the type-state discipline).
+    for msg in [CH_CLOSE, CH_REQUEST, CH_EOF] {
+        let (addr, host_key) = start_server(Duration::from_secs(30)).await;
+        let (mut stream, mut client) = authenticate(addr, &host_key).await;
+        client
+            .write_sealed(&mut stream, &channel_one_field(msg, 0))
+            .await;
+        let reply = client.read_sealed(&mut stream).await;
+        assert_eq!(
+            reply.first(),
+            Some(&kex::SSH_MSG_DISCONNECT),
+            "message {msg} must disconnect before open"
+        );
+    }
+}
+
 // ---- M6: re-keying (ADR-0026) ----
 
 /// Like `authenticate`, but returns the `session_id` and server id line a
