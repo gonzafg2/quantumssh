@@ -7,7 +7,7 @@
 //! ADR-0024 decision. The JSON format needs no equivalent — serde
 //! escapes control bytes.
 
-use std::fmt;
+use std::fmt::{self, Write as _};
 
 use tracing::field::{Field, Visit};
 use tracing_subscriber::field::RecordFields;
@@ -41,34 +41,51 @@ struct EscapingVisitor<'a, 'writer> {
 }
 
 impl EscapingVisitor<'_, '_> {
-    fn record_value(&mut self, field: &Field, value: &str) {
+    fn record_with(
+        &mut self,
+        field: &Field,
+        write_value: impl FnOnce(&mut Writer<'_>) -> fmt::Result,
+    ) {
         if self.result.is_err() {
             return;
         }
-        self.result = self.write_field(field, value);
+        self.result = (|| {
+            if !self.first {
+                self.writer.write_char(' ')?;
+            }
+            if field.name() != "message" {
+                write!(self.writer, "{}=", field.name())?;
+            }
+            write_value(self.writer)
+        })();
         self.first = false;
-    }
-
-    fn write_field(&mut self, field: &Field, value: &str) -> fmt::Result {
-        if !self.first {
-            self.writer.write_char(' ')?;
-        }
-        if field.name() != "message" {
-            write!(self.writer, "{}=", field.name())?;
-        }
-        write_escaped(self.writer, value)
     }
 }
 
 impl Visit for EscapingVisitor<'_, '_> {
     fn record_str(&mut self, field: &Field, value: &str) {
-        self.record_value(field, value);
+        self.record_with(field, |w| write_escaped(w, value));
     }
 
     fn record_debug(&mut self, field: &Field, value: &dyn fmt::Debug) {
         // `%`-recorded fields (Display) arrive here too — this is the
-        // path an attacker-chosen `command` takes.
-        self.record_value(field, &format!("{value:?}"));
+        // path an attacker-chosen `command` takes. Formatting streams
+        // through the escaping adapter: no intermediate String.
+        self.record_with(field, |w| {
+            let mut escaping = EscapingWriter(w);
+            write!(escaping, "{value:?}")
+        });
+    }
+}
+
+/// `fmt::Write` adapter over the layer's [`Writer`] that escapes
+/// control bytes as it writes, so `Debug`/`Display` formatting streams
+/// straight through [`write_escaped`] without allocating.
+struct EscapingWriter<'a, 'writer>(&'a mut Writer<'writer>);
+
+impl fmt::Write for EscapingWriter<'_, '_> {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        write_escaped(self.0, s)
     }
 }
 
