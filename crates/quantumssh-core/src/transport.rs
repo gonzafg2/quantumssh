@@ -885,19 +885,24 @@ where
                     .await);
             }
 
+            // Every probe spends an attempt — including one whose key
+            // is known: PK_OK was otherwise the one pre-auth message a
+            // peer could spin for the whole handshake budget (threat
+            // model §5.3.1).
+            failure_count += 1;
+            if failure_count >= auth::MAX_AUTH_ATTEMPTS {
+                return Err(self
+                    .reject_sealed(Rejection {
+                        reason: "too-many-auth-attempts",
+                        disconnect_code: DISCONNECT_BY_APPLICATION,
+                    })
+                    .await);
+            }
             if authorized_keys.lookup(key_blob).is_some() {
+                // No `auth.failed` event — the probe did not fail.
                 let pk_ok = auth::build_pk_ok(auth::KEY_ALGORITHM, key_blob);
                 self.write_sealed(&pk_ok).await?;
             } else {
-                failure_count += 1;
-                if failure_count >= auth::MAX_AUTH_ATTEMPTS {
-                    return Err(self
-                        .reject_sealed(Rejection {
-                            reason: "too-many-auth-attempts",
-                            disconnect_code: DISCONNECT_BY_APPLICATION,
-                        })
-                        .await);
-                }
                 warn!(
                     target: "audit",
                     auth_method = method,
