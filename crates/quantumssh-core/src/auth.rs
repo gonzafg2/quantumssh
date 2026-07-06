@@ -130,6 +130,34 @@ impl fmt::Debug for AuthorizedKeys {
     }
 }
 
+/// True when a field is shaped like an SSH public-key type rather than
+/// an options field (the same families sshd(8) recognises).
+fn looks_like_key_type(field: &str) -> bool {
+    field.starts_with("ssh-") || field.starts_with("ecdsa-") || field.starts_with("sk-")
+}
+
+/// Skips the leading options field of an `authorized_keys` line:
+/// comma-separated, where double-quoted values may hold whitespace and
+/// `\"` escapes a quote inside them (sshd(8) AUTHORIZED_KEYS FILE
+/// FORMAT). Returns the remainder after the field's trailing
+/// whitespace — empty if the line holds nothing but options.
+fn skip_options(line: &str) -> &str {
+    let mut in_quotes = false;
+    let mut escaped = false;
+    for (i, c) in line.char_indices() {
+        if escaped {
+            escaped = false;
+        } else if c == '\\' && in_quotes {
+            escaped = true;
+        } else if c == '"' {
+            in_quotes = !in_quotes;
+        } else if c.is_whitespace() && !in_quotes {
+            return line[i..].trim_start();
+        }
+    }
+    ""
+}
+
 impl AuthorizedKeys {
     /// Loads and parses the `authorized_keys` file at `path`.
     ///
@@ -158,15 +186,23 @@ impl AuthorizedKeys {
                 continue;
             }
 
-            // Skip options: scan tokens for the key type. Token-based
-            // matching avoids substring matches inside option values
-            // (e.g. command="/usr/bin/ssh-agent").
-            let mut tokens = trimmed.split_whitespace();
-            let algo = tokens.find(|&tok| tok.starts_with("ssh-")).ok_or_else(|| {
-                AuthError::MalformedLine {
-                    line: line_no,
-                    reason: "no key type found".into(),
-                }
+            // sshd(8) line format: `[options] keytype base64 [comment]`.
+            // The options field may hold double-quoted values with
+            // embedded whitespace (`command="echo hi"`), so the key
+            // type is either the first field or the field right after
+            // a quote-aware options skip — never found by scanning
+            // arbitrary tokens, which would match key-type-shaped
+            // words inside a quoted option value.
+            let first = trimmed.split_whitespace().next().unwrap_or("");
+            let rest = if looks_like_key_type(first) {
+                trimmed
+            } else {
+                skip_options(trimmed)
+            };
+            let mut tokens = rest.split_whitespace();
+            let algo = tokens.next().ok_or_else(|| AuthError::MalformedLine {
+                line: line_no,
+                reason: "no key type found".into(),
             })?;
             if algo != KEY_ALGORITHM {
                 return Err(AuthError::UnsupportedKeyType {
@@ -393,6 +429,43 @@ mod tests {
         let path = temp_authorized_keys(&content);
         let keys = AuthorizedKeys::load(&path).expect("load");
         assert_eq!(keys.keys.len(), 1);
+    }
+
+    #[test]
+    fn quoted_option_with_spaces_and_key_type_lookalike() {
+        // The sshd(8) case that broke whitespace tokenisation: a quoted
+        // option value containing whitespace and a key-type-shaped word.
+        let signing = SigningKey::from_bytes(&[51u8; 32]);
+        let blob = build_ed25519_blob(&signing.verifying_key());
+        let b64 = host_key::base64_encode_nopad(&blob);
+        let content = format!("command=\"echo ssh-rsa x\",no-pty ssh-ed25519 {b64} test\n");
+        let path = temp_authorized_keys(&content);
+        let keys = AuthorizedKeys::load(&path).expect("load");
+        assert_eq!(keys.keys.len(), 1);
+        assert_eq!(keys.keys[0].blob, blob);
+    }
+
+    #[test]
+    fn quoted_option_with_escaped_quotes() {
+        let signing = SigningKey::from_bytes(&[52u8; 32]);
+        let blob = build_ed25519_blob(&signing.verifying_key());
+        let b64 = host_key::base64_encode_nopad(&blob);
+        let content = format!("command=\"say \\\"ssh-rsa\\\" now\" ssh-ed25519 {b64} test\n");
+        let path = temp_authorized_keys(&content);
+        let keys = AuthorizedKeys::load(&path).expect("load");
+        assert_eq!(keys.keys.len(), 1);
+    }
+
+    #[test]
+    fn ecdsa_key_type_is_reported_as_unsupported() {
+        // Previously "no key type found"; the key-type shapes sshd
+        // recognises now produce the accurate diagnostic.
+        let path = temp_authorized_keys("ecdsa-sha2-nistp256 AAAA test\n");
+        let err = AuthorizedKeys::load(&path).unwrap_err();
+        assert!(matches!(
+            err,
+            AuthError::UnsupportedKeyType { line: 1, ref found } if found == "ecdsa-sha2-nistp256"
+        ));
     }
 
     #[test]
