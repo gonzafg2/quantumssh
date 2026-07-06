@@ -204,18 +204,28 @@ pub struct RekeyThresholds {
     pub max_bytes: u64,
     /// Re-key when this much wall-clock elapses since the last exchange.
     pub max_interval: Duration,
+    /// Re-key when either direction reaches this many packets since the
+    /// last exchange (RFC 4253 §9 recommends 2^32). This is the nonce
+    /// backstop: the `ChaCha20` nonce IS the u32 sequence number, so a
+    /// wrap would reuse a nonce — the packet trigger makes that
+    /// impossible by construction instead of relying on the byte
+    /// trigger firing first.
+    pub max_packets: u32,
     /// A started re-key must finish within this budget, else disconnect.
     pub completion_deadline: Duration,
 }
 
 impl RekeyThresholds {
-    /// BSI TR-02102-4 §3.3.1 defaults: 1 GiB / 1 hour; the re-key
-    /// completion budget mirrors the handshake budget (ADR-0022).
+    /// BSI TR-02102-4 §3.3.1 defaults: 1 GiB / 1 hour; the packet
+    /// backstop is 2^31 (half RFC 4253 §9's recommendation, OpenSSH's
+    /// margin); the re-key completion budget mirrors the handshake
+    /// budget (ADR-0022).
     #[must_use]
     pub const fn bsi_defaults(handshake_budget: Duration) -> Self {
         Self {
             max_bytes: 1024 * 1024 * 1024,
             max_interval: Duration::from_hours(1),
+            max_packets: 1 << 31,
             completion_deadline: handshake_budget,
         }
     }
@@ -1064,6 +1074,12 @@ where
             && rekey_due(
                 self.stage.rekey.bytes_rx,
                 self.stage.rekey.bytes_tx,
+                // The sequence numbers count packets since the last
+                // NEWKEYS (strict-kex resets them on every exchange),
+                // which is exactly the per-schedule packet count the
+                // RFC 4253 §9 backstop needs.
+                self.seq_rx,
+                self.seq_tx,
                 self.stage.rekey.last_kex.elapsed(),
                 &self.stage.rekey.thresholds,
             )
@@ -1093,12 +1109,16 @@ where
         self.write_packet(&i_s).await?;
         self.stage.rekey.started = Instant::now();
         self.stage.rekey.initiator = "server";
-        self.stage.rekey.trigger =
-            if self.stage.rekey.last_kex.elapsed() >= self.stage.rekey.thresholds.max_interval {
-                "time"
-            } else {
-                "bytes"
-            };
+        let rekey = &self.stage.rekey;
+        self.stage.rekey.trigger = if rekey.last_kex.elapsed() >= rekey.thresholds.max_interval {
+            "time"
+        } else if rekey.bytes_rx >= rekey.thresholds.max_bytes
+            || rekey.bytes_tx >= rekey.thresholds.max_bytes
+        {
+            "bytes"
+        } else {
+            "packets"
+        };
         self.stage.rekey.phase = RekeyPhase::SentKexInit { i_s };
         Ok(())
     }
@@ -1380,12 +1400,24 @@ fn derive_cipher_pair(
     Ok((rx, tx))
 }
 
-/// Whether a re-key is due given the per-direction byte counts and the
-/// elapsed time since the last completed exchange (ADR-0026: 1 GiB in
-/// either direction, or `max_interval`, whichever first). Pure for unit
+/// Whether a re-key is due given the per-direction byte and packet
+/// counts and the elapsed time since the last completed exchange
+/// (ADR-0026: 1 GiB in either direction, or `max_interval`; plus the
+/// RFC 4253 §9 packet backstop — whichever first). Pure for unit
 /// testing.
-fn rekey_due(bytes_rx: u64, bytes_tx: u64, elapsed: Duration, t: &RekeyThresholds) -> bool {
-    bytes_rx >= t.max_bytes || bytes_tx >= t.max_bytes || elapsed >= t.max_interval
+fn rekey_due(
+    bytes_rx: u64,
+    bytes_tx: u64,
+    packets_rx: u32,
+    packets_tx: u32,
+    elapsed: Duration,
+    t: &RekeyThresholds,
+) -> bool {
+    bytes_rx >= t.max_bytes
+        || bytes_tx >= t.max_bytes
+        || packets_rx >= t.max_packets
+        || packets_tx >= t.max_packets
+        || elapsed >= t.max_interval
 }
 
 /// Validates the sealed length field and returns the body length (body
@@ -1670,14 +1702,18 @@ mod tests {
         let t = RekeyThresholds {
             max_bytes: 1000,
             max_interval: Duration::from_hours(1),
+            max_packets: 100,
             completion_deadline: Duration::from_secs(30),
         };
         // Below every threshold.
-        assert!(!rekey_due(500, 500, Duration::from_secs(0), &t));
+        assert!(!rekey_due(500, 500, 50, 50, Duration::from_secs(0), &t));
         // Either byte direction crossing is enough.
-        assert!(rekey_due(1000, 0, Duration::from_secs(0), &t));
-        assert!(rekey_due(0, 1000, Duration::from_secs(0), &t));
+        assert!(rekey_due(1000, 0, 0, 0, Duration::from_secs(0), &t));
+        assert!(rekey_due(0, 1000, 0, 0, Duration::from_secs(0), &t));
+        // Either packet direction crossing is enough (RFC 4253 §9).
+        assert!(rekey_due(0, 0, 100, 0, Duration::from_secs(0), &t));
+        assert!(rekey_due(0, 0, 0, 100, Duration::from_secs(0), &t));
         // The interval alone is enough.
-        assert!(rekey_due(0, 0, Duration::from_hours(1), &t));
+        assert!(rekey_due(0, 0, 0, 0, Duration::from_hours(1), &t));
     }
 }

@@ -35,6 +35,12 @@ use crate::wire::{Reader, Writer};
 // ---- transport messages that may still appear post-auth ----
 /// `SSH_MSG_DISCONNECT` (RFC 4253 §11.1).
 const SSH_MSG_DISCONNECT: u8 = 1;
+/// `SSH_MSG_IGNORE` (RFC 4253 §11.2) — MUST be accepted at any time.
+const SSH_MSG_IGNORE: u8 = 2;
+/// `SSH_MSG_UNIMPLEMENTED` (RFC 4253 §11.4).
+const SSH_MSG_UNIMPLEMENTED: u8 = 3;
+/// `SSH_MSG_DEBUG` (RFC 4253 §11.3) — MUST be allowed at any time.
+const SSH_MSG_DEBUG: u8 = 4;
 /// `SSH_MSG_KEXINIT` (RFC 4253 §7.1) — a client-initiated re-key (ADR-0026).
 const SSH_MSG_KEXINIT: u8 = 20;
 
@@ -545,8 +551,9 @@ impl Driver {
     }
 
     /// Dispatches one inbound packet. Total and fail-closed: the eleven
-    /// channel messages plus the post-auth transport messages it must
-    /// tolerate; everything else terminates the connection.
+    /// channel messages plus the post-auth transport messages RFC 4253
+    /// §11 requires tolerating (`IGNORE`, `DEBUG`, `UNIMPLEMENTED`);
+    /// everything else terminates the connection.
     async fn handle_inbound<S>(
         &mut self,
         session: &mut Expect<S, Session>,
@@ -567,9 +574,29 @@ impl Driver {
             SSH_MSG_CHANNEL_EOF => self.on_channel_eof(session, &mut r).await,
             SSH_MSG_CHANNEL_CLOSE => self.on_channel_close(session, &mut r).await,
             SSH_MSG_GLOBAL_REQUEST => {
-                session.write_packet(&[SSH_MSG_REQUEST_FAILURE]).await?;
+                // RFC 4254 §4: reply only when `want_reply` is set —
+                // a spurious reply to `want_reply = false` (OpenSSH's
+                // `no-more-sessions@openssh.com`) desynchronises the
+                // client's request/reply pairing. No global request
+                // is recognised in Phase 1.
+                let (Ok(_name), Ok(want_reply)) = (r.string(REQUEST_TYPE_BOUND), r.boolean())
+                else {
+                    return Err(session
+                        .protocol_disconnect("malformed-global-request")
+                        .await);
+                };
+                if want_reply {
+                    session.write_packet(&[SSH_MSG_REQUEST_FAILURE]).await?;
+                }
                 Ok(())
             }
+            // RFC 4253 §11.2–§11.4: IGNORE and DEBUG MUST be accepted
+            // at any time (strict-kex bans them only during the KEX
+            // handshake, which `step_rekey` still enforces); none of
+            // the three generates a response. Discarded unread — and
+            // still counted by the transport's byte and packet re-key
+            // triggers, so they cannot stall the nonce schedule.
+            SSH_MSG_IGNORE | SSH_MSG_UNIMPLEMENTED | SSH_MSG_DEBUG => Ok(()),
             SSH_MSG_DISCONNECT => Err(TransportError::Rejected("peer-disconnected")),
             SSH_MSG_CHANNEL_EXTENDED_DATA => {
                 // No client→server extended-data type exists (RFC 4254 §5.2).
