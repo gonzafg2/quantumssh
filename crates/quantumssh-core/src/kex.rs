@@ -596,7 +596,7 @@ mod tests {
 use ml_kem::{B32, EncapsulationKey, MlKem768};
 use sha2::{Digest, Sha256};
 use x25519_dalek::{PublicKey as X25519Public, StaticSecret as X25519Secret};
-use zeroize::Zeroizing;
+use zeroize::{Zeroize, Zeroizing};
 
 /// ML-KEM-768 encapsulation-key encoding length (FIPS 203).
 pub const MLKEM_EK_LEN: usize = 1184;
@@ -657,7 +657,19 @@ pub fn hybrid_exchange(client_init: &[u8]) -> Result<HybridOutcome, KexError> {
     let mut m = B32::default();
     getrandom::fill(m.as_mut_slice())
         .map_err(|_| KexError::Rejected(Rejection::kex_failed("rng-failure")))?;
-    let (ct, k_pq) = ek.encapsulate_deterministic(&m);
+    let (ct, mut k_pq) = ek.encapsulate_deterministic(&m);
+    // `m` regenerates K_PQ given the public EK; erase it once consumed
+    // (threat model §4.3).
+    m.as_mut_slice().zeroize();
+
+    // K = SHA-256(K_PQ ‖ K_CL): raw byte-array concatenation — K_CL is
+    // NOT an mpint here (the OpenSSH big-endian bug class ADR-0019
+    // cites). K_PQ is folded in and erased *before* the classical half
+    // so its error paths never leave the PQ secret live; ml-kem 0.3's
+    // `SharedKey` is a plain array with no zeroize-on-drop of its own.
+    let mut hasher = Sha256::new();
+    hasher.update(k_pq.as_slice());
+    k_pq.as_mut_slice().zeroize();
 
     // Classical half.
     let client_pk: [u8; 32] = client_x25519
@@ -675,11 +687,6 @@ pub fn hybrid_exchange(client_init: &[u8]) -> Result<HybridOutcome, KexError> {
         )));
     }
 
-    // K = SHA-256(K_PQ ‖ K_CL): raw byte-array concatenation — K_CL is
-    // NOT an mpint here (the OpenSSH big-endian bug class ADR-0019
-    // cites).
-    let mut hasher = Sha256::new();
-    hasher.update(k_pq.as_slice());
     hasher.update(k_cl.as_bytes());
     let shared_secret = Zeroizing::new(hasher.finalize().into());
 
@@ -695,7 +702,6 @@ pub fn hybrid_exchange(client_init: &[u8]) -> Result<HybridOutcome, KexError> {
 
 /// Inputs to the exchange hash `H` (draft-ietf-sshm-mlkem-hybrid-kex,
 /// following the RFC 4253 §8 pattern with `K` as a string).
-#[derive(Debug)]
 pub struct ExchangeHashInputs<'a> {
     /// Client identification line, without CRLF.
     pub client_id: &'a [u8],
@@ -715,6 +721,13 @@ pub struct ExchangeHashInputs<'a> {
     pub shared_secret: &'a [u8; 32],
 }
 
+impl std::fmt::Debug for ExchangeHashInputs<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Never expose `K` through Debug (threat model §4.3).
+        f.debug_struct("ExchangeHashInputs").finish_non_exhaustive()
+    }
+}
+
 /// Computes the exchange hash `H`.
 ///
 /// The full `I_C`/`I_S` KEXINIT payloads are bound into the hash —
@@ -732,7 +745,10 @@ pub fn exchange_hash(inputs: &ExchangeHashInputs<'_>) -> [u8; 32] {
     w.put_string(inputs.client_init);
     w.put_string(inputs.server_reply);
     w.put_string(inputs.shared_secret);
-    Sha256::digest(w.into_bytes()).into()
+    // The serialized buffer embeds `K`; erase it on drop (threat
+    // model §4.3).
+    let buf = Zeroizing::new(w.into_bytes());
+    Sha256::digest(buf.as_slice()).into()
 }
 
 /// Derives key material per RFC 4253 §7.2 with `HASH = SHA-256` and
@@ -750,11 +766,13 @@ pub fn derive_key(
 ) -> Zeroizing<Vec<u8>> {
     let mut k_string = Writer::new();
     k_string.put_string(shared_secret);
-    let k_string = k_string.into_bytes();
+    // `string(K)` is as secret as `K` itself; erase it on drop (threat
+    // model §4.3).
+    let k_string = Zeroizing::new(k_string.into_bytes());
 
     let mut out = Zeroizing::new(Vec::with_capacity(needed + 32));
     let mut hasher = Sha256::new();
-    hasher.update(&k_string);
+    hasher.update(k_string.as_slice());
     hasher.update(exchange_hash);
     hasher.update([letter]);
     hasher.update(session_id);
@@ -762,11 +780,12 @@ pub fn derive_key(
 
     while out.len() < needed {
         let mut hasher = Sha256::new();
-        hasher.update(&k_string);
+        hasher.update(k_string.as_slice());
         hasher.update(exchange_hash);
         hasher.update(&out[..]);
-        let block: [u8; 32] = hasher.finalize().into();
+        let mut block: [u8; 32] = hasher.finalize().into();
         out.extend_from_slice(&block);
+        block.zeroize();
     }
     out.truncate(needed);
     out
@@ -915,6 +934,23 @@ mod hybrid_tests {
             ..base
         };
         assert_ne!(h0, exchange_hash(&mutated_k));
+    }
+
+    #[test]
+    fn debug_never_leaks_the_shared_secret() {
+        let inputs = ExchangeHashInputs {
+            client_id: b"SSH-2.0-OpenSSH_10.0p1",
+            server_id: b"SSH-2.0-quantumssh_0.0.1",
+            client_kexinit: b"I_C payload",
+            server_kexinit: b"I_S payload",
+            host_key_blob: b"host key blob",
+            client_init: b"c_init bytes",
+            server_reply: b"s_reply bytes",
+            shared_secret: &[3u8; 32],
+        };
+        let debug = format!("{inputs:?}");
+        // The secret bytes must not appear (0x03 repeated).
+        assert!(!debug.contains("3, 3, 3"));
     }
 
     #[test]
