@@ -52,7 +52,7 @@ peers**:
 2. **The audit-log schema.** It "becomes a public interface from Phase 2 onward"
    and gains a `schema_version` "when Phase 2 cuts `0.1.0`"
    ([ADR-0024](../adr/0024-phase-1-log-event-schema.md) §Consequences;
-   threat-model §"stable interface from Phase 2 onward").
+   threat-model §"public interface from Phase 2 onward").
 
 Consequence for sequencing: any change wanted in either of these must land
 **before** the `0.1.0` tag, because after it the change is a breaking one. This
@@ -113,8 +113,8 @@ as rationale for the RFCs to weigh, not as a plan of record:
 ## Freeze checklist before tagging `0.1.0`
 
 Because the freeze is irreversible (§"load-bearing constraint"), these must be in
-their intended long-term shape *before* the tag, each recorded in its own ADR —
-not in this note:
+their intended long-term shape *before* the tag, each recorded in its own
+ADR/RFC (the config-file schema is scoped above as an RFC) — not in this note:
 
 - [ ] **Audit-log schema** carries `schema_version` and its field set is final
       ([ADR-0024](../adr/0024-phase-1-log-event-schema.md) is "the input that
@@ -140,7 +140,7 @@ should not be made in isolation from that scoping note.
 - Freeze sources: [ADR-0021](../adr/0021-phase-1-negotiation-profile.md)
   (negotiation profile as compatibility contract),
   [ADR-0024](../adr/0024-phase-1-log-event-schema.md) (log schema public from
-  Phase 2), threat-model §"stable interface from Phase 2 onward".
+  Phase 2), threat-model §"public interface from Phase 2 onward".
 - Deferral sources: [ADR-0022](../adr/0022-phase-1-async-runtime-tokio.md)
   (runtime, concurrency, rate-limits, shutdown),
   [ADR-0023](../adr/0023-phase-1-channel-layer-scope.md) (PTY, `shell`, SFTP
