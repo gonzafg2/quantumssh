@@ -138,8 +138,8 @@ fn looks_like_key_type(field: &str) -> bool {
 
 /// Skips the leading options field of an `authorized_keys` line:
 /// comma-separated, where double-quoted values may hold whitespace and
-/// `\"` escapes a quote inside them (sshd(8) AUTHORIZED_KEYS FILE
-/// FORMAT). Returns the remainder after the field's trailing
+/// `\"` escapes a quote inside them (sshd(8) `AUTHORIZED_KEYS FILE
+/// FORMAT`). Returns the remainder after the field's trailing
 /// whitespace — empty if the line holds nothing but options.
 fn skip_options(line: &str) -> &str {
     let mut in_quotes = false;
