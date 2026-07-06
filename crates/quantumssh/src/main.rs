@@ -20,6 +20,9 @@ use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{EnvFilter, Layer};
 use zeroize::Zeroizing;
 
+mod log_fields;
+use log_fields::EscapingFields;
+
 const DEFAULT_LISTEN: &str = "127.0.0.1:2222";
 const DEFAULT_HANDSHAKE_TIMEOUT_SECS: u64 = 30;
 
@@ -145,8 +148,11 @@ where
 {
     let base = tracing_subscriber::fmt::layer().with_writer(std::io::stderr);
     match format {
+        // serde escapes control bytes; no custom formatter needed.
         LogFormat::Json => base.json().boxed(),
-        LogFormat::Human => base.boxed(),
+        // The ADR-0024 field formatter: control bytes in field values
+        // rendered as visible `\xNN`, never live (§5.4.3).
+        LogFormat::Human => base.fmt_fields(EscapingFields).boxed(),
     }
 }
 

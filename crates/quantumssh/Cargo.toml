@@ -20,5 +20,10 @@ tracing-subscriber = { workspace = true, features = ["fmt", "env-filter", "json"
 # Threat model section 4.3: the host-key PEM buffer is erased on drop.
 zeroize = { workspace = true }
 
+[dev-dependencies]
+# `tracing::subscriber::with_default` (scoped test subscriber) is
+# behind the `std` feature the runtime dependency leaves off.
+tracing = { workspace = true, features = ["std"] }
+
 [lints]
 workspace = true
