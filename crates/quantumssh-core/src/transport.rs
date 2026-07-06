@@ -657,7 +657,15 @@ where
         mut self,
         authorized_keys: &AuthorizedKeys,
     ) -> Result<Expect<S, AuthAccepted>, TransportError> {
-        let mut failure_count: u32 = 0;
+        // Two counters with distinct jobs: `attempts` is the hard
+        // rate-limiter — every USERAUTH_REQUEST spends one, including a
+        // successful known-key probe (threat model §5.3.1). `failures`
+        // counts only requests that actually failed and is what the
+        // ADR-0024 `auth.failed.failure_count` field reports, so that
+        // field keeps its literal meaning even though a probe now costs
+        // budget.
+        let mut attempts: u32 = 0;
+        let mut failures: u32 = 0;
 
         loop {
             let payload = self.read_sealed().await?;
@@ -704,8 +712,9 @@ where
             };
 
             if method != auth::AUTH_METHOD {
-                failure_count += 1;
-                if failure_count >= auth::MAX_AUTH_ATTEMPTS {
+                attempts += 1;
+                failures += 1;
+                if attempts >= auth::MAX_AUTH_ATTEMPTS {
                     return Err(self
                         .reject_sealed(Rejection {
                             reason: "too-many-auth-attempts",
@@ -716,7 +725,7 @@ where
                 warn!(
                     target: "audit",
                     auth_method = method,
-                    failure_count,
+                    failure_count = failures,
                     "auth.failed"
                 );
                 let failure = auth::build_failure_payload(false);
@@ -740,8 +749,9 @@ where
             };
 
             if key_algorithm != auth::KEY_ALGORITHM {
-                failure_count += 1;
-                if failure_count >= auth::MAX_AUTH_ATTEMPTS {
+                attempts += 1;
+                failures += 1;
+                if attempts >= auth::MAX_AUTH_ATTEMPTS {
                     return Err(self
                         .reject_sealed(Rejection {
                             reason: "too-many-auth-attempts",
@@ -752,7 +762,7 @@ where
                 warn!(
                     target: "audit",
                     auth_method = method,
-                    failure_count,
+                    failure_count = failures,
                     "auth.failed"
                 );
                 let failure = auth::build_failure_payload(false);
@@ -808,8 +818,9 @@ where
                 }
 
                 let Some(ak) = authorized_keys.lookup(key_blob) else {
-                    failure_count += 1;
-                    if failure_count >= auth::MAX_AUTH_ATTEMPTS {
+                    attempts += 1;
+                    failures += 1;
+                    if attempts >= auth::MAX_AUTH_ATTEMPTS {
                         return Err(self
                             .reject_sealed(Rejection {
                                 reason: "too-many-auth-attempts",
@@ -820,7 +831,7 @@ where
                     warn!(
                         target: "audit",
                         auth_method = method,
-                        failure_count,
+                        failure_count = failures,
                         "auth.failed"
                     );
                     let failure = auth::build_failure_payload(false);
@@ -858,8 +869,9 @@ where
                         stage,
                     });
                 }
-                failure_count += 1;
-                if failure_count >= auth::MAX_AUTH_ATTEMPTS {
+                attempts += 1;
+                failures += 1;
+                if attempts >= auth::MAX_AUTH_ATTEMPTS {
                     return Err(self
                         .reject_sealed(Rejection {
                             reason: "too-many-auth-attempts",
@@ -870,7 +882,7 @@ where
                 warn!(
                     target: "audit",
                     auth_method = method,
-                    failure_count,
+                    failure_count = failures,
                     "auth.failed"
                 );
                 let failure = auth::build_failure_payload(false);
@@ -888,9 +900,10 @@ where
             // Every probe spends an attempt — including one whose key
             // is known: PK_OK was otherwise the one pre-auth message a
             // peer could spin for the whole handshake budget (threat
-            // model §5.3.1).
-            failure_count += 1;
-            if failure_count >= auth::MAX_AUTH_ATTEMPTS {
+            // model §5.3.1). A known-key probe is not a failure, so it
+            // does not touch `failures` or emit `auth.failed`.
+            attempts += 1;
+            if attempts >= auth::MAX_AUTH_ATTEMPTS {
                 return Err(self
                     .reject_sealed(Rejection {
                         reason: "too-many-auth-attempts",
@@ -899,14 +912,15 @@ where
                     .await);
             }
             if authorized_keys.lookup(key_blob).is_some() {
-                // No `auth.failed` event — the probe did not fail.
                 let pk_ok = auth::build_pk_ok(auth::KEY_ALGORITHM, key_blob);
                 self.write_sealed(&pk_ok).await?;
             } else {
+                // An unknown-key probe is a failure like any other.
+                failures += 1;
                 warn!(
                     target: "audit",
                     auth_method = method,
-                    failure_count,
+                    failure_count = failures,
                     "auth.failed"
                 );
                 let failure = auth::build_failure_payload(false);
