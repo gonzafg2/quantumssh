@@ -1144,6 +1144,35 @@ async fn max_auth_attempts_disconnects() {
 }
 
 #[tokio::test]
+async fn channel_messages_before_open_are_rejected() {
+    // RFC 4254 §5.1: recipient ids exist only after CHANNEL_OPEN. Every
+    // channel message for a never-opened channel is a protocol
+    // violation, not something to answer (the type-state discipline).
+    // Each frame is WELL-FORMED — the guard rejects on the message type
+    // before parsing, so a malformed frame would not prove it is the
+    // guard (not a parse error) doing the work. All five guarded types
+    // are covered.
+    let cases: [(&str, Vec<u8>); 5] = [
+        ("CHANNEL_REQUEST", channel_request(0, b"exec")),
+        ("CHANNEL_DATA", channel_data(0, b"x")),
+        ("CHANNEL_WINDOW_ADJUST", window_adjust(0, 1)),
+        ("CHANNEL_EOF", channel_one_field(CH_EOF, 0)),
+        ("CHANNEL_CLOSE", channel_one_field(CH_CLOSE, 0)),
+    ];
+    for (label, frame) in cases {
+        let (addr, host_key) = start_server(Duration::from_secs(30)).await;
+        let (mut stream, mut client) = authenticate(addr, &host_key).await;
+        client.write_sealed(&mut stream, &frame).await;
+        let reply = client.read_sealed(&mut stream).await;
+        assert_eq!(
+            reply.first(),
+            Some(&kex::SSH_MSG_DISCONNECT),
+            "{label} must disconnect before open"
+        );
+    }
+}
+
+#[tokio::test]
 async fn pk_ok_probes_spend_the_attempt_budget() {
     // A known-key probe (PK_OK) must count against MAX_AUTH_ATTEMPTS:
     // it is otherwise the only pre-auth message repeatable without
