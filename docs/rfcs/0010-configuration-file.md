@@ -1,4 +1,4 @@
-# RFC 0009: TOML configuration file
+# RFC 0010: TOML configuration file
 
 - **Status:** Draft
 - **Authors:** Gonzalo Fleming Garrido
