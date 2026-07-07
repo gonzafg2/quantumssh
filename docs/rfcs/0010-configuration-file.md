@@ -33,11 +33,13 @@ versioned home, and sketches its shape.
 auth, per-source rate-limits, and an `env` policy — each of which needs
 configuration that a flag list cannot carry. A CA-trust anchor, an environment
 allow-list, and per-source limits are not five-flag concerns; they are structured
-policy. Three already-accepted documents explicitly defer their configuration to
+policy. Two already-accepted documents explicitly defer their configuration to
 "the Phase-2 config file" that does not yet exist
 ([RFC-0008](0008-ssh-certificate-authentication.md) §Trust-anchoring;
-[ADR-0023](../adr/0023-phase-1-channel-layer-scope.md) §Consequences;
-[ADR-0022](../adr/0022-phase-1-async-runtime-tokio.md) §Consequences). This is the
+[ADR-0023](../adr/0023-phase-1-channel-layer-scope.md) §Consequences). A third,
+[ADR-0022](../adr/0022-phase-1-async-runtime-tokio.md) §Decision, defers the
+per-source rate-limits and half-open caps *as a feature* to Phase 2's concurrent
+accept loop — a feature that will need its configuration here. This is the
 keystone Phase-2 workstream: much waits on it, nothing blocks it.
 
 **Why decide now, and why it must be right.** Cutting `0.1.0` turns the config
@@ -170,7 +172,7 @@ Sections map the current flags plus the deferred Phase-2 policy. The seed set:
 |---|---|---|
 | `[server]` | `listen`, `host_key`, `handshake_timeout` | Phase-1 flags; threat-model §4.4 (host-key paths in config) |
 | `[auth]` | `authorized_keys`, `trusted_user_ca_keys` | Phase-1 flag; [RFC-0008](0008-ssh-certificate-authentication.md) §Trust-anchoring |
-| `[limits]` | `max_half_open`, `max_per_source` | [ADR-0022](../adr/0022-phase-1-async-runtime-tokio.md) §Consequences |
+| `[limits]` | `max_half_open`, `max_per_source` | [ADR-0022](../adr/0022-phase-1-async-runtime-tokio.md) §Decision |
 | `[logging]` | `format` | Phase-1 flag; interacts with the [ADR-0024](../adr/0024-phase-1-log-event-schema.md) schema freeze |
 | `[session]` | `accept_env` | [ADR-0023](../adr/0023-phase-1-channel-layer-scope.md) §Consequences (`env`/`SetEnv`) |
 
