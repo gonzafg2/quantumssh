@@ -24,10 +24,10 @@ jobs:
       - name: Run Claude Code Review
         id: claude-review
         # Pinned to the v1.0.166 commit (not the floating @v1 tag): an
-        # unpinned re-fetch of the action silently regressed the OIDC→app
-        # -token exchange on 2026-07-06. Bump this SHA deliberately, the
-        # same discipline as the pinned toolchain / Debian snapshot /
-        # OpenSSH interop image.
+        # unpinned re-fetch of the action silently regressed the
+        # OIDC→app-token exchange on 2026-07-06. Bump this SHA
+        # deliberately, the same discipline as the pinned toolchain /
+        # Debian snapshot / OpenSSH interop image.
         uses: anthropics/claude-code-action@f87768c6d25f92ae6efa7175e223ef77d4cbf97f # v1.0.166
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
