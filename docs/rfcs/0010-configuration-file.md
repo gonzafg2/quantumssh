@@ -99,11 +99,19 @@ express the Phase-2 policy above.
 The file is **operator-trusted, not attacker-facing**: it is read **once at
 startup** (the [ADR-0022](../adr/0022-phase-1-async-runtime-tokio.md) non-async
 startup I/O), never on the pre-auth path, and changing it requires a restart.
-Before reading it, QuantumSSH checks that the file — and the key files it points
-at — are **not writable by anyone but their owner** (an OpenSSH-`StrictModes`
-equivalent); a world- or group-writable trusted file is a **fail-closed refuse to
-start**, because a config an attacker can edit is a config that authenticates the
-attacker.
+Before reading it, QuantumSSH runs **two orthogonal permission checks**, and a
+failure of either is a **fail-closed refuse to start**:
+
+- **Integrity** — the config file and every trusted file it names
+  (`authorized_keys`, the CA-trust file, the host key) must be **not writable by
+  anyone but their owner**. A config an attacker can edit is a config that
+  authenticates the attacker.
+- **Confidentiality** — the **private host key** must additionally be **not
+  readable by anyone but its owner**. A world-readable private key is a key an
+  attacker can copy off disk.
+
+Together these are the OpenSSH-`StrictModes` posture; the host key is subject to
+*both* (it is a trusted input *and* a secret).
 
 An **unknown or malformed key is a hard error** (fail closed), not a silent
 ignore: a typo in a security-relevant setting must stop the server, not
@@ -125,15 +133,22 @@ discipline):
    out of the §4.1 highest-trust surface: it is a trusted *input* (threat-model
    §4.4 config integrity), governed by filesystem permissions, not a network
    parser. Reload is restart-only in Phase 2 (hot reload is §Future).
-3. **Fail-closed permission check.** The config file and every file it references
-   (host key, `authorized_keys`, CA-trust file) must be owner-writable-only, else
-   the server refuses to start — an OpenSSH-`StrictModes` equivalent, extended to
-   the referenced trust files. This is not new invention: threat-model §4.4 names
-   config integrity as a trusted property, and §5.5.3 already mandates that the
-   server "refuse to start if host-key file permissions are world-readable in the
-   default configuration". This generalises that existing requirement to every
-   trusted file the config names, keyed on *writability* (the integrity threat)
-   rather than only readability.
+3. **Fail-closed permission checks — two orthogonal controls.** Both are
+   refuse-to-start; they defend different threats and neither replaces the other:
+   - **Integrity (writability).** The config file and every trusted file it names
+     (`authorized_keys`, CA-trust file, host key) must be owner-writable-only. A
+     writable trust file lets an attacker edit their way to authentication
+     (threat-model §4.4, config integrity). This RFC's contribution is
+     *generalising* this to every trusted file the config references.
+   - **Confidentiality (readability).** The **private host key** must additionally
+     be owner-readable-only. This is the *existing* threat-model §5.5.3 mandate —
+     the server "refuse to start if host-key file permissions are world-readable
+     in the default configuration" — carried over unchanged, **not** replaced by
+     the writability check.
+
+   The host key is subject to both; a mode-`0644` host key (owner-writable-only
+   but world-readable) fails the confidentiality check and must be rejected.
+   Together they are the OpenSSH-`StrictModes` equivalent.
 4. **Fail-closed schema.** Unknown keys, unknown sections, and type-mismatched
    values are startup errors, not warnings. This catches the typo-in-security-config
    failure mode that a permissive parser silently ships.
@@ -169,7 +184,8 @@ ones.
 ### The parser and its dependency
 
 TOML parsing needs a crate — a new dependency that must be justified and pass
-`cargo deny` (commitment #4). Because the config is **not** on the pre-auth path,
+`cargo deny` (MANIFIESTO commitment #4). Because the config is **not** on the
+pre-auth path,
 the bounded-allocation / must-be-fuzzable rule of the highest-trust surface
 (§4.1) does not bind it with the same force; a well-audited, serde-based TOML
 crate (e.g. `toml`, or the smaller `basic-toml`) is acceptable. The specific
@@ -178,8 +194,10 @@ smallest-surface-that-works principle.
 
 ### Failure modes
 
-- **World/group-writable config or trust file** → refuse to start
+- **World/group-writable config or trust file** (integrity) → refuse to start
   (`config.insecure_permissions`).
+- **World/group-readable private host key** (confidentiality, threat-model
+  §5.5.3) → refuse to start (`config.insecure_permissions`).
 - **Unknown key / section / type mismatch** → refuse to start
   (`config.schema_error`, with the offending key and line).
 - **`schema_version` newer than the binary understands** → refuse to start
@@ -239,7 +257,7 @@ TOML):**
   keyword baggage the project explicitly sheds ("not `sshd_config`").
 - *TOML* over **YAML** — YAML's parser surface and footguns (implicit typing, the
   "Norway problem", anchors/aliases) are exactly the large, surprising surface
-  commitment #4 refuses.
+  MANIFIESTO commitment #4 refuses.
 - *TOML* over **JSON** — JSON has no comments and is poor for a hand-edited
   operator file.
 - *TOML* is typed, commentable, minimal, and already the Rust ecosystem's config
