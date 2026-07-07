@@ -105,15 +105,17 @@ Before reading it, QuantumSSH runs **two orthogonal permission checks**, and a
 failure of either is a **fail-closed refuse to start**:
 
 - **Integrity** — the config file and every trusted file it names
-  (`authorized_keys`, the CA-trust file, the host key) must be **not writable by
-  anyone but their owner**. A config an attacker can edit is a config that
-  authenticates the attacker.
+  (`authorized_keys`, the CA-trust file, the host key) must not be writable by
+  anyone but their owner, must be owned by root or the service account, and must
+  sit in a path no one else can write. A config — or a path to it — an attacker
+  can edit is a config that authenticates the attacker.
 - **Confidentiality** — the **private host key** must additionally be **not
-  readable by anyone but its owner**. A world-readable private key is a key an
-  attacker can copy off disk.
+  readable by group or world**. A readable private key is a key an attacker can
+  copy off disk.
 
-Together these are the OpenSSH-`StrictModes` posture; the host key is subject to
-*both* (it is a trusted input *and* a secret).
+Together these are the OpenSSH-`StrictModes` posture (mode, ownership, and the
+parent-directory chain); the host key is subject to *both* (it is a trusted input
+*and* a secret). The reference-level section specifies each predicate.
 
 An **unknown or malformed key is a hard error** (fail closed), not a silent
 ignore: a typo in a security-relevant setting must stop the server, not
@@ -136,21 +138,35 @@ discipline):
    §4.4 config integrity), governed by filesystem permissions, not a network
    parser. Reload is restart-only in Phase 2 (hot reload is §Future).
 3. **Fail-closed permission checks — two orthogonal controls.** Both are
-   refuse-to-start; they defend different threats and neither replaces the other:
-   - **Integrity (writability).** The config file and every trusted file it names
-     (`authorized_keys`, CA-trust file, host key) must be owner-writable-only. A
-     writable trust file lets an attacker edit their way to authentication
-     (threat-model §4.4, config integrity). This RFC's contribution is
-     *generalising* this to every trusted file the config references.
+   refuse-to-start; they defend different threats and neither replaces the other.
+   Each is the **full** OpenSSH-`StrictModes` predicate set, not a mode-bits-only
+   subset — a mode check alone is bypassable (an attacker-owned `0600` file, or a
+   correctly-moded file inside a group-writable directory), so the shape names all
+   three:
+   - **Integrity (writability).** For the config file and every trusted file it
+     names (`authorized_keys`, CA-trust file, host key): (a) the file is not
+     group- or world-writable; (b) the file is owned by root or the service UID
+     (never an untrusted owner who could rewrite their own trust file); and (c) no
+     ancestor directory in its path is group- or world-writable (else the file can
+     be unlinked and replaced regardless of its own mode). A writable trust file —
+     or a writable path to it — lets an attacker edit their way to authentication.
+     Authority: threat-model §4.2 (process boundary) names host-key material,
+     `authorized_keys`, **and** configuration files as the permission-trusted set;
+     §4.4 states the config-integrity goal ("exclude unauthorised writers"). This
+     RFC's contribution is *generalising* the check to every trusted file the
+     config references, with the ownership and parent-chain predicates that make
+     "exclude unauthorised writers" actually hold.
    - **Confidentiality (readability).** The **private host key** must additionally
-     be owner-readable-only. This is the *existing* threat-model §5.5.3 mandate —
-     the server "refuse to start if host-key file permissions are world-readable
-     in the default configuration" — carried over unchanged, **not** replaced by
-     the writability check.
+     be **not group- or world-readable**. This **extends** the threat-model §5.5.3
+     mandate — the server "refuse to start if host-key file permissions are
+     world-readable in the default configuration" — tightening world-readable to
+     also reject group-readable (`0640`); it is **not** replaced by the writability
+     check.
 
    The host key is subject to both; a mode-`0644` host key (owner-writable-only
    but world-readable) fails the confidentiality check and must be rejected.
-   Together they are the OpenSSH-`StrictModes` equivalent.
+   Together these are the OpenSSH-`StrictModes` posture (`secure_filename` /
+   `safe_path`: mode, ownership, and the parent-directory chain).
 4. **Fail-closed schema.** Unknown keys, unknown sections, and type-mismatched
    values are startup errors, not warnings. This catches the typo-in-security-config
    failure mode that a permissive parser silently ships.
@@ -196,8 +212,9 @@ smallest-surface-that-works principle.
 
 ### Failure modes
 
-- **World/group-writable config or trust file** (integrity) → refuse to start
-  (`config.insecure_permissions`).
+- **Integrity failure on a config or trust file** — group/world-writable, owned
+  by an untrusted UID, or reachable through a group/world-writable ancestor
+  directory → refuse to start (`config.insecure_permissions`).
 - **World/group-readable private host key** (confidentiality, threat-model
   §5.5.3) → refuse to start (`config.insecure_permissions`).
 - **Unknown key / section / type mismatch** → refuse to start
@@ -316,4 +333,8 @@ separation stays blocked on the config-schema prerequisite it names.
 - **Config-driven crypto-migration knobs** — the per-deployment algorithm policy
   [RFC-0007](0007-cryptographic-primitive-migration-procedure.md) deferred until a
   config surface exists; explicitly *not* proposed now (its own YAGNI warning
-  applies).
+  applies). Any future form is bounded by **MANIFIESTO commitment #2**: migration
+  navigates between approved hybrid PQ profiles only — **no non-hybrid or
+  classical-only KEX may ever be expressible via config** (e.g. no
+  `kex_algorithm = "curve25519-sha256"`). The config surface cannot become a
+  downgrade path.
