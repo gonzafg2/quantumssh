@@ -212,21 +212,27 @@ smallest-surface-that-works principle.
 
 ### Failure modes
 
+The codes below are **values of the `message` field in the existing
+`server.config_error` event** ([ADR-0024](../adr/0024-phase-1-log-event-schema.md));
+this RFC introduces **no new audit event names** — minting one would extend the
+frozen schema and require a superseding ADR, which the config surface must not do.
+
 - **Integrity failure on a config or trust file** — group/world-writable, owned
   by an untrusted UID, or reachable through a group/world-writable ancestor
-  directory → refuse to start (`config.insecure_permissions`).
+  directory → refuse to start (`insecure_permissions`).
 - **World/group-readable private host key** (confidentiality, threat-model
-  §5.5.3) → refuse to start (`config.insecure_permissions`).
-- **Unknown key / section / type mismatch** → refuse to start
-  (`config.schema_error`, with the offending key and line).
+  §5.5.3) → refuse to start (`insecure_permissions`).
+- **Unknown key / section / type mismatch** → refuse to start (`schema_error`,
+  with the offending key and line).
 - **`schema_version` newer than the binary understands** → refuse to start
-  (`config.version_unsupported`).
+  (`version_unsupported`).
 - **Referenced file missing** → refuse to start, same as today's flag path.
-- **Both a flag and its config key set** → the flag wins; logged at startup so
-  the override is visible.
+- **Both a flag and its config key set** → the flag wins; the server boots
+  normally, logged at startup (info) so the override is visible — **not** an error.
 
-All are startup errors emitted through the existing `server.config_error` audit
-path; none reach the network.
+The first five abort startup through `server.config_error`; the precedence
+override is an info-level note and the server continues. None of these conditions
+reach the network.
 
 ## Drawbacks
 
