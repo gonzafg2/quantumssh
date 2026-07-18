@@ -1,6 +1,6 @@
 # RFC 0009: "Zero legacy" is a standards-defined moving frontier — MANIFIESTO #3 amendment
 
-- **Status:** Accepted (2026-07-18 — comment period through 2026-07-16 closed by lazy consensus per [`docs/rfcs/README.md`](README.md) §5, no substantive objection)
+- **Status:** Accepted (2026-07-18)
 - **Authors:** Gonzalo Fleming Garrido
 - **Created:** 2026-07-02
 - **Roadmap issue:** deferred from [RFC-0007](0007-cryptographic-primitive-migration-procedure.md) §Future possibilities; research recorded in [`#42`](https://github.com/gonzafg2/quantumssh/issues/42)
@@ -105,8 +105,11 @@ To keep the decision single, this RFC does **not**:
 The one external anchor: [RFC 9142](https://www.rfc-editor.org/rfc/rfc9142.html)
 (the IETF's maintained SSH-KEX MUST-NOT / SHOULD-NOT lists, already cited in
 threat-model §6.1) is the precedent that "legacy" is a standards-body-maintained
-moving target. This RFC makes no code change and amends only `MANIFIESTO.es.md`;
-the migration *mechanism* stays in RFC-0007.
+moving target. In this RFC's terms the IETF vocabulary maps as: an IETF
+**MUST NOT** is a *disallowance* — the frontier fires and the algorithm must be
+gone; an IETF **SHOULD NOT** is a *deprecation* — it starts the RFC-0007
+migration clock and nothing more. This RFC makes no code change and amends only
+`MANIFIESTO.es.md`; the migration *mechanism* stays in RFC-0007.
 
 ## Drawbacks
 
