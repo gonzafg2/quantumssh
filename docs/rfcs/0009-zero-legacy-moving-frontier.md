@@ -1,6 +1,6 @@
 # RFC 0009: "Zero legacy" is a standards-defined moving frontier — MANIFIESTO #3 amendment
 
-- **Status:** Draft (comment period through 2026-07-16; advances to Accepted at close by lazy consensus per [`docs/rfcs/README.md`](README.md) §5, absent substantive objection — highest lane: amends a MANIFIESTO commitment)
+- **Status:** Accepted (2026-07-18 — comment period through 2026-07-16 closed by lazy consensus per [`docs/rfcs/README.md`](README.md) §5, no substantive objection)
 - **Authors:** Gonzalo Fleming Garrido
 - **Created:** 2026-07-02
 - **Roadmap issue:** deferred from [RFC-0007](0007-cryptographic-primitive-migration-procedure.md) §Future possibilities; research recorded in [`#42`](https://github.com/gonzafg2/quantumssh/issues/42)
@@ -81,8 +81,9 @@ prose (Spanish, matching the manifesto) reads:
 > **prohibición** marca la línea que no cruzamos. (Que un algoritmo clásico
 > participe de un híbrido —como X25519 en el KEX— no lo vuelve legacy: cero
 > legacy prohíbe lo clásico-*solo* donde el híbrido es el mecanismo, no lo
-> clásico-*más*-PQ.) La definición está en RFC-0009; el procedimiento de
-> migración, en RFC-0007.
+> clásico-*más*-PQ.) La definición está en
+> [RFC-0009](0009-zero-legacy-moving-frontier.md); el procedimiento de
+> migración, en [RFC-0007](0007-cryptographic-primitive-migration-procedure.md).
 
 The amendment adds the moving frontier *on top of* the existing list; it does
 not restate, broaden, or re-authority the list itself.
