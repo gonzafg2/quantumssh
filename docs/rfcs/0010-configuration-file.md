@@ -1,6 +1,6 @@
 # RFC 0010: TOML configuration file
 
-- **Status:** Draft
+- **Status:** Accepted (2026-07-17)
 - **Authors:** Gonzalo Fleming Garrido
 - **Created:** 2026-07-06
 - **Roadmap issue:** [`#109`](https://github.com/gonzafg2/quantumssh/issues/109)

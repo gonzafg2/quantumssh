@@ -1,6 +1,6 @@
 # RFC 0004: Adopt Tokio as the Phase 1 async runtime
 
-- **Status:** Draft
+- **Status:** Accepted (2026-07-17)
 - **Authors:** Gonzalo Fleming Garrido
 - **Created:** 2026-06-11
 - **Roadmap issue:** [`#9`](https://github.com/gonzafg2/quantumssh/issues/9) (Phase 1 / Hito 1)
