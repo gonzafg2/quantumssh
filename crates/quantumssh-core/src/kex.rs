@@ -975,7 +975,7 @@ mod hybrid_tests {
         let mut hasher = Sha256::new();
         hasher.update(w.into_bytes());
         hasher.update(h);
-        hasher.update([b'C']);
+        hasher.update(*b"C");
         hasher.update(sid);
         let expected: [u8; 32] = hasher.finalize().into();
         assert_eq!(&key_c[..32], &expected);
