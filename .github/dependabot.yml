@@ -20,6 +20,23 @@ updates:
         update-types:
           - patch
           - minor
+    ignore:
+      # ADR-0022 pins tokio to the 1.51.x LTS line; a new pin is a
+      # superseding-ADR decision, not a bot update. Patch updates
+      # (the LTS security backports) stay enabled.
+      - dependency-name: tokio
+        update-types:
+          - "version-update:semver-minor"
+          - "version-update:semver-major"
+      # Major bumps of the RFC-0003 curve/signature primitives are
+      # coordinated, ADR-recorded decisions (both dalek crates must
+      # move to the same curve25519-dalek line together).
+      - dependency-name: x25519-dalek
+        update-types:
+          - "version-update:semver-major"
+      - dependency-name: ed25519-dalek
+        update-types:
+          - "version-update:semver-major"
 
   # GitHub Actions used in our workflows.
   - package-ecosystem: github-actions
