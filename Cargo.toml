@@ -41,7 +41,7 @@ rustix             = { version = "1", default-features = false, features = ["std
 # explanation" and ADR-0019. All pure-Rust, no FFI; `hmac` is
 # deliberately absent (ADR-0021: AEAD-only, no exercised MAC path).
 ml-kem        = { version = "0.3.0", default-features = false, features = ["zeroize"] }            # ADR-0019
-x25519-dalek  = { version = "2.0.1", default-features = false, features = ["static_secrets", "zeroize"] }
+x25519-dalek  = { version = "3.0.0", default-features = false, features = ["static_secrets", "zeroize"] }
 ed25519-dalek = { version = "2", default-features = false, features = ["std", "rand_core", "zeroize"] }
 sha2          = { version = "0.11", default-features = false }
 zeroize       = { version = "1", default-features = false, features = ["zeroize_derive"] }
