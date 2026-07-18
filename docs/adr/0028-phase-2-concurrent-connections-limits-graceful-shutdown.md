@@ -1,7 +1,7 @@
 # ADR 0028: Phase 2 runtime — concurrent connections, admission limits, graceful shutdown
 
 - **Status:** Proposed
-- **Date:** 2026-07-18 (drafted; Status flips to Accepted when the implementing PRs merge, per the Phase-1 pattern)
+- **Date:** TBD (advances to Accepted when the implementing Phase-2 runtime PRs merge)
 - **Deciders:** Project lead
 - **Related:** Extends [ADR-0022](0022-phase-1-async-runtime-tokio.md) (runtime, feature set, the sequential spawn-and-join loop this ADR removes); constrained by [ADR-0018](0018-phase-1-unsafe-code-forbid-workspace.md) (`unsafe_code = "forbid"`) and [ADR-0024](0024-phase-1-log-event-schema.md) (log schema — one new event below). Part of the Phase-2 milestone ([#109](https://github.com/gonzafg2/quantumssh/issues/109)); sequencing rationale in [`docs/plans/phase2-scoping.md`](../plans/phase2-scoping.md) (non-authoritative). The systemd ADR (TBD) will build on the shutdown path decided here.
 
@@ -26,7 +26,7 @@ We will replace the spawn-and-join loop with a concurrent accept loop with expli
 - **Per-source accept rate limit: token bucket.** Default **burst 10, refill 1 token/second** per source, same source granularity as above. Implemented first-party (a token bucket is a few dozen lines; per-source state lives in a map pruned when a source's bucket is full and it holds no connections) — no new dependency. These defaults are initial values chosen against OpenSSH prior art, **not yet validated under load**; the §5.1.3 slow-handshake test scenario is the acceptance gate, and tuning a default is a config change, not a re-decision of this ADR.
 - **Graceful shutdown.** Add the `signal` feature. On SIGTERM or SIGINT: stop accepting, fire the existing `sync::broadcast` shutdown signal, wait up to a **drain deadline (default 30 s)** for tasks in the `JoinSet` to finish, then abort the remainder (each abort logged as `connection.closed`, reason `shutdown`). Clean exit code on the drained path. The systemd ADR consumes this behaviour; it does not redefine it.
 - **Configuration surface.** All knobs above (three caps, rate limit, drain deadline) are exposed through the RFC-0010 TOML config file; exact key names and shapes belong to that schema, not here. Until the config file lands, interim CLI flags follow the `--handshake-timeout` precedent and are removed when the config file absorbs them.
-- **Feature-set delta to ADR-0022's allowlist:** `signal` (shutdown) and `macros` on `quantumssh-core` (`tokio::select!` in the accept loop; previously binary-only). The tokio LTS pin (1.51, restored in [#119](https://github.com/gonzafg2/quantumssh/pull/119)) is unchanged and not re-opened here.
+- **Feature-set delta to ADR-0022's allowlist:** `signal` only, on the `quantumssh` binary — the OS-signal listener fires the `sync::broadcast` shutdown the library already consumes. `quantumssh-core` already enables `macros`, so `tokio::select!` in the accept loop needs no delta. The tokio LTS pin (1.51, restored in [#119](https://github.com/gonzafg2/quantumssh/pull/119)) is unchanged and not re-opened here.
 
 ## Consequences
 
