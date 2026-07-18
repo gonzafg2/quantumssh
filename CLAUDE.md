@@ -52,10 +52,11 @@ hard review rules:
    compression. None of these may be compiled in, not merely configured off.
    That list is the permanent floor, not the whole definition: anything NIST
    or IETF **disallows** is also legacy
-   ([RFC-0009](docs/rfcs/0009-zero-legacy-moving-frontier.md)). Deprecation
-   alone only starts a managed migration ([RFC-0007](docs/rfcs/0007-cryptographic-primitive-migration-procedure.md));
-   do not reject an in-window migration (e.g. `ssh-ed25519` during the
-   RFC-0006 window).
+   ([RFC-0009](docs/rfcs/0009-zero-legacy-moving-frontier.md)). A
+   deprecated-but-not-yet-disallowed primitive is **not** legacy — deprecation
+   only starts a managed migration ([RFC-0007](docs/rfcs/0007-cryptographic-primitive-migration-procedure.md));
+   do not reject a PR that keeps such a primitive in use during its migration
+   window (e.g. `ssh-ed25519` under [RFC-0006](docs/rfcs/0006-post-quantum-host-key-signatures.md)).
 4. **Small surface, sharp edges.** *Reject* features beyond the current
    phase's scope unless they are opt-in behind an explicit flag. *Reject* any
    new dependency that is not justified in the PR and does not pass
