@@ -3,7 +3,7 @@
 - **Status:** Accepted (2026-07-18)
 - **Authors:** Gonzalo Fleming Garrido
 - **Created:** 2026-07-02
-- **Roadmap issue:** deferred from [RFC-0007](0007-cryptographic-primitive-migration-procedure.md) §Future possibilities; research recorded in [`#42`](https://github.com/gonzafg2/quantumssh/issues/42)
+- **Roadmap issue:** [`#109`](https://github.com/gonzafg2/quantumssh/issues/109) (Phase 2, the current roadmap phase); deferred from [RFC-0007](0007-cryptographic-primitive-migration-procedure.md) §Future possibilities, research recorded in [`#42`](https://github.com/gonzafg2/quantumssh/issues/42)
 - **Amends:** MANIFIESTO commitment #3 ("Cero legacy").
 
 ## Summary
