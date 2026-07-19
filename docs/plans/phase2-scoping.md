@@ -1,12 +1,14 @@
 <!--
-  Governance status (2026-07-06):
+  Governance status (2026-07-19):
   Non-authoritative design note (ADR-0027). Scopes the Phase-2 ("Usable",
   0.1.0) milestone; tracked in #109. It sequences the workstreams and
   records the one-way release-freeze constraint so each eventual RFC/ADR
   does not start from a blank page. It decides nothing.
-  Authoritative decisions live in ADRs/RFCs: none yet for Phase 2 except
-  RFC-0008 (SSH certificate authentication, Accepted). This file is
-  retained for rationale and is not a source of truth.
+  Authoritative decisions live in ADRs/RFCs. For Phase 2 so far:
+  RFC-0008 (SSH certificate authentication, Accepted), RFC-0010 (TOML
+  configuration file, Accepted), ADR-0028 (runtime/concurrency,
+  Proposed — advances on implementation). This file is retained for
+  rationale and is not a source of truth.
 -->
 # Phase-2 ("Usable") — scoping note (non-normative)
 
@@ -75,9 +77,9 @@ here.
 
 | Workstream | Unblocks | Likely lane | Depends on |
 |---|---|---|---|
-| **Configuration file (TOML)** | `env`/`SetEnv` policy; cert-trust config; the Phase-3 key→UID mapping | **RFC** — a new public interface (the schema) | — (keystone; nothing blocks it) |
+| **Configuration file (TOML)** | `env`/`SetEnv` policy; cert-trust config; the Phase-3 key→UID mapping | **[RFC-0010](../rfcs/0010-configuration-file.md) — Accepted**; needs implementation | — (keystone; nothing blocks it) |
 | **Interactive PTY** | `pty-req`, `shell`, `window-change`; `exit-signal` reporting | **ADR** extending [ADR-0023](../adr/0023-phase-1-channel-layer-scope.md) channel scope; forces the runtime decision below | Runtime decision |
-| **Runtime / concurrency** | Real concurrent connections; per-source rate-limits; half-open caps; graceful shutdown | **ADR** extending [ADR-0022](../adr/0022-phase-1-async-runtime-tokio.md) | — |
+| **Runtime / concurrency** | Real concurrent connections; per-source rate-limits; half-open caps; graceful shutdown | **[ADR-0028](../adr/0028-phase-2-concurrent-connections-limits-graceful-shutdown.md) — Proposed** (extends ADR-0022); needs implementation | — |
 | **SFTP subsystem** | The `subsystem` request; second concurrent channel | **RFC or ADR** (new protocol surface) | Channel multiplexing (PTY/second-channel work) |
 | **SSH certificate auth** | Cert-based auth (threat-model §5.3.2 mitigant) | **RFC-0008 — already Accepted**; needs implementation | Config file (cert-trust surface) |
 | **systemd integration** | Service deployment | **ADR** (operational) | Graceful shutdown |
@@ -119,7 +121,10 @@ ADR/RFC (the config-file schema is scoped above as an RFC) — not in this note:
 - [ ] **Audit-log schema** carries `schema_version` and its field set is final
       ([ADR-0024](../adr/0024-phase-1-log-event-schema.md) is "the input that
       Phase 2's versioned schema freezes"). Any field rename becomes a migration
-      note after this point.
+      note after this point. Includes the `connection.refused` event
+      [ADR-0028](../adr/0028-phase-2-concurrent-connections-limits-graceful-shutdown.md)
+      adds — its shape must be final before the tag (that ADR's §Consequences
+      names it a freeze-checklist item).
 - [ ] **Negotiation profile** (KEXINIT name-lists) reviewed as a
       to-be-frozen contract ([ADR-0021](../adr/0021-phase-1-negotiation-profile.md)).
 - [ ] **Config-file schema** stable enough to extend compatibly (it, too, is a
