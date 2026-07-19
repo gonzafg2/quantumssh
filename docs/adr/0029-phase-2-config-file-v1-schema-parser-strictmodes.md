@@ -1,7 +1,7 @@
 # ADR 0029: Configuration file v1 — schema, parser crate, and StrictModes startup checks
 
-- **Status:** Proposed
-- **Date:** TBD (advances to Accepted when the implementing PR merges)
+- **Status:** Accepted
+- **Date:** 2026-07-19 (accepted with the implementing PR [#128](https://github.com/gonzafg2/quantumssh/pull/128))
 - **Deciders:** Project lead
 - **Related:** Implements [RFC-0010](../rfcs/0010-configuration-file.md) (the shape: TOML, schema-versioned, fail-closed, restart-time, `CLI > config > default`); this ADR locks the operative details the RFC left open — exact keys, value grammars, the parser crate, the retained flag set, and the permission-check implementation. Constrained by [ADR-0018](0018-phase-1-unsafe-code-forbid-workspace.md) (`unsafe_code = "forbid"` — checks go through `rustix`) and [ADR-0024](0024-phase-1-log-event-schema.md) (failure modes are `server.config_error` messages, no new event names). Part of the Phase-2 milestone ([#109](https://github.com/gonzafg2/quantumssh/issues/109)).
 
