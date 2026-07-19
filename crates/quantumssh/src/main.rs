@@ -11,10 +11,13 @@ use std::time::Duration;
 
 use std::sync::Arc;
 
+use quantumssh_core::admission::Limits;
 use quantumssh_core::auth::AuthorizedKeys;
 use quantumssh_core::host_key::HostKey;
 use quantumssh_core::server::{Config, Server};
 use quantumssh_core::transport::RekeyThresholds;
+use tokio::sync::broadcast;
+use tokio::time::Instant;
 use tracing::{error, info};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::registry::LookupSpan;
@@ -29,6 +32,13 @@ use log_fields::EscapingFields;
 
 const DEFAULT_LISTEN: &str = "127.0.0.1:2222";
 const DEFAULT_HANDSHAKE_TIMEOUT_SECS: u64 = 30;
+/// ADR-0028: graceful-shutdown drain deadline default.
+const DEFAULT_DRAIN_TIMEOUT_SECS: u64 = 30;
+/// ADR-0028: each exec holds up to four `spawn_blocking` tasks
+/// (stdout/stderr/stdin pumps and the reap), so the blocking pool is
+/// sized from the connection cap — admission control, not thread-pool
+/// starvation, is what bounds concurrency.
+const BLOCKING_THREADS_PER_CONNECTION: usize = 4;
 
 const USAGE: &str = "\
 quantumssh — memory-safe, post-quantum-first SSH server (pre-alpha)
@@ -142,6 +152,11 @@ struct Resolved {
     authorized_keys_path: Option<String>,
     handshake_timeout: Duration,
     log_format: LogFormat,
+    /// ADR-0028 admission knobs — config-file-only (RFC-0010:
+    /// everything new lives only in the file).
+    limits: Limits,
+    /// ADR-0028 drain deadline — config-file-only.
+    drain_timeout: Duration,
     /// Keys where an explicit flag overrode a set config value — each
     /// is logged at info so the override is visible (RFC-0010).
     overrides: Vec<&'static str>,
@@ -218,12 +233,34 @@ fn resolve(
         "log_format",
         &mut overrides,
     );
+    let defaults = Limits::default();
+    let limits_section = file.map(|f| &f.limits);
+    let get = |value: fn(&config::LimitsSection) -> Option<usize>, default: usize| {
+        limits_section.and_then(value).unwrap_or(default)
+    };
+    let get32 = |value: fn(&config::LimitsSection) -> Option<u32>, default: u32| {
+        limits_section.and_then(value).unwrap_or(default)
+    };
+    let limits = Limits {
+        max_connections: get(|l| l.max_connections, defaults.max_connections),
+        max_half_open: get(|l| l.max_half_open, defaults.max_half_open),
+        max_per_source: get(|l| l.max_per_source, defaults.max_per_source),
+        accept_rate: get32(|l| l.accept_rate, defaults.accept_rate),
+        accept_burst: get32(|l| l.accept_burst, defaults.accept_burst),
+    };
+    let drain_timeout = Duration::from_secs(
+        server
+            .and_then(|s| s.drain_timeout)
+            .unwrap_or(DEFAULT_DRAIN_TIMEOUT_SECS),
+    );
     Resolved {
         listen,
         host_key_path,
         authorized_keys_path,
         handshake_timeout,
         log_format,
+        limits,
+        drain_timeout,
         overrides,
     }
 }
@@ -337,8 +374,7 @@ fn load_authorized_keys(path: &str) -> Option<Arc<AuthorizedKeys>> {
     }
 }
 
-#[tokio::main]
-async fn main() -> ExitCode {
+fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let cli = match parse_cli(&args) {
         Ok(CliOutcome::Run(cli)) => cli,
@@ -379,6 +415,50 @@ async fn main() -> ExitCode {
         info!(key = %key, "command-line flag overrides the config file value");
     }
 
+    // The binary constructs the runtime (ADR-0022), sized per
+    // ADR-0028: blocking threads scale with the connection cap.
+    let runtime = match tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .max_blocking_threads(
+            BLOCKING_THREADS_PER_CONNECTION
+                .saturating_mul(resolved.limits.max_connections)
+                .max(1),
+        )
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(e) => {
+            error!(message = %format!("cannot build the runtime: {e}"), "server.config_error");
+            return ExitCode::FAILURE;
+        }
+    };
+    runtime.block_on(run(resolved))
+}
+
+/// The SIGTERM/SIGINT listener (ADR-0028): the first signal broadcasts
+/// the drain deadline; a second broadcasts an immediate one, skipping
+/// what remains of the drain.
+async fn signal_listener(tx: broadcast::Sender<Instant>, drain: Duration) {
+    use tokio::signal::unix::{SignalKind, signal};
+    let (Ok(mut term), Ok(mut int)) = (
+        signal(SignalKind::terminate()),
+        signal(SignalKind::interrupt()),
+    ) else {
+        tracing::warn!("cannot install SIGTERM/SIGINT handlers; graceful shutdown unavailable");
+        return;
+    };
+    tokio::select! { _ = term.recv() => {}, _ = int.recv() => {} }
+    info!(
+        drain_seconds = drain.as_secs(),
+        "shutdown signal received; draining"
+    );
+    let _ = tx.send(Instant::now() + drain);
+    tokio::select! { _ = term.recv() => {}, _ = int.recv() => {} }
+    info!("second shutdown signal received; aborting the drain");
+    let _ = tx.send(Instant::now());
+}
+
+async fn run(resolved: Resolved) -> ExitCode {
     let Some(host_key_path) = resolved.host_key_path else {
         error!(
             message = "host key is required (--host-key or [server].host_key)",
@@ -408,6 +488,7 @@ async fn main() -> ExitCode {
         // ADR-0026 BSI defaults (1 GiB / 1 h); the re-key completion budget
         // mirrors the handshake budget.
         rekey: RekeyThresholds::bsi_defaults(resolved.handshake_timeout),
+        limits: resolved.limits,
     };
     let server = match Server::bind(&config).await {
         Ok(server) => server,
@@ -417,7 +498,17 @@ async fn main() -> ExitCode {
         }
     };
 
-    match server.serve().await {
+    // Graceful shutdown (ADR-0028): the signal listener drives the
+    // broadcast the accept loop and every connection subscribe to.
+    // Exit code is 0 on both the drained and the aborted path — the
+    // shutdown completed as commanded.
+    let (shutdown_tx, initial_rx) = broadcast::channel(4);
+    drop(initial_rx);
+    drop(tokio::spawn(signal_listener(
+        shutdown_tx.clone(),
+        resolved.drain_timeout,
+    )));
+    match server.serve(shutdown_tx).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             error!(message = %format!("accept loop failed: {e}"), "server.config_error");

@@ -16,6 +16,7 @@ use ed25519_dalek::SigningKey;
 use ed25519_dalek::Verifier;
 use ml_kem::MlKem768;
 use ml_kem::kem::{Decapsulate as _, FromSeed as _, KeyExport as _};
+use quantumssh_core::admission::Limits;
 use quantumssh_core::auth;
 use quantumssh_core::auth::AuthorizedKeys;
 use quantumssh_core::cipher;
@@ -28,6 +29,7 @@ use sha2::{Digest, Sha256};
 use std::io::Write;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
+use tokio::sync::broadcast;
 use tokio::time::{Duration, timeout};
 use x25519_dalek::{PublicKey as XPublic, StaticSecret as XSecret};
 
@@ -46,6 +48,23 @@ async fn start_server_rekey(
     handshake_timeout: Duration,
     rekey: RekeyThresholds,
 ) -> (SocketAddr, Arc<HostKey>) {
+    let (addr, host_key, _tx, _serve) =
+        start_server_full(handshake_timeout, rekey, Limits::default()).await;
+    (addr, host_key)
+}
+
+/// Full-control variant: custom limits, plus the shutdown sender and
+/// the serve task handle for the ADR-0028 tests.
+async fn start_server_full(
+    handshake_timeout: Duration,
+    rekey: RekeyThresholds,
+    limits: Limits,
+) -> (
+    SocketAddr,
+    Arc<HostKey>,
+    broadcast::Sender<tokio::time::Instant>,
+    tokio::task::JoinHandle<std::io::Result<()>>,
+) {
     let host_key = Arc::new(HostKey::from_seed([11u8; 32]));
     // Create a temp authorized_keys with the test key so the server
     // can start (authorized_keys is mandatory). Use a well-known seed.
@@ -58,11 +77,14 @@ async fn start_server_rekey(
         host_key: Arc::clone(&host_key),
         authorized_keys,
         rekey,
+        limits,
     };
     let server = Server::bind(&config).await.expect("bind ephemeral port");
     let addr = server.local_addr().expect("local addr");
-    drop(tokio::spawn(server.serve()));
-    (addr, host_key)
+    let (tx, initial_rx) = broadcast::channel(4);
+    drop(initial_rx);
+    let serve = tokio::spawn(server.serve(tx.clone()));
+    (addr, host_key, tx, serve)
 }
 
 async fn connect(addr: SocketAddr) -> TcpStream {
@@ -1608,4 +1630,138 @@ async fn packet_threshold_triggers_server_rekey() {
         "all output survives the key switch"
     );
     assert_eq!(exit, Some(0));
+}
+
+// ---- ADR-0028: concurrency, admission control, graceful shutdown ----
+
+/// Reads until EOF, bounded by the test budget.
+async fn read_to_eof(stream: &mut TcpStream) {
+    let mut buf = [0u8; 256];
+    loop {
+        let n = timeout(TEST_BUDGET, stream.read(&mut buf))
+            .await
+            .expect("EOF within budget")
+            .expect("read");
+        if n == 0 {
+            return;
+        }
+    }
+}
+
+#[tokio::test]
+async fn two_connections_are_served_concurrently() {
+    let (addr, host_key) = start_server(TEST_BUDGET).await;
+    // A holds its slot mid-handshake (server ID read, nothing sent).
+    let mut held = connect(addr).await;
+    let _ = read_server_id(&mut held).await;
+    // B completes a full handshake and authenticates while A is still
+    // open — impossible under the Phase-1 sequential spawn-and-join.
+    let (stream, sealed) = authenticate(addr, &host_key).await;
+    drop((stream, sealed, held));
+}
+
+#[tokio::test]
+async fn per_source_half_open_cap_refuses_with_no_banner() {
+    let limits = Limits {
+        max_per_source: 2,
+        ..Limits::default()
+    };
+    let (addr, _hk, _tx, _serve) = start_server_full(
+        TEST_BUDGET,
+        RekeyThresholds::bsi_defaults(TEST_BUDGET),
+        limits,
+    )
+    .await;
+    let mut a = connect(addr).await;
+    let _ = read_server_id(&mut a).await;
+    let mut b = connect(addr).await;
+    let _ = read_server_id(&mut b).await;
+    // The third half-open from the same source is refused pre-banner:
+    // the socket closes without a single byte (ADR-0028).
+    let mut c = connect(addr).await;
+    let mut buf = [0u8; 1];
+    let n = timeout(TEST_BUDGET, c.read(&mut buf))
+        .await
+        .expect("refusal within budget")
+        .expect("read");
+    assert_eq!(n, 0, "refused connection must close without a banner");
+    drop((a, b));
+}
+
+#[tokio::test]
+async fn accept_rate_limit_refuses_after_the_burst() {
+    let limits = Limits {
+        accept_burst: 2,
+        accept_rate: 1,
+        ..Limits::default()
+    };
+    let (addr, _hk, _tx, _serve) = start_server_full(
+        TEST_BUDGET,
+        RekeyThresholds::bsi_defaults(TEST_BUDGET),
+        limits,
+    )
+    .await;
+    let mut a = connect(addr).await;
+    let _ = read_server_id(&mut a).await;
+    let mut b = connect(addr).await;
+    let _ = read_server_id(&mut b).await;
+    // Burst exhausted: the third accept inside the same second is
+    // refused pre-banner even though half-open slots remain.
+    let mut c = connect(addr).await;
+    let mut buf = [0u8; 1];
+    let n = timeout(TEST_BUDGET, c.read(&mut buf))
+        .await
+        .expect("refusal within budget")
+        .expect("read");
+    assert_eq!(n, 0, "rate-limited connection must close without a banner");
+    drop((a, b));
+}
+
+#[tokio::test]
+async fn shutdown_disconnects_pre_auth_immediately_and_serve_returns() {
+    let (addr, _hk, tx, serve) = start_server_full(
+        TEST_BUDGET,
+        RekeyThresholds::bsi_defaults(TEST_BUDGET),
+        Limits::default(),
+    )
+    .await;
+    let mut held = connect(addr).await;
+    let _ = read_server_id(&mut held).await;
+    // Drain deadline far away: a pre-auth connection must not get it.
+    tx.send(tokio::time::Instant::now() + Duration::from_secs(61))
+        .expect("send shutdown");
+    read_to_eof(&mut held).await;
+    // The loop drains and returns Ok well before the 60 s deadline.
+    let result = timeout(TEST_BUDGET, serve)
+        .await
+        .expect("serve returns before the deadline")
+        .expect("join serve");
+    result.expect("clean shutdown");
+}
+
+#[tokio::test]
+async fn shutdown_drains_an_authenticated_session_at_the_deadline() {
+    let (addr, host_key, tx, serve) = start_server_full(
+        TEST_BUDGET,
+        RekeyThresholds::bsi_defaults(TEST_BUDGET),
+        Limits::default(),
+    )
+    .await;
+    let (mut stream, _sealed) = authenticate(addr, &host_key).await;
+    let started = std::time::Instant::now();
+    let drain = Duration::from_secs(1);
+    tx.send(tokio::time::Instant::now() + drain)
+        .expect("send shutdown");
+    // The authenticated session gets the drain window (not an
+    // immediate cut), then closes at the deadline.
+    read_to_eof(&mut stream).await;
+    assert!(
+        started.elapsed() >= Duration::from_millis(900),
+        "authenticated session was cut before the drain deadline"
+    );
+    let result = timeout(TEST_BUDGET, serve)
+        .await
+        .expect("serve returns after the drain")
+        .expect("join serve");
+    result.expect("clean shutdown");
 }

@@ -13,7 +13,9 @@ publish = false
 [dependencies]
 quantumssh-core = { path = "../quantumssh-core", version = "0.0.1" }
 # ADR-0022: the binary is the only crate that constructs the runtime.
-tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+# ADR-0028 adds `signal` (the SIGTERM/SIGINT listener), plus `sync`
+# and `time` for the shutdown broadcast the binary drives.
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
 tracing = { workspace = true }
 # ADR-0024: the binary is the only place a subscriber is constructed.
 tracing-subscriber = { workspace = true, features = ["fmt", "env-filter", "json", "ansi"] }
