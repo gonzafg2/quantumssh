@@ -199,6 +199,19 @@ struct Driver {
     child: Option<ChildIo>,
 }
 
+/// Backstop for the ADR-0023 audit invariant: every `exec.started` is
+/// followed by exactly one `exec.finished`. The normal close path emits
+/// it explicitly; this covers the paths that never get there — a panic
+/// unwinding the connection task (and the Phase-2 task aborts, ADR-0028)
+/// — so the audit trail cannot lose its terminal record. Runs before the
+/// fields drop, so the event precedes the child teardown that
+/// [`ChildIo`]'s own `Drop` triggers. No-op when already emitted.
+impl Drop for Driver {
+    fn drop(&mut self) {
+        self.emit_finished();
+    }
+}
+
 impl Driver {
     fn new(identity: String) -> Self {
         Self {
@@ -1036,5 +1049,91 @@ mod tests {
         assert_eq!(msg, SSH_MSG_CHANNEL_OPEN_FAILURE);
         assert_eq!(r.uint32().unwrap(), 2);
         assert_eq!(r.uint32().unwrap(), SSH_OPEN_UNKNOWN_CHANNEL_TYPE);
+    }
+
+    /// Scoped subscriber that records each event's message text, so the
+    /// tests below can count `exec.finished` emissions.
+    #[derive(Clone, Default)]
+    struct Capture(std::sync::Arc<std::sync::Mutex<Vec<String>>>);
+
+    impl tracing::Subscriber for Capture {
+        fn enabled(&self, _: &tracing::Metadata<'_>) -> bool {
+            true
+        }
+        fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+            tracing::span::Id::from_u64(1)
+        }
+        fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+        fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+        fn event(&self, event: &tracing::Event<'_>) {
+            struct Msg(Option<String>);
+            impl tracing::field::Visit for Msg {
+                fn record_debug(
+                    &mut self,
+                    field: &tracing::field::Field,
+                    value: &dyn std::fmt::Debug,
+                ) {
+                    if field.name() == "message" {
+                        self.0 = Some(format!("{value:?}"));
+                    }
+                }
+            }
+            let mut m = Msg(None);
+            event.record(&mut m);
+            if let Some(msg) = m.0 {
+                self.0.lock().unwrap().push(msg);
+            }
+        }
+        fn enter(&self, _: &tracing::span::Id) {}
+        fn exit(&self, _: &tracing::span::Id) {}
+    }
+
+    fn finished_count(seen: &std::sync::Mutex<Vec<String>>) -> usize {
+        seen.lock()
+            .unwrap()
+            .iter()
+            .filter(|m| *m == "exec.finished")
+            .count()
+    }
+
+    #[test]
+    fn drop_emits_owed_exec_finished_on_unwind() {
+        let capture = Capture::default();
+        let seen = capture.0.clone();
+        tracing::subscriber::with_default(capture, || {
+            // AssertUnwindSafe: the Driver is owned by the closure and fully
+            // dropped by the unwind; no state observable after the panic.
+            let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let mut d = Driver::new("SHA256:test".to_string());
+                d.command = Some("true".to_string());
+                panic!("mid-exec panic");
+            }));
+            assert!(unwound.is_err());
+        });
+        assert_eq!(finished_count(&seen), 1);
+    }
+
+    #[test]
+    fn drop_after_normal_emission_does_not_duplicate() {
+        let capture = Capture::default();
+        let seen = capture.0.clone();
+        tracing::subscriber::with_default(capture, || {
+            let mut d = Driver::new("SHA256:test".to_string());
+            d.command = Some("true".to_string());
+            d.exit_status = Some(0);
+            d.emit_finished();
+            drop(d);
+        });
+        assert_eq!(finished_count(&seen), 1);
+    }
+
+    #[test]
+    fn drop_without_exec_emits_nothing() {
+        let capture = Capture::default();
+        let seen = capture.0.clone();
+        tracing::subscriber::with_default(capture, || {
+            drop(Driver::new("SHA256:test".to_string()));
+        });
+        assert_eq!(finished_count(&seen), 0);
     }
 }
