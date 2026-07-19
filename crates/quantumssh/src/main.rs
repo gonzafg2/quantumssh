@@ -278,10 +278,10 @@ fn init_logging(format: LogFormat) {
 /// file itself first, per RFC-0010.
 fn load_config_file(cli: &Cli) -> Result<Option<ConfigFile>, config::ConfigError> {
     cli.config_path.as_deref().map_or(Ok(None), |p| {
-        let path = Path::new(p);
-        config::check_trusted_file(path, TrustedClass::Input)
-            .and_then(|()| config::load(path))
-            .map(Some)
+        // Read the canonical path the check returns — the checked file
+        // is the read file, even if the given name is a symlink.
+        let canon = config::check_trusted_file(Path::new(p), TrustedClass::Input)?;
+        config::load(&canon).map(Some)
     })
 }
 
@@ -289,24 +289,29 @@ fn load_config_file(cli: &Cli) -> Result<Option<ConfigFile>, config::ConfigError
 /// input), then read once at startup with `std::fs` (ADR-0022's
 /// deliberate non-async file I/O). Logs and returns `None` on failure.
 fn load_host_key(path: &str) -> Option<Arc<HostKey>> {
-    if let Err(e) = config::check_trusted_file(Path::new(path), TrustedClass::Secret) {
-        error!(message = %e, "server.config_error");
-        return None;
-    }
+    // Read the canonical path the check returns — the checked file is
+    // the read file, even if the given name is a symlink.
+    let canon = match config::check_trusted_file(Path::new(path), TrustedClass::Secret) {
+        Ok(canon) => canon,
+        Err(e) => {
+            error!(message = %e, "server.config_error");
+            return None;
+        }
+    };
     // Zeroizing: the PEM holds the private seed; erase the buffer on
     // drop instead of leaving it readable for the process lifetime
     // (threat model §4.3).
-    let pem = match std::fs::read_to_string(path) {
+    let pem = match std::fs::read_to_string(&canon) {
         Ok(pem) => Zeroizing::new(pem),
         Err(e) => {
-            error!(message = %format!("cannot read host key {path}: {e}"), "server.config_error");
+            error!(message = %format!("cannot read host key {}: {e}", canon.display()), "server.config_error");
             return None;
         }
     };
     match HostKey::from_openssh_pem(&pem) {
         Ok(k) => Some(Arc::new(k)),
         Err(e) => {
-            error!(message = %format!("cannot load host key {path}: {e}"), "server.config_error");
+            error!(message = %format!("cannot load host key {}: {e}", canon.display()), "server.config_error");
             None
         }
     }
@@ -315,14 +320,18 @@ fn load_host_key(path: &str) -> Option<Arc<HostKey>> {
 /// `StrictModes`, then read once at startup (ADR-0022). Logs and
 /// returns `None` on failure.
 fn load_authorized_keys(path: &str) -> Option<Arc<AuthorizedKeys>> {
-    if let Err(e) = config::check_trusted_file(Path::new(path), TrustedClass::Input) {
-        error!(message = %e, "server.config_error");
-        return None;
-    }
-    match AuthorizedKeys::load(Path::new(path)) {
+    // Same canonical-read rule as the host key.
+    let canon = match config::check_trusted_file(Path::new(path), TrustedClass::Input) {
+        Ok(canon) => canon,
+        Err(e) => {
+            error!(message = %e, "server.config_error");
+            return None;
+        }
+    };
+    match AuthorizedKeys::load(&canon) {
         Ok(k) => Some(Arc::new(k)),
         Err(e) => {
-            error!(message = %format!("cannot load authorized_keys {path}: {e}"), "server.config_error");
+            error!(message = %format!("cannot load authorized_keys {}: {e}", canon.display()), "server.config_error");
             None
         }
     }
@@ -367,7 +376,7 @@ async fn main() -> ExitCode {
     };
     init_logging(resolved.log_format);
     for key in &resolved.overrides {
-        info!(key, "command-line flag overrides the config file value");
+        info!(key = %key, "command-line flag overrides the config file value");
     }
 
     let Some(host_key_path) = resolved.host_key_path else {

@@ -18,6 +18,9 @@ PORT="${QUANTUMSSH_PORT:-2222}"
 # workdir under the world-writable /tmp would refuse to start; the
 # workdir lives under the repo's target/ instead (mktemp makes it 0700).
 mkdir -p target
+# Under umask 002 a fresh target/ would be group-writable and fail the
+# ancestor walk; mktemp already makes WORK itself 0700.
+chmod go-w target
 WORK="$(mktemp -d "$PWD/target/interop.XXXXXX")"
 SRV=0
 cleanup() {

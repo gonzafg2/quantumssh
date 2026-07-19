@@ -11,7 +11,7 @@
 //! trusted file that fails a permission predicate is never read.
 
 use std::net::SocketAddr;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
@@ -183,9 +183,12 @@ fn ancestor_violation(mode: u32) -> Option<String> {
 /// The full `StrictModes` check (ADR-0029): canonicalise first — a
 /// lexical walk over a symlink's ancestors would check the wrong
 /// directories — then apply the file predicates and walk every
-/// ancestor of the canonical path. Stat-based and best-effort against
-/// local races, matching OpenSSH `secure_filename()`.
-pub fn check_trusted_file(path: &Path, class: TrustedClass) -> Result<(), ConfigError> {
+/// ancestor of the canonical path. Returns the canonical path so the
+/// caller reads the file that was checked, not the pre-resolution name
+/// (a symlink retargeted after the check would otherwise redirect the
+/// read). Stat-based and best-effort against the residual stat-to-open
+/// race, matching OpenSSH `secure_filename()`.
+pub fn check_trusted_file(path: &Path, class: TrustedClass) -> Result<PathBuf, ConfigError> {
     let canon = std::fs::canonicalize(path).map_err(|e| {
         ConfigError::FileUnavailable(format!("{}: cannot canonicalise: {e}", path.display()))
     })?;
@@ -207,7 +210,7 @@ pub fn check_trusted_file(path: &Path, class: TrustedClass) -> Result<(), Config
             )));
         }
     }
-    Ok(())
+    Ok(canon)
 }
 
 fn stat_or_unavailable(path: &Path) -> Result<rustix::fs::Stat, ConfigError> {
