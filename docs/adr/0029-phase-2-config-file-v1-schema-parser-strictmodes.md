@@ -37,7 +37,8 @@ We will implement RFC-0010 as follows.
   format = "json"               # "json" | "human"
   ```
 
-  Every key is optional; defaults are the Phase-1 defaults. `host_key` and
+  Every key except the mandatory `schema_version` is optional; defaults are the
+  Phase-1 defaults. `host_key` and
   `authorized_keys` must still come from *somewhere* (flag or config) for the
   server to start, exactly as today. The deferred Phase-2 policy — `[limits]`
   ([ADR-0028](0028-phase-2-concurrent-connections-limits-graceful-shutdown.md)),
@@ -77,7 +78,13 @@ We will implement RFC-0010 as follows.
   RFC's failure-mode table.
 - **StrictModes checks, first-party over `rustix`.** The full RFC predicate set,
   implemented with `rustix::fs::stat`/`statat` (already in the tree, no new
-  dependency, `unsafe`-free):
+  dependency, `unsafe`-free). Each trusted path is **canonicalised first**
+  (`std::fs::canonicalize`, resolving every symlink), and the predicates run
+  over the canonical path — a lexical walk over a symlink's ancestors would
+  check the wrong directories and admit a group-writable symlink target;
+  OpenSSH's `secure_filename()` likewise operates on the resolved path. The
+  check is stat-based and best-effort against local races, matching that prior
+  art. The predicates:
   - *Integrity*, for the config file, `authorized_keys`, and the host key: not
     group/world-writable; owned by root or the process UID; no group/world-writable
     ancestor directory up to the filesystem root.
@@ -85,8 +92,12 @@ We will implement RFC-0010 as follows.
 
   The checks run on the resolved trusted-file set **regardless of whether each
   path came from a flag or the config file** — the threat-model §4.2/§4.4/§5.5.3
-  obligations attach to the files, not to how they were named. Failures refuse to
-  start with `insecure_permissions`, naming the file and the offending predicate.
+  obligations attach to the files, not to how they were named. A failed predicate
+  refuses to start with `insecure_permissions`, naming the file and the offending
+  predicate. A check that cannot run at all — canonicalisation or `stat` failing
+  with `ENOENT`, `EACCES`, a dangling symlink — also refuses to start, but as the
+  missing-file class, not `insecure_permissions`: the policy did not fail, the
+  check could not run, and the audit trail must not conflate the two.
 - **Placement: the `quantumssh` binary crate**, in a new `config` module beside
   the existing hand-rolled CLI parsing. The library stays protocol-only
   ([ADR-0017](0017-phase-1-workspace-topology-two-crates-flat.md) split;
@@ -176,9 +187,11 @@ either way) and breaks the RFC's "existing invocations keep working" promise.
 
 - Implementation: TBD — `crates/quantumssh/src/config.rs` (new: TOML schema,
   StrictModes checks, precedence merge), `crates/quantumssh/src/main.rs`
-  (`--config` flag, resolution order), `crates/quantumssh/Cargo.toml`
-  (`basic-toml`, `serde`, `rustix`), `Cargo.toml` (workspace pins). The paths in
-  `crates/` exist today except `config.rs`.
+  (`--config` flag, resolution order), the root `Cargo.toml`
+  (`[workspace.dependencies]` pins for `basic-toml` and `serde`; `rustix` is
+  already pinned there), and `crates/quantumssh/Cargo.toml` (referencing them
+  via `workspace = true`, the repo's layout). The paths in `crates/` exist today
+  except `config.rs`.
 - Related: [RFC-0010](../rfcs/0010-configuration-file.md) (the shape this
   implements), [ADR-0028](0028-phase-2-concurrent-connections-limits-graceful-shutdown.md)
   (`[limits]` lands with its implementation), [ADR-0024](0024-phase-1-log-event-schema.md)
