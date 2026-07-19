@@ -77,8 +77,11 @@ We will implement RFC-0010 as follows.
   silent fallback. A flag overriding a set config key is logged at info, per the
   RFC's failure-mode table.
 - **StrictModes checks, first-party over `rustix`.** The full RFC predicate set,
-  implemented with `rustix::fs::stat`/`statat` (already in the tree, no new
-  dependency, `unsafe`-free). Each trusted path is **canonicalised first**
+  implemented with `rustix::fs::stat`/`statat` (`unsafe`-free). The `rustix`
+  crate is already pinned in the workspace, but its current feature set is
+  `["std", "process"]` — the implementation adds the `fs` feature to the
+  existing pin; a feature flag on a crate already in the tree, not a new
+  dependency. Each trusted path is **canonicalised first**
   (`std::fs::canonicalize`, resolving every symlink), and the predicates run
   over the canonical path — a lexical walk over a symlink's ancestors would
   check the wrong directories and admit a group-writable symlink target;
@@ -189,8 +192,9 @@ either way) and breaks the RFC's "existing invocations keep working" promise.
   StrictModes checks, precedence merge), `crates/quantumssh/src/main.rs`
   (`--config` flag, resolution order), the root `Cargo.toml`
   (`[workspace.dependencies]` pins for `basic-toml` and `serde`; `rustix` is
-  already pinned there), and `crates/quantumssh/Cargo.toml` (referencing them
-  via `workspace = true`, the repo's layout). The paths in `crates/` exist today
+  already pinned there and gains the `fs` feature), and
+  `crates/quantumssh/Cargo.toml` (referencing them via `workspace = true`, the
+  repo's layout). The paths in `crates/` exist today
   except `config.rs`.
 - Related: [RFC-0010](../rfcs/0010-configuration-file.md) (the shape this
   implements), [ADR-0028](0028-phase-2-concurrent-connections-limits-graceful-shutdown.md)
