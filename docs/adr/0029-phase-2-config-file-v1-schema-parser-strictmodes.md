@@ -59,10 +59,13 @@ We will implement RFC-0010 as follows.
   delta is **one crate**. `basic-toml` (a maintained, serde-only fork of `toml`
   0.5) has no further dependencies — the full `toml` crate would add `winnow`,
   `indexmap`, `toml_datetime`, and `serde_spanned` for span-quality we do not
-  need. Config structs derive `Deserialize` with `deny_unknown_fields` on every
-  section — the RFC's fail-closed unknown-key rule comes from the deserializer,
-  not hand-rolled key checks — and `basic-toml`'s errors carry line/column for
-  the `schema_error` message. Verified against `cargo deny` in the implementing
+  need. Config structs derive `Deserialize` with `deny_unknown_fields` on the **root
+  document struct and every section struct** — the attribute is per-container
+  in serde, and only root coverage rejects an unknown *section*: without it, a
+  premature `[limits]` table would be silently ignored instead of refusing to
+  start. The RFC's fail-closed unknown-key rule thus comes entirely from the
+  deserializer, not hand-rolled key checks, and `basic-toml`'s errors carry
+  line/column for the `schema_error` message. Verified against `cargo deny` in the implementing
   PR.
 - **`schema_version` handling.** Mandatory; the binary accepts exactly `1` in v1.
   Anything else refuses to start (`version_unsupported`). The
@@ -98,9 +101,10 @@ We will implement RFC-0010 as follows.
   obligations attach to the files, not to how they were named. A failed predicate
   refuses to start with `insecure_permissions`, naming the file and the offending
   predicate. A check that cannot run at all — canonicalisation or `stat` failing
-  with `ENOENT`, `EACCES`, a dangling symlink — also refuses to start, but as the
-  missing-file class, not `insecure_permissions`: the policy did not fail, the
-  check could not run, and the audit trail must not conflate the two.
+  with `ENOENT`, `EACCES`, a dangling symlink — also refuses to start, but with
+  its own message value **`file_unavailable`** (the RFC's missing-file class),
+  never `insecure_permissions`: the policy did not fail, the check could not
+  run, and the audit trail must not conflate the two.
 - **Placement: the `quantumssh` binary crate**, in a new `config` module beside
   the existing hand-rolled CLI parsing. The library stays protocol-only
   ([ADR-0017](0017-phase-1-workspace-topology-two-crates-flat.md) split;
