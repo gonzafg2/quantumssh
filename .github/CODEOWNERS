@@ -1,0 +1,11 @@
+# CODEOWNERS — review-request metadata only.
+#
+# GitHub auto-requests a review from the owner on every PR touching
+# matched paths (Dependabot PRs included, which otherwise request no
+# one). Branch protection deliberately does NOT enable "require review
+# from Code Owners": with a single maintainer that would deadlock every
+# merge (an author cannot approve their own PR). Zero required reviews
+# remains the decided posture (ADR-0008); flipping that switch when a
+# second maintainer arrives is a change to ADR-0008, not to this file.
+
+* @gonzafg2
