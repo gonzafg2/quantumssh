@@ -45,6 +45,9 @@ rustix = { workspace = true }
 [dev-dependencies]
 # Integration tests construct their own runtime; the library does not.
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+# The Driver drop-guard tests capture audit events through a scoped
+# thread-local subscriber; `std` gates `tracing::subscriber::with_default`.
+tracing = { workspace = true, features = ["std"] }
 
 [lints]
 workspace = true
