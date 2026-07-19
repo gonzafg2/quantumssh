@@ -19,6 +19,10 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["fmt", "env-filter", "json", "ansi"] }
 # Threat model section 4.3: the host-key PEM buffer is erased on drop.
 zeroize = { workspace = true }
+# ADR-0029 (RFC-0010): the TOML config file and its StrictModes checks.
+serde      = { workspace = true }
+basic-toml = { workspace = true }
+rustix     = { workspace = true }
 
 [dev-dependencies]
 # `tracing::subscriber::with_default` (scoped test subscriber) is
