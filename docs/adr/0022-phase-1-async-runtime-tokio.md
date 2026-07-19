@@ -5,6 +5,18 @@
 - **Deciders:** Project lead
 - **Related:** Subsidiary to [RFC-0004](../rfcs/0004-phase-1-async-runtime-tokio.md), which decides the *adoption* of Tokio (trust-base impact, alternatives); this ADR fixes the operative detail — version, features, threading. Constrained by [ADR-0010](0010-toolchain-pinning-resolver-3-edition-2024-msrv-1-92.md) (MSRV 1.92) and [ADR-0018](0018-phase-1-unsafe-code-forbid-workspace.md) (`unsafe_code = "forbid"`); the `server.rs` accept loop in [ADR-0017](0017-phase-1-workspace-topology-two-crates-flat.md)'s `quantumssh-core` is built on it. Will touch (TBD — `crates/` does not exist yet) `crates/quantumssh/Cargo.toml` and `crates/quantumssh-core/Cargo.toml`.
 
+> **Post-acceptance errata** (per [ADR-0015](0015-permit-annotated-errata-in-adrs.md)):
+>
+> - **2026-07-19** ([PR #123](https://github.com/gonzafg2/quantumssh/pull/123)):
+>   Corrected two claims that were already false when this ADR was
+>   accepted in the #86 sweep: the `sync` feature's stated purpose
+>   ("broadcast — graceful-shutdown signal") and the `signal`
+>   exclusion's claim that "Phase 1's `sync::broadcast` shutdown path
+>   is driven by tests". No broadcast shutdown path was ever
+>   implemented — Phase 1 uses `sync` for the exec layer's mpsc
+>   channels. The shutdown broadcast is introduced in Phase 2 by
+>   [ADR-0028](0028-phase-2-concurrent-connections-limits-graceful-shutdown.md).
+
 ## Context
 
 [RFC-0003](../rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md) specifies the nine cryptographic primitive crates in detail but says nothing about the async runtime; the adoption of Tokio — a dependency that materially expands the trust base on the networking path — is decided by [RFC-0004](../rfcs/0004-phase-1-async-runtime-tokio.md), per the RFC lane rule. This ADR records the subsidiary operative choices. The current root `Cargo.toml` carries `tokio` only as a commented placeholder (`# tokio = { version = "1", features = ["full"] }`). Before `server.rs` can be written, the runtime, its feature set, and its threading model must be fixed: the accept loop's shape, whether per-connection state must be `Send`, and which `tokio` modules are linked all follow from this choice.
@@ -29,7 +41,7 @@ tokio = { version = "1.51", default-features = false, features = [
     "rt-multi-thread", # the runtime (pulls in "rt")
     "macros",          # #[tokio::main] in the binary, #[tokio::test] in tests
     "time",            # tokio::time::timeout — handshake budget (threat model §5.1.3)
-    "sync",            # broadcast — graceful-shutdown signal
+    "sync",            # mpsc — exec child-I/O channels (see errata)
 ] }
 ```
 
@@ -41,7 +53,7 @@ Binding details:
 - **Features that are deliberately excluded, with rationale:**
   - **`fs`** — host key and `authorized_keys` are read once at startup with `std::fs`. One-time blocking I/O outside the hot path does not justify the async filesystem layer.
   - **`process`** — Phase 1 command execution uses `std::process::Command` on a `tokio::task::spawn_blocking` thread, not `tokio::process`. This keeps the child-process lifecycle simple for the walking skeleton; `tokio::process` (and the `process` feature) is reconsidered when PTY support lands in Phase 2.
-  - **`signal`** — graceful shutdown on SIGTERM/SIGINT is a Phase 2 operational concern; Phase 1's `sync::broadcast` shutdown path is driven by tests, not OS signals.
+  - **`signal`** — graceful shutdown on SIGTERM/SIGINT is a Phase 2 operational concern; Phase 1 ships no shutdown path at all (see errata — the `sync::broadcast` path this ADR anticipated was never built; [ADR-0028](0028-phase-2-concurrent-connections-limits-graceful-shutdown.md) introduces it).
 - **Version pin: `1.51` (the active LTS).** Tokio 1.51.x is an LTS line with security backports through March 2027 — well into Phase 2. The latest stable at the time of writing is 1.52.3; the LTS line is preferred over chasing latest for a foundational dependency. A bump to a newer LTS is its own superseding ADR — a new pin is a decision change, which [ADR-0015](0015-permit-annotated-errata-in-adrs.md) routes to supersession, not errata — never a silent `Cargo.lock` drift. `1.51` is compatible with the MSRV 1.92 pinned in ADR-0010.
 - **Crate placement.** `quantumssh-core` depends on `tokio` with the I/O and task features it needs to define async fns (`net`, `io-util`, `time`, `sync`, and `rt` — `tokio::task::spawn_blocking` and `tokio::spawn` are gated behind the `rt` feature); the `quantumssh` binary additionally enables `macros` and `rt-multi-thread` and is the only crate that constructs the runtime (`#[tokio::main]`). The library never starts a runtime — it exposes async fns the binary drives. The exact per-crate feature split is an implementation detail of the first PR, constrained by this list.
 
