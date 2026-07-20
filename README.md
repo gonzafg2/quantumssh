@@ -1,5 +1,7 @@
 # QuantumSSH
 
+[![DOI](https://zenodo.org/badge/1234374997.svg)](https://doi.org/10.5281/zenodo.21448953)
+
 > SSH for the next 30 years, not the past 30.
 > **Open source. No NDAs. No exceptions.**
 
