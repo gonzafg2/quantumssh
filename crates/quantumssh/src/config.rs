@@ -72,6 +72,9 @@ pub struct ConfigFile {
     /// `[logging]` — output format.
     #[serde(default)]
     pub logging: LoggingSection,
+    /// `[limits]` — admission control (ADR-0028).
+    #[serde(default)]
+    pub limits: LimitsSection,
 }
 
 /// `[server]`.
@@ -85,6 +88,9 @@ pub struct ServerSection {
     /// Handshake budget in integer seconds (ADR-0029: no
     /// duration-string grammar).
     pub handshake_timeout: Option<u64>,
+    /// Graceful-shutdown drain deadline in integer seconds
+    /// (ADR-0028; default 30).
+    pub drain_timeout: Option<u64>,
 }
 
 /// `[auth]`.
@@ -103,6 +109,25 @@ pub struct LoggingSection {
     pub format: Option<LogFormat>,
 }
 
+/// `[limits]` — the ADR-0028 admission caps and per-source rate limit.
+/// Key names match the structured `limit` field on
+/// `connection.refused`, so the event points at the knob.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LimitsSection {
+    /// Global concurrent-connection cap (default 256).
+    pub max_connections: Option<usize>,
+    /// Total half-open (pre-auth) cap (default 100).
+    pub max_half_open: Option<usize>,
+    /// Per-source half-open cap (default 10; IPv4 per address, IPv6
+    /// per /64).
+    pub max_per_source: Option<usize>,
+    /// Per-source token-bucket refill, tokens per second (default 1).
+    pub accept_rate: Option<u32>,
+    /// Per-source token-bucket burst capacity (default 10).
+    pub accept_burst: Option<u32>,
+}
+
 /// The `schema_version` values this binary understands (ADR-0029: the
 /// set widens only with a documented compatibility rule).
 const SUPPORTED_SCHEMA_VERSIONS: [u32; 1] = [1];
@@ -117,9 +142,29 @@ pub fn parse(text: &str, origin: &str) -> Result<ConfigFile, ConfigError> {
             file.schema_version
         )));
     }
-    if file.server.handshake_timeout == Some(0) {
+    // Fail-closed zero rejection: a zero cap refuses everything, a
+    // zero rate never refills, a zero deadline cannot bound anything.
+    let zeros = [
+        (
+            file.server.handshake_timeout == Some(0),
+            "server.handshake_timeout",
+        ),
+        (file.server.drain_timeout == Some(0), "server.drain_timeout"),
+        (
+            file.limits.max_connections == Some(0),
+            "limits.max_connections",
+        ),
+        (file.limits.max_half_open == Some(0), "limits.max_half_open"),
+        (
+            file.limits.max_per_source == Some(0),
+            "limits.max_per_source",
+        ),
+        (file.limits.accept_rate == Some(0), "limits.accept_rate"),
+        (file.limits.accept_burst == Some(0), "limits.accept_burst"),
+    ];
+    if let Some((_, key)) = zeros.iter().find(|(is_zero, _)| *is_zero) {
         return Err(ConfigError::SchemaError(format!(
-            "{origin}: server.handshake_timeout must be at least 1 second"
+            "{origin}: {key} must be at least 1"
         )));
     }
     Ok(file)
@@ -268,9 +313,40 @@ format = "human"
     #[test]
     fn unknown_root_section_is_schema_error() {
         // The fail-closed guarantee for deferred sections (ADR-0029):
-        // a premature [limits] refuses to start, never boots ignored.
-        let err = parse("schema_version = 1\n[limits]\nmax_half_open = 100", "test").unwrap_err();
+        // a premature [session] refuses to start, never boots ignored.
+        // ([limits] graduated with the ADR-0028 implementation.)
+        let err = parse("schema_version = 1\n[session]\naccept_env = []", "test").unwrap_err();
         assert!(matches!(err, ConfigError::SchemaError(_)), "{err}");
+    }
+
+    #[test]
+    fn limits_section_parses_with_partial_keys() {
+        let file = parse(
+            "schema_version = 1\n[limits]\nmax_per_source = 4\naccept_burst = 20",
+            "test",
+        )
+        .expect("limits config");
+        assert_eq!(file.limits.max_per_source, Some(4));
+        assert_eq!(file.limits.accept_burst, Some(20));
+        assert!(file.limits.max_connections.is_none());
+    }
+
+    #[test]
+    fn zero_limit_keys_are_schema_errors() {
+        for snippet in [
+            "[limits]\nmax_connections = 0",
+            "[limits]\nmax_half_open = 0",
+            "[limits]\nmax_per_source = 0",
+            "[limits]\naccept_rate = 0",
+            "[limits]\naccept_burst = 0",
+            "[server]\ndrain_timeout = 0",
+        ] {
+            let err = parse(&format!("schema_version = 1\n{snippet}"), "test").unwrap_err();
+            assert!(
+                matches!(err, ConfigError::SchemaError(_)),
+                "{snippet}: {err}"
+            );
+        }
     }
 
     #[test]

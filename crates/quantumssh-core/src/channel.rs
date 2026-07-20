@@ -313,23 +313,33 @@ where
         if !session.rekey_active() {
             // (C) Return inbound credit once a batch has been consumed.
             d.replenish_window(session).await?;
-            // (D) Close sequence when the child is done and output is drained.
-            if d.ready_to_close() {
-                d.send_terminal(session).await?;
-            }
-            if d.state == ChannelState::Closed {
-                d.emit_finished();
-                return Ok(());
-            }
-            // Initiate a re-key when a threshold is crossed and the channel
-            // is live (ADR-0026).
-            if session.rekey_due() && matches!(d.state, ChannelState::Running | ChannelState::Idle)
+            // (D) Initiate a re-key when a threshold is crossed (ADR-0026).
+            // Include `Draining`: a fast exec can cross the byte/packet
+            // limit during the final flush and become ready to close in
+            // the same turn — checking only `Running`/`Idle` would skip
+            // the re-key and close under the old keys.
+            if session.rekey_due()
+                && matches!(
+                    d.state,
+                    ChannelState::Running | ChannelState::Idle | ChannelState::Draining
+                )
             {
                 session.begin_rekey().await?;
             }
+            // (E) Close sequence only when no re-key is in flight: the
+            // half-duplex window must finish first.
+            if !session.rekey_active() {
+                if d.ready_to_close() {
+                    d.send_terminal(session).await?;
+                }
+                if d.state == ChannelState::Closed {
+                    d.emit_finished();
+                    return Ok(());
+                }
+            }
         }
 
-        // (E) Wait for the next event. Guards/timers are read into locals
+        // (F) Wait for the next event. Guards/timers are read into locals
         // first so they do not borrow `d`/`session` while the child
         // receivers are borrowed.
         let want_output =
@@ -339,7 +349,10 @@ where
         // Only arm the idle interval-trigger in states where `begin_rekey`
         // could actually fire; otherwise a past wake instant would re-arm
         // every iteration and busy-spin (the timer never advances `last_kex`).
-        let rekey_wake = if matches!(d.state, ChannelState::Running | ChannelState::Idle) {
+        let rekey_wake = if matches!(
+            d.state,
+            ChannelState::Running | ChannelState::Idle | ChannelState::Draining
+        ) {
             session.rekey_wake_at()
         } else {
             None
