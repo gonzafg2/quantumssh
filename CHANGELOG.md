@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.1] - 2026-07-20
+
 ### Added
 
 - `docs/threat-model.md` — Implementation PR for [RFC-0001](docs/rfcs/0001-threat-model-actor-project-maintainer-compromise.md):
@@ -387,4 +389,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the project accepts this in exchange for protecting first-time
   HTTP visitors from active downgrade attacks on initial request.
 
-[Unreleased]: https://github.com/gonzafg2/quantumssh/compare/HEAD...HEAD
+[Unreleased]: https://github.com/gonzafg2/quantumssh/compare/v0.0.1...HEAD
+[0.0.1]: https://github.com/gonzafg2/quantumssh/releases/tag/v0.0.1
