@@ -6,8 +6,8 @@
   does not start from a blank page. It decides nothing.
   Authoritative decisions live in ADRs/RFCs. For Phase 2 so far:
   RFC-0008 (SSH certificate authentication, Accepted — impl TBD),
-  RFC-0010 + ADR-0029 (TOML config, Accepted and implemented),
-  ADR-0028 (runtime/concurrency, Accepted and implemented).
+  RFC-0010 + ADR-0029 (TOML config, Accepted; implemented in #128),
+  ADR-0028 (runtime/concurrency, Accepted; implemented in #129).
   This file is retained for rationale and is not a source of truth.
 -->
 # Phase-2 ("Usable") — scoping note (non-normative)
@@ -77,9 +77,9 @@ here.
 
 | Workstream | Unblocks | Likely lane | Depends on |
 |---|---|---|---|
-| **Configuration file (TOML)** | `env`/`SetEnv` policy; cert-trust config; the Phase-3 key→UID mapping | **[RFC-0010](../rfcs/0010-configuration-file.md)** + **[ADR-0029](../adr/0029-phase-2-config-file-v1-schema-parser-strictmodes.md) — Accepted and implemented** | — (keystone; nothing blocks it) |
+| **Configuration file (TOML)** | `env`/`SetEnv` policy; cert-trust config; the Phase-3 key→UID mapping | **[RFC-0010](../rfcs/0010-configuration-file.md)** + **[ADR-0029](../adr/0029-phase-2-config-file-v1-schema-parser-strictmodes.md) — Accepted**; implemented in [#128](https://github.com/gonzafg2/quantumssh/pull/128) | — (keystone; nothing blocks it) |
 | **Interactive PTY** | `pty-req`, `shell`, `window-change`; `exit-signal` reporting | **ADR** extending [ADR-0023](../adr/0023-phase-1-channel-layer-scope.md) channel scope; forces the runtime decision below | Runtime decision (landed) |
-| **Runtime / concurrency** | Real concurrent connections; per-source rate-limits; half-open caps; graceful shutdown | **[ADR-0028](../adr/0028-phase-2-concurrent-connections-limits-graceful-shutdown.md) — Accepted and implemented** (extends ADR-0022) | — |
+| **Runtime / concurrency** | Real concurrent connections; per-source rate-limits; half-open caps; graceful shutdown | **[ADR-0028](../adr/0028-phase-2-concurrent-connections-limits-graceful-shutdown.md) — Accepted**; implemented in [#129](https://github.com/gonzafg2/quantumssh/pull/129) (extends ADR-0022) | — |
 | **SFTP subsystem** | The `subsystem` request; second concurrent channel | **RFC or ADR** (new protocol surface) | Channel multiplexing (PTY/second-channel work) |
 | **SSH certificate auth** | Cert-based auth (threat-model §5.3.2 mitigant) | **RFC-0008 — already Accepted**; needs implementation | Config file (cert-trust surface) |
 | **systemd integration** | Service deployment | **ADR** (operational) | Graceful shutdown |

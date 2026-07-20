@@ -113,8 +113,8 @@ Also landed in Phase 1 beyond the original checklist: AEAD-only ciphers, strict-
 ### Phase 2 — Usable (in progress)
 Tracked in [#109](https://github.com/gonzafg2/quantumssh/issues/109). Scoping (non-normative): [`docs/plans/phase2-scoping.md`](./docs/plans/phase2-scoping.md).
 
-- ✅ Configuration file (TOML, not `sshd_config`) — [RFC-0010](./docs/rfcs/0010-configuration-file.md), [ADR-0029](./docs/adr/0029-phase-2-config-file-v1-schema-parser-strictmodes.md)
-- ✅ Concurrent connections, admission limits, graceful shutdown — [ADR-0028](./docs/adr/0028-phase-2-concurrent-connections-limits-graceful-shutdown.md)
+- ✅ Configuration file (TOML, not `sshd_config`) — [RFC-0010](./docs/rfcs/0010-configuration-file.md), [ADR-0029](./docs/adr/0029-phase-2-config-file-v1-schema-parser-strictmodes.md), implemented in [#128](https://github.com/gonzafg2/quantumssh/pull/128)
+- ✅ Concurrent connections, admission limits, graceful shutdown — [ADR-0028](./docs/adr/0028-phase-2-concurrent-connections-limits-graceful-shutdown.md), implemented in [#129](https://github.com/gonzafg2/quantumssh/pull/129)
 - Interactive PTY allocation
 - SFTP subsystem
 - systemd integration
