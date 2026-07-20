@@ -202,18 +202,6 @@ impl Admission {
     pub fn try_admit(&self, ip: IpAddr, now: Instant) -> Result<ConnectionGuard, Refusal> {
         let key = source_key(ip);
         let mut state = self.state.lock().expect("admission mutex poisoned");
-        // Amortised prune (ADR-0028): the drop-time prune misses a
-        // source whose last guard fell while its bucket was refilling
-        // — nothing would ever revisit it. O(sources) every
-        // SWEEP_INTERVAL admissions bounds the steady state.
-        state.admissions_since_sweep += 1;
-        if state.admissions_since_sweep >= SWEEP_INTERVAL {
-            state.admissions_since_sweep = 0;
-            let limits = self.limits;
-            state
-                .sources
-                .retain(|_, s| s.half_open > 0 || !s.bucket.is_full(&limits, now));
-        }
         // 1–3: non-mutating cap reads.
         if state.connections >= self.limits.max_connections {
             return Err(Refusal::MaxConnections);
@@ -225,6 +213,21 @@ impl Admission {
             && source.half_open >= self.limits.max_per_source
         {
             return Err(Refusal::MaxPerSource);
+        }
+        // Amortised prune (ADR-0028), in the mutating phase only: the
+        // drop-time prune misses a source whose last guard fell while
+        // its bucket was refilling — nothing would ever revisit it.
+        // O(sources) every SWEEP_INTERVAL cap-passing calls bounds the
+        // steady state, and a cap-refused flood never advances the
+        // counter nor pays the sweep (the refusal path stays
+        // read-only, per the ADR's load-shedding order).
+        state.admissions_since_sweep += 1;
+        if state.admissions_since_sweep >= SWEEP_INTERVAL {
+            state.admissions_since_sweep = 0;
+            let limits = self.limits;
+            state
+                .sources
+                .retain(|_, s| s.half_open > 0 || !s.bucket.is_full(&limits, now));
         }
         // 4: the state-mutating rate check, last — a cap refusal never
         // charges the source's bucket or creates its entry.
@@ -459,6 +462,27 @@ mod tests {
             drop(a.try_admit(v4(2), later).expect("sweep traffic"));
         }
         assert!(!a.state.lock().expect("mutex").sources.contains_key(&v4(1)));
+    }
+
+    #[test]
+    fn cap_refused_calls_never_pay_or_trigger_the_sweep() {
+        let a = Admission::new(limits());
+        let now = Instant::now();
+        // A lingering prunable entry: guard dropped mid-refill.
+        drop(a.try_admit(v4(1), now).expect("admit"));
+        assert!(a.state.lock().expect("mutex").sources.contains_key(&v4(1)));
+        // Saturate the total half-open cap (3)...
+        let _g1 = a.try_admit(v4(2), now).expect("2");
+        let _g2 = a.try_admit(v4(3), now).expect("3");
+        let _g3 = a.try_admit(v4(4), now).expect("4");
+        // ...then a refused flood far past SWEEP_INTERVAL, at a future
+        // instant where the lingering bucket is full again. Refusals
+        // stay read-only: no sweep runs, the entry stays.
+        let later = now + Duration::from_secs(61);
+        for _ in 0..(SWEEP_INTERVAL * 2) {
+            assert_eq!(a.try_admit(v4(9), later).unwrap_err(), Refusal::MaxHalfOpen);
+        }
+        assert!(a.state.lock().expect("mutex").sources.contains_key(&v4(1)));
     }
 
     #[test]
