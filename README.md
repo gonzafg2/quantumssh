@@ -11,11 +11,13 @@ We are not forking OpenSSH. We are not adding PQ algorithms as an option. We are
 
 ## Status
 
-🚧 **Pre-alpha — design complete, implementation starting.**
+🚧 **Pre-alpha — Phase 1 complete; Phase 2 in progress.**
 
-Phase 0 (foundation) is done: manifesto, governance, a substantive threat model, 20 Architecture Decision Records, and 3 accepted RFCs that settle the Phase 1 stack (greenfield, `unsafe_code = "forbid"`, `RustCrypto/ml-kem`, OpenSSH 10.x interop gate). No Rust code has landed yet — that is Phase 1, tracked in [#9](https://github.com/gonzafg2/quantumssh/issues/9).
+Phase 0 (foundation) and Phase 1 (walking skeleton) are done: the greenfield SSH-2 server in Rust accepts OpenSSH 10.x clients end-to-end (hybrid `mlkem768x25519-sha256`, Ed25519 host keys, publickey auth, single-command `exec`, structured `tracing`, CI interop gate). Crates are at `0.0.1`; there is no public `0.1.0` tag yet.
 
-Supporting infrastructure (DNS, TLS, email, signing, repository hardening) is described in [`docs/infrastructure.md`](./docs/infrastructure.md); independent verification recipes live in [`docs/operations.md`](./docs/operations.md).
+Phase 2 (“Usable”) is underway — tracked in [#109](https://github.com/gonzafg2/quantumssh/issues/109). Landed so far: TOML configuration file and StrictModes checks, concurrent accept loop with admission control, and graceful shutdown. Still open before `0.1.0`: interactive PTY, SFTP, systemd integration, and the one-way freeze of the negotiation profile and audit-log schema.
+
+Supporting infrastructure (DNS, TLS, email, signing, repository hardening) is described in [`docs/infrastructure.md`](./docs/infrastructure.md); independent verification recipes live in [`docs/operations.md`](./docs/operations.md). Decision records live in [`docs/adr/`](./docs/adr/) and [`docs/rfcs/`](./docs/rfcs/).
 
 ---
 
@@ -87,31 +89,36 @@ We are deliberately not trying to be:
 - ✅ Threat model document — see [`docs/threat-model.md`](./docs/threat-model.md); structural changes go through the RFC process from here.
 - ✅ SSH stack foundation decision — **greenfield on audited primitive crates**, not `russh`; decided and accepted in [RFC-0003](./docs/rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md) (2026-06-10, [#9](https://github.com/gonzafg2/quantumssh/issues/9)).
 
-Phase 0 also delivered the project's supporting infrastructure (DNS with DNSSEC, TLS with HSTS preload submission, inbound email forwarding, a published project PGP key, branch protection on `main` enforcing signed commits, and CI scaffolding with workspace-state guards that self-disable when Phase 1 lands) and a 20-ADR catalog documenting each operational choice with its rationale. See [`docs/infrastructure.md`](./docs/infrastructure.md) for the current state, [`docs/operations.md`](./docs/operations.md) for independent verification recipes, and [`docs/adr/`](./docs/adr/) for the decision records.
+Phase 0 also delivered the project's supporting infrastructure (DNS with DNSSEC, TLS with HSTS preload submission, inbound email forwarding, a published project PGP key, branch protection on `main` enforcing signed commits, and CI scaffolding) and the initial ADR catalog. See [`docs/infrastructure.md`](./docs/infrastructure.md) for the current state, [`docs/operations.md`](./docs/operations.md) for independent verification recipes, and [`docs/adr/`](./docs/adr/) for the decision records (the catalog has grown with Phase 1 and Phase 2).
 
-### Phase 1 — Walking skeleton
-Tracked in [#9](https://github.com/gonzafg2/quantumssh/issues/9). Stack and tooling decisions (all ADRs are Proposed — they advance to Accepted when the first crate lands):
+### Phase 1 — Walking skeleton (complete)
+Tracked in [#9](https://github.com/gonzafg2/quantumssh/issues/9) (closed). Stack and tooling decisions are Accepted:
 
-- **Stack:** greenfield SSH-2 transport, KEX, auth, and channel layers on audited primitive crates (`ml-kem`, `x25519-dalek`, `ed25519-dalek`, `chacha20poly1305`, `aes-gcm`) — no `russh` dependency ([RFC-0003](./docs/rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md), Accepted).
-- **Workspace:** `crates/quantumssh` (binary) + `crates/quantumssh-core` (library), `unsafe_code = "forbid"` workspace-wide ([ADR-0017](./docs/adr/0017-phase-1-workspace-topology-two-crates-flat.md), [ADR-0018](./docs/adr/0018-phase-1-unsafe-code-forbid-workspace.md), Proposed).
-- **ML-KEM-768 crate:** `RustCrypto/ml-kem` 0.3.0 ([ADR-0019](./docs/adr/0019-phase-1-ml-kem-crate-rustcrypto.md), Proposed).
-- **CI interop gate:** every PR exercises a real OpenSSH 10.x client end-to-end ([ADR-0020](./docs/adr/0020-phase-1-ci-openssh-interop-gate.md), Proposed).
+- **Stack:** greenfield SSH-2 transport, KEX, auth, and channel layers on audited primitive crates (`ml-kem`, `x25519-dalek`, `ed25519-dalek`, `chacha20poly1305`, `aes-gcm`) — no `russh` dependency ([RFC-0003](./docs/rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md)).
+- **Workspace:** `crates/quantumssh` (binary) + `crates/quantumssh-core` (library), `unsafe_code = "forbid"` workspace-wide ([ADR-0017](./docs/adr/0017-phase-1-workspace-topology-two-crates-flat.md), [ADR-0018](./docs/adr/0018-phase-1-unsafe-code-forbid-workspace.md)).
+- **ML-KEM-768 crate:** `RustCrypto/ml-kem` ([ADR-0019](./docs/adr/0019-phase-1-ml-kem-crate-rustcrypto.md)).
+- **CI interop gate:** every PR exercises a real OpenSSH 10.x client end-to-end ([ADR-0020](./docs/adr/0020-phase-1-ci-openssh-interop-gate.md)).
 
-Acceptance criteria:
-- Server listens on a port, accepts a connection
-- Hybrid PQ key exchange (`mlkem768x25519-sha256` — only algorithm offered)
-- Ed25519 host key
-- Public-key authentication only
-- Single-command execution
-- Structured logging via `tracing`
-- A real OpenSSH 10.x client completes connect/auth/exec/close in CI (hard gate)
+Acceptance criteria (all met):
+- ✅ Server listens on a port, accepts a connection
+- ✅ Hybrid PQ key exchange (`mlkem768x25519-sha256` — only algorithm offered)
+- ✅ Ed25519 host key
+- ✅ Public-key authentication only
+- ✅ Single-command execution
+- ✅ Structured logging via `tracing`
+- ✅ A real OpenSSH 10.x client completes connect/auth/exec/close in CI (hard gate)
 
-### Phase 2 — Usable
+Also landed in Phase 1 beyond the original checklist: AEAD-only ciphers, strict-kex, re-keying ([ADR-0026](./docs/adr/0026-phase-1-rekeying-policy.md)), and the Phase-1 audit-log schema ([ADR-0024](./docs/adr/0024-phase-1-log-event-schema.md)).
+
+### Phase 2 — Usable (in progress)
+Tracked in [#109](https://github.com/gonzafg2/quantumssh/issues/109). Scoping (non-normative): [`docs/plans/phase2-scoping.md`](./docs/plans/phase2-scoping.md).
+
+- ✅ Configuration file (TOML, not `sshd_config`) — [RFC-0010](./docs/rfcs/0010-configuration-file.md), [ADR-0029](./docs/adr/0029-phase-2-config-file-v1-schema-parser-strictmodes.md), implemented in [#128](https://github.com/gonzafg2/quantumssh/pull/128)
+- ✅ Concurrent connections, admission limits, graceful shutdown — [ADR-0028](./docs/adr/0028-phase-2-concurrent-connections-limits-graceful-shutdown.md), implemented in [#129](https://github.com/gonzafg2/quantumssh/pull/129)
 - Interactive PTY allocation
-- Configuration file (TOML, not `sshd_config`)
 - SFTP subsystem
 - systemd integration
-- First public release: `0.1.0`
+- First public release: `0.1.0` (one-way freeze of negotiation profile + audit-log `schema_version`)
 
 ### Phase 3 — Hardening
 - Continuous fuzzing (`cargo-fuzz`, OSS-Fuzz)

@@ -1,14 +1,14 @@
 <!--
-  Governance status (2026-07-19):
+  Governance status (2026-07-20):
   Non-authoritative design note (ADR-0027). Scopes the Phase-2 ("Usable",
   0.1.0) milestone; tracked in #109. It sequences the workstreams and
   records the one-way release-freeze constraint so each eventual RFC/ADR
   does not start from a blank page. It decides nothing.
   Authoritative decisions live in ADRs/RFCs. For Phase 2 so far:
-  RFC-0008 (SSH certificate authentication, Accepted), RFC-0010 (TOML
-  configuration file, Accepted), ADR-0028 (runtime/concurrency,
-  Proposed — advances on implementation). This file is retained for
-  rationale and is not a source of truth.
+  RFC-0008 (SSH certificate authentication, Accepted — impl TBD),
+  RFC-0010 + ADR-0029 (TOML config, Accepted; implemented in #128),
+  ADR-0028 (runtime/concurrency, Accepted; implemented in #129).
+  This file is retained for rationale and is not a source of truth.
 -->
 # Phase-2 ("Usable") — scoping note (non-normative)
 
@@ -77,9 +77,9 @@ here.
 
 | Workstream | Unblocks | Likely lane | Depends on |
 |---|---|---|---|
-| **Configuration file (TOML)** | `env`/`SetEnv` policy; cert-trust config; the Phase-3 key→UID mapping | **[RFC-0010](../rfcs/0010-configuration-file.md) — Accepted**; needs implementation | — (keystone; nothing blocks it) |
-| **Interactive PTY** | `pty-req`, `shell`, `window-change`; `exit-signal` reporting | **ADR** extending [ADR-0023](../adr/0023-phase-1-channel-layer-scope.md) channel scope; forces the runtime decision below | Runtime decision |
-| **Runtime / concurrency** | Real concurrent connections; per-source rate-limits; half-open caps; graceful shutdown | **[ADR-0028](../adr/0028-phase-2-concurrent-connections-limits-graceful-shutdown.md) — Proposed** (extends ADR-0022); needs implementation | — |
+| **Configuration file (TOML)** | `env`/`SetEnv` policy; cert-trust config; the Phase-3 key→UID mapping | **[RFC-0010](../rfcs/0010-configuration-file.md)** + **[ADR-0029](../adr/0029-phase-2-config-file-v1-schema-parser-strictmodes.md) — Accepted**; implemented in [#128](https://github.com/gonzafg2/quantumssh/pull/128) | — (keystone; nothing blocks it) |
+| **Interactive PTY** | `pty-req`, `shell`, `window-change`; `exit-signal` reporting | **ADR** extending [ADR-0023](../adr/0023-phase-1-channel-layer-scope.md) channel scope; forces the runtime decision below | Runtime decision (landed) |
+| **Runtime / concurrency** | Real concurrent connections; per-source rate-limits; half-open caps; graceful shutdown | **[ADR-0028](../adr/0028-phase-2-concurrent-connections-limits-graceful-shutdown.md) — Accepted**; implemented in [#129](https://github.com/gonzafg2/quantumssh/pull/129) (extends ADR-0022) | — |
 | **SFTP subsystem** | The `subsystem` request; second concurrent channel | **RFC or ADR** (new protocol surface) | Channel multiplexing (PTY/second-channel work) |
 | **SSH certificate auth** | Cert-based auth (threat-model §5.3.2 mitigant) | **RFC-0008 — already Accepted**; needs implementation | Config file (cert-trust surface) |
 | **systemd integration** | Service deployment | **ADR** (operational) | Graceful shutdown |
@@ -90,25 +90,19 @@ here.
 The dependency edges above, plus the one-way freeze, suggest this order — offered
 as rationale for the RFCs to weigh, not as a plan of record:
 
-1. **Config file first.** It is the keystone: `env` policy hangs off it
-   ([ADR-0023](../adr/0023-phase-1-channel-layer-scope.md) §Consequences, "`env`
-   … revisited with the config work in Phase 2"), RFC-0008's cert-trust surface
-   depends on it, and it is one of the three Phase-3 privsep prerequisites
-   ([`phase3-privsep-scoping.md`](phase3-privsep-scoping.md) §"Why the full RFC
-   is premature"). Nothing else blocks it, and much waits on it.
-2. **Runtime / concurrency rework, in parallel.** Removing the immediate
-   post-accept join is called out as "not a refactor"
-   ([ADR-0022](../adr/0022-phase-1-async-runtime-tokio.md) §Consequences); the
-   per-source rate-limits and half-open caps that "land with Phase 2" (same ADR)
-   also close the pre-auth availability DoS the Phase-1 security review recorded
-   as an accepted pre-alpha ceiling. Independent of the config work.
-3. **PTY**, which forces the `tokio::process`-vs-current-`spawn_blocking`
+1. **Config file first.** ✅ Landed (RFC-0010 / ADR-0029). Keystone for `env`
+   policy ([ADR-0023](../adr/0023-phase-1-channel-layer-scope.md) §Consequences),
+   RFC-0008's cert-trust surface, and Phase-3 privsep prerequisites
+   ([`phase3-privsep-scoping.md`](phase3-privsep-scoping.md)).
+2. **Runtime / concurrency rework, in parallel.** ✅ Landed (ADR-0028): concurrent
+   accept, admission caps, per-source rate limits, graceful shutdown.
+3. **PTY** (next), which forces the `tokio::process`-vs-current-`spawn_blocking`
    decision the runtime ADR flagged for "when PTY support lands in Phase 2"
    ([ADR-0022](../adr/0022-phase-1-async-runtime-tokio.md) §Consequences), and
    brings `exit-signal` with it ([ADR-0023](../adr/0023-phase-1-channel-layer-scope.md)).
 4. **SFTP** and **certificate auth (RFC-0008 implementation)**, once channel
    multiplexing and the config surface respectively exist.
-5. **systemd + graceful shutdown.**
+5. **systemd** (graceful shutdown already exists via ADR-0028).
 6. **Freeze, then tag `0.1.0`** (checklist below) — last, because the freeze is
    one-way.
 
