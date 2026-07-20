@@ -34,7 +34,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::broadcast;
 use tokio::task::JoinSet;
 use tokio::time::Instant;
-use tracing::{Instrument, debug, info, info_span, warn};
+use tracing::{Instrument, Span, debug, info, info_span, warn};
 
 use crate::admission::{Admission, ConnectionGuard, Limits};
 use crate::auth::AuthorizedKeys;
@@ -132,7 +132,10 @@ impl Server {
         let rekey = self.rekey;
         let admission = Admission::new(self.limits);
         let mut tasks: JoinSet<()> = JoinSet::new();
-        let mut peers: HashMap<tokio::task::Id, SocketAddr> = HashMap::new();
+        // Original connection spans, re-entered on JoinError so
+        // `connection.closed` inherits `peer_addr` (ADR-0024) without
+        // repeating it as an event field.
+        let mut connection_spans: HashMap<tokio::task::Id, Span> = HashMap::new();
         let mut loop_rx = shutdown.subscribe();
         // Set on the first shutdown signal: when the remainder is
         // aborted. Accepting stops the moment it is `Some`.
@@ -161,13 +164,13 @@ impl Server {
                                 handle(stream, host_key, authorized_keys, budget, rekey, guard, conn_rx)
                                     .await;
                             };
-                            let handle = tasks.spawn(connection.instrument(span));
-                            peers.insert(handle.id(), peer_addr);
+                            let handle = tasks.spawn(connection.instrument(span.clone()));
+                            connection_spans.insert(handle.id(), span);
                         }
                     }
                 }
                 joined = tasks.join_next_with_id(), if !tasks.is_empty() => {
-                    log_join(joined, &mut peers);
+                    log_join(joined, &mut connection_spans);
                     if abort_at.is_some() && tasks.is_empty() {
                         return Ok(());
                     }
@@ -188,7 +191,7 @@ impl Server {
                 {
                     tasks.abort_all();
                     while let Some(joined) = tasks.join_next_with_id().await {
-                        log_join(Some(joined), &mut peers);
+                        log_join(Some(joined), &mut connection_spans);
                     }
                     return Ok(());
                 }
@@ -201,21 +204,34 @@ impl Server {
 /// with the reason as a structured field — ADR-0028) or an abort at
 /// the drain deadline. Normal completions already emitted their own
 /// `connection.closed` inside the connection span.
+///
+/// Re-enters the original `connection` span so `peer_addr` is inherited
+/// (ADR-0024); the event itself carries only `reason`, at INFO.
 fn log_join(
     joined: Option<Result<(tokio::task::Id, ()), tokio::task::JoinError>>,
-    peers: &mut HashMap<tokio::task::Id, SocketAddr>,
+    connection_spans: &mut HashMap<tokio::task::Id, Span>,
 ) {
     match joined {
         Some(Ok((id, ()))) => {
-            peers.remove(&id);
+            connection_spans.remove(&id);
         }
         Some(Err(join_err)) => {
-            let peer = peers.remove(&join_err.id());
-            let peer = peer.map_or_else(|| "unknown".to_string(), |p| p.to_string());
-            if join_err.is_cancelled() {
-                info!(peer_addr = %peer, reason = "shutdown-abort", "connection.closed");
+            // ADR-0028: abort → reason `shutdown`; panic → JoinError text.
+            let reason = if join_err.is_cancelled() {
+                "shutdown".to_string()
             } else {
-                warn!(peer_addr = %peer, reason = %join_err, "connection.closed");
+                join_err.to_string()
+            };
+            match connection_spans.remove(&join_err.id()) {
+                Some(span) => {
+                    let _entered = span.entered();
+                    info!(reason = %reason, "connection.closed");
+                }
+                // Unreachable when every spawn inserts its span; not an
+                // ADR-0024 event — do not invent schema names here.
+                None => {
+                    warn!(reason = %reason, "join error without connection span");
+                }
             }
         }
         None => {}
@@ -349,5 +365,203 @@ async fn run_connection(
         // `responder.deny()` already returned `Err`, so this arm is
         // unreachable; kept total for the type.
         None => Ok(()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+
+    use tracing::field::{Field, Visit};
+    use tracing::{Event, Subscriber};
+
+    #[derive(Clone, Debug)]
+    struct Rec {
+        level: tracing::Level,
+        message: String,
+        fields: Vec<(String, String)>,
+    }
+
+    /// Records level, message, and structured field name/value pairs.
+    #[derive(Clone, Default)]
+    struct Capture(Arc<Mutex<Vec<Rec>>>);
+
+    impl Subscriber for Capture {
+        fn enabled(&self, _: &tracing::Metadata<'_>) -> bool {
+            true
+        }
+        fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+            tracing::span::Id::from_u64(1)
+        }
+        fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+        fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+        fn event(&self, event: &Event<'_>) {
+            struct Collector {
+                message: Option<String>,
+                fields: Vec<(String, String)>,
+            }
+            impl Visit for Collector {
+                fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+                    let rendered = format!("{value:?}");
+                    if field.name() == "message" {
+                        self.message = Some(rendered);
+                    } else {
+                        self.fields.push((field.name().to_string(), rendered));
+                    }
+                }
+                fn record_str(&mut self, field: &Field, value: &str) {
+                    if field.name() == "message" {
+                        self.message = Some(value.to_string());
+                    } else {
+                        self.fields
+                            .push((field.name().to_string(), value.to_string()));
+                    }
+                }
+            }
+            let mut c = Collector {
+                message: None,
+                fields: Vec::new(),
+            };
+            event.record(&mut c);
+            let message = c.message.unwrap_or_default();
+            // `record_debug` quotes the message; strip for stable asserts.
+            let message = message
+                .strip_prefix('"')
+                .and_then(|s| s.strip_suffix('"'))
+                .unwrap_or(&message)
+                .to_string();
+            self.0.lock().expect("capture lock").push(Rec {
+                level: *event.metadata().level(),
+                message,
+                fields: c.fields,
+            });
+        }
+        fn enter(&self, _: &tracing::span::Id) {}
+        fn exit(&self, _: &tracing::span::Id) {}
+    }
+
+    fn field_value<'a>(rec: &'a Rec, name: &str) -> Option<&'a str> {
+        rec.fields
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, v)| v.as_str())
+    }
+
+    fn closed_events(seen: &Mutex<Vec<Rec>>) -> Vec<Rec> {
+        seen.lock()
+            .expect("capture lock")
+            .iter()
+            .filter(|r| r.message == "connection.closed")
+            .cloned()
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn join_panic_emits_connection_closed_at_info_with_reason_only() {
+        let mut tasks: JoinSet<()> = JoinSet::new();
+        let mut spans = HashMap::new();
+        let peer: SocketAddr = "127.0.0.1:9".parse().expect("addr");
+        let span = info_span!("connection", peer_addr = %peer);
+        let handle = tasks.spawn(
+            async {
+                panic!("boom");
+            }
+            .instrument(span.clone()),
+        );
+        spans.insert(handle.id(), span);
+        let joined = tasks.join_next_with_id().await;
+
+        let capture = Capture::default();
+        let seen = capture.0.clone();
+        tracing::subscriber::with_default(capture, || {
+            log_join(joined, &mut spans);
+        });
+
+        let closed = closed_events(&seen);
+        assert_eq!(
+            closed.len(),
+            1,
+            "expected one connection.closed: {closed:?}"
+        );
+        assert_eq!(closed[0].level, tracing::Level::INFO);
+        assert!(
+            field_value(&closed[0], "reason").is_some(),
+            "missing reason: {:?}",
+            closed[0].fields
+        );
+        assert!(
+            field_value(&closed[0], "peer_addr").is_none(),
+            "peer_addr must live on the span, not the event: {:?}",
+            closed[0].fields
+        );
+    }
+
+    #[tokio::test]
+    async fn join_abort_emits_connection_closed_reason_shutdown() {
+        let mut tasks: JoinSet<()> = JoinSet::new();
+        let mut spans = HashMap::new();
+        let peer: SocketAddr = "127.0.0.1:9".parse().expect("addr");
+        let span = info_span!("connection", peer_addr = %peer);
+        let handle = tasks.spawn(
+            async {
+                std::future::pending::<()>().await;
+            }
+            .instrument(span.clone()),
+        );
+        spans.insert(handle.id(), span);
+        tasks.abort_all();
+        let joined = tasks.join_next_with_id().await;
+
+        let capture = Capture::default();
+        let seen = capture.0.clone();
+        tracing::subscriber::with_default(capture, || {
+            log_join(joined, &mut spans);
+        });
+
+        let closed = closed_events(&seen);
+        assert_eq!(
+            closed.len(),
+            1,
+            "expected one connection.closed: {closed:?}"
+        );
+        assert_eq!(closed[0].level, tracing::Level::INFO);
+        assert_eq!(
+            field_value(&closed[0], "reason"),
+            Some("shutdown"),
+            "ADR-0028 abort reason"
+        );
+        assert!(
+            field_value(&closed[0], "peer_addr").is_none(),
+            "peer_addr must live on the span, not the event: {:?}",
+            closed[0].fields
+        );
+    }
+
+    #[tokio::test]
+    async fn join_without_span_does_not_emit_connection_closed() {
+        let mut tasks: JoinSet<()> = JoinSet::new();
+        let mut spans: HashMap<tokio::task::Id, Span> = HashMap::new();
+        tasks.spawn(async {
+            panic!("orphan");
+        });
+        let joined = tasks.join_next_with_id().await;
+
+        let capture = Capture::default();
+        let seen = capture.0.clone();
+        tracing::subscriber::with_default(capture, || {
+            log_join(joined, &mut spans);
+        });
+
+        assert!(
+            closed_events(&seen).is_empty(),
+            "must not emit schema event without a connection span"
+        );
+        let all = seen.lock().expect("capture lock").clone();
+        assert!(
+            all.iter()
+                .any(|r| r.message == "join error without connection span"),
+            "expected diagnostic warn: {all:?}"
+        );
     }
 }
