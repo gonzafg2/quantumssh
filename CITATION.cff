@@ -1,0 +1,17 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+type: software
+title: "QuantumSSH"
+authors:
+  - family-names: "Fleming Garrido"
+    given-names: "Gonzalo Alejandro"
+    orcid: "https://orcid.org/0000-0002-4186-7669"
+    affiliation: "Fleming Science and Technologies SpA"
+license: Apache-2.0
+repository-code: "https://github.com/gonzafg2/quantumssh"
+keywords:
+  - ssh
+  - post-quantum cryptography
+  - ml-kem
+  - rust
+abstract: "Memory-safe, post-quantum-first SSH server in Rust."
