@@ -152,7 +152,7 @@ impl Server {
                             // and `connection.accepted` are mutually
                             // exclusive within the span (ADR-0028).
                             let _entered = span.entered();
-                            warn!(limit = refusal.as_str(), "connection.refused");
+                            info!(limit = refusal.as_str(), "connection.refused");
                             drop(stream);
                         }
                         Ok(guard) => {
