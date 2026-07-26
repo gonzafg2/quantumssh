@@ -1,6 +1,12 @@
 # QuantumSSH
 
-[![DOI](https://zenodo.org/badge/1234374997.svg)](https://doi.org/10.5281/zenodo.21448953)
+[![CI](https://img.shields.io/github/actions/workflow/status/gonzafg2/quantumssh/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/gonzafg2/quantumssh/actions/workflows/ci.yml)
+[![OpenSSH interop](https://img.shields.io/github/actions/workflow/status/gonzafg2/quantumssh/interop.yml?branch=main&style=flat-square&label=OpenSSH%20interop)](https://github.com/gonzafg2/quantumssh/actions/workflows/interop.yml)
+[![DOI](https://img.shields.io/badge/DOI-10.5281%2Fzenodo.21448953-1682D4?style=flat-square&logo=zenodo&logoColor=white)](https://doi.org/10.5281/zenodo.21448953)
+[![License](https://img.shields.io/badge/License-Apache%202.0-D22128?style=flat-square)](LICENSE)
+[![Rust](https://img.shields.io/badge/Rust-1.92%2B-CE422B?style=flat-square&logo=rust&logoColor=white)](rust-toolchain.toml)
+[![unsafe](https://img.shields.io/badge/unsafe-forbidden-2EA043?style=flat-square)](docs/adr/0018-phase-1-unsafe-code-forbid-workspace.md)
+[![status](https://img.shields.io/badge/status-pre--alpha-E36209?style=flat-square)](#status)
 
 > SSH for the next 30 years, not the past 30.
 > **Open source. No NDAs. No exceptions.**
