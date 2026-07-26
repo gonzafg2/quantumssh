@@ -9,6 +9,7 @@ authors:
     affiliation: "Fleming Science and Technologies SpA"
 license: Apache-2.0
 repository-code: "https://github.com/gonzafg2/quantumssh"
+doi: "10.5281/zenodo.21448953"
 keywords:
   - ssh
   - post-quantum cryptography
