@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       # cargo-audit requires Cargo.lock, which only exists once a binary
       # or application member crate has been added to the workspace.
@@ -39,7 +39,7 @@ jobs:
 
       - name: Cache cargo registry, index and target
         if: steps.lockfile.outputs.present == '1'
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2.9.1
 
       - name: Install cargo-audit
         if: steps.lockfile.outputs.present == '1'
