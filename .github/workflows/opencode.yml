@@ -41,6 +41,12 @@ jobs:
         uses: anomalyco/opencode/github@77fc88c8ade8e5a620ebbe1197f3a572d29ae91a
         env:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          # Without this the agent has no credentials: `gh` fails, so it cannot read
+          # previous PR comments for the iteration check, nor confirm commit signatures
+          # through .commit.verification.verified — the only place SSH signatures can be
+          # verified, since a runner has no gpg.ssh.allowedSignersFile. Scoped by the
+          # job's permissions above (contents: read — it cannot push).
+          GH_TOKEN: ${{ github.token }}
         with:
           model: deepseek/deepseek-v4-pro
           share: false
@@ -66,7 +72,17 @@ jobs:
             - Rust under `crates/`: apply the hard security rules above
             - CI/workflows: check for unpinned actions, excessive permissions, missing authorization gates, supply-chain risk
 
-            Report only high-signal findings. Anchor each to a CLAUDE.md rule, threat-model section, or ADR.
+            Deprecated is not the same as disallowed: a deprecated-but-not-yet-disallowed primitive is NOT legacy. Check RFC-0007 and RFC-0009 for an open migration window before rejecting one (e.g. `ssh-ed25519` under RFC-0006).
+
+            Work in parallel. Use the `task` tool to fan out independent subagents instead of reviewing serially:
+            - one per lens that applies to this PR (design decision / Rust / CI), each returning a list of findings
+            - then one validation subagent per finding, to confirm it is real before it reaches the report
+
+            Report only high-signal findings. Anchor each to a CLAUDE.md rule, threat-model section, or ADR. A finding without an anchor is an opinion — drop it.
+
+            Never report something as missing when your environment simply cannot observe it. Commit signatures are the standard trap: SSH signatures never validate on a runner because `gpg.ssh.allowedSignersFile` is not configured there, so `git log --format=%G?` returns N or E for every commit, signed or not. Check `.commit.verification.verified` from the GitHub API instead — that is what branch protection actually enforces. The same holds for anything gated by credentials, network access, or a tool that is not installed: absence of evidence in CI is not evidence of absence. If you cannot verify it, say so as a limitation instead of reporting it as a finding.
+
+            Read `.github/REVIEW-FORMAT.md` and follow it exactly. It is the report contract: the iteration check against previous comments, the section layout, the severity bands and the confidence threshold. Start with its step 1 — reading the existing PR comments and classifying earlier issues as resolved, open or partly resolved — before analysing the diff.
 
             When making commits, follow Conventional Commits exactly:
             - Format: `<type>(<optional scope>): <short summary>`
