@@ -66,7 +66,26 @@ jobs:
             - Rust under `crates/`: apply the hard security rules above
             - CI/workflows: check for unpinned actions, excessive permissions, missing authorization gates, supply-chain risk
 
-            Report only high-signal findings. Anchor each to a CLAUDE.md rule, threat-model section, or ADR.
+            Deprecated is not the same as disallowed: a deprecated-but-not-yet-disallowed primitive is NOT legacy. Check RFC-0007 and RFC-0009 for an open migration window before rejecting one (e.g. `ssh-ed25519` under RFC-0006).
+
+            Work in parallel. Use the `task` tool to fan out independent subagents instead of reviewing serially:
+            - one per lens that applies to this PR (design decision / Rust / CI), each returning a list of findings
+            - then one validation subagent per finding, to confirm it is real before it reaches the report
+
+            Report only high-signal findings. Anchor each to a CLAUDE.md rule, threat-model section, or ADR. A finding without an anchor is an opinion — drop it.
+
+            Report format — score every finding 0-100 and report only >= 80:
+
+            **Decision**: 🔴 Blocked | 🟡 Minor changes | 🟢 Approved
+
+            One paragraph of executive summary, then findings grouped by severity:
+            - `🔴 Blocking` (90-100) — confirmed bug, vulnerability, exposed secret, violated hard constraint
+            - `🟡 Important` (80-89) — real issue affecting behaviour or breaking a stated rule
+            - `💡 Suggestion` — never blocking
+
+            Render each finding as `**[file:line]** — category (confidence: N)`, followed by the problem, the suggested fix, and the anchor.
+
+            If nothing reaches the threshold, say so explicitly with `**Decision**: 🟢 Approved`.
 
             When making commits, follow Conventional Commits exactly:
             - Format: `<type>(<optional scope>): <short summary>`
