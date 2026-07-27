@@ -74,6 +74,8 @@ jobs:
 
             Report only high-signal findings. Anchor each to a CLAUDE.md rule, threat-model section, or ADR. A finding without an anchor is an opinion — drop it.
 
+            Never report something as missing when your environment simply cannot observe it. Commit signatures are the standard trap: SSH signatures never validate on a runner because `gpg.ssh.allowedSignersFile` is not configured there, so `git log --format=%G?` returns N or E for every commit, signed or not. Check `.commit.verification.verified` from the GitHub API instead — that is what branch protection actually enforces. The same holds for anything gated by credentials, network access, or a tool that is not installed: absence of evidence in CI is not evidence of absence. If you cannot verify it, say so as a limitation instead of reporting it as a finding.
+
             Report format — score every finding 0-100 and report only >= 80:
 
             **Decision**: 🔴 Blocked | 🟡 Minor changes | 🟢 Approved
