@@ -41,6 +41,12 @@ jobs:
         uses: anomalyco/opencode/github@77fc88c8ade8e5a620ebbe1197f3a572d29ae91a
         env:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          # Without this the agent has no credentials: `gh` fails, so it cannot read
+          # previous PR comments for the iteration check, nor confirm commit signatures
+          # through .commit.verification.verified — the only place SSH signatures can be
+          # verified, since a runner has no gpg.ssh.allowedSignersFile. Scoped by the
+          # job's permissions above (contents: read — it cannot push).
+          GH_TOKEN: ${{ github.token }}
         with:
           model: deepseek/deepseek-v4-pro
           share: false
