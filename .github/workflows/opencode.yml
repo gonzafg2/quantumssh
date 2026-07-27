@@ -76,18 +76,7 @@ jobs:
 
             Never report something as missing when your environment simply cannot observe it. Commit signatures are the standard trap: SSH signatures never validate on a runner because `gpg.ssh.allowedSignersFile` is not configured there, so `git log --format=%G?` returns N or E for every commit, signed or not. Check `.commit.verification.verified` from the GitHub API instead — that is what branch protection actually enforces. The same holds for anything gated by credentials, network access, or a tool that is not installed: absence of evidence in CI is not evidence of absence. If you cannot verify it, say so as a limitation instead of reporting it as a finding.
 
-            Report format — score every finding 0-100 and report only >= 80:
-
-            **Decision**: 🔴 Blocked | 🟡 Minor changes | 🟢 Approved
-
-            One paragraph of executive summary, then findings grouped by severity:
-            - `🔴 Blocking` (90-100) — confirmed bug, vulnerability, exposed secret, violated hard constraint
-            - `🟡 Important` (80-89) — real issue affecting behaviour or breaking a stated rule
-            - `💡 Suggestion` — never blocking
-
-            Render each finding as `**[file:line]** — category (confidence: N)`, followed by the problem, the suggested fix, and the anchor.
-
-            If nothing reaches the threshold, say so explicitly with `**Decision**: 🟢 Approved`.
+            Read `.github/REVIEW-FORMAT.md` and follow it exactly. It is the report contract: the iteration check against previous comments, the section layout, the severity bands and the confidence threshold. Start with its step 1 — reading the existing PR comments and classifying earlier issues as resolved, open or partly resolved — before analysing the diff.
 
             When making commits, follow Conventional Commits exactly:
             - Format: `<type>(<optional scope>): <short summary>`

@@ -138,6 +138,7 @@ authoritative reference; the operative rules a reviewer applies:
 | `crates/quantumssh/` | The thin binary entrypoint over the library (two crates, flat — [ADR-0017](docs/adr/0017-phase-1-workspace-topology-two-crates-flat.md)) |
 | `tests/interop/` | `run_openssh_client.sh` — the OpenSSH interop gate driver (ADR-0020) |
 | `.github/workflows/` | CI: `ci`, `audit`, `deny`, `interop` (OpenSSH gate), and the Claude reviewers |
+| [`.github/REVIEW-FORMAT.md`](.github/REVIEW-FORMAT.md) | Report contract both automated reviewers follow |
 
 ## Key commands
 
