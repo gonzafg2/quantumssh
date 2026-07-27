@@ -108,6 +108,7 @@ warnings.
 | `docs/threat-model.md` | Defensive posture |
 | `docs/adr/` | Architecture Decision Records |
 | `docs/rfcs/` | RFCs (shape-determining decisions) |
+| `.github/REVIEW-FORMAT.md` | Report contract both automated reviewers follow |
 | `deny.toml` | `cargo deny` configuration |
 | `clippy.toml` | Clippy tuning |
 | `rust-toolchain.toml` | Pinned toolchain (stable, MSRV 1.92) |
