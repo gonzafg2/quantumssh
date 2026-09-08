@@ -1,37 +1,24 @@
 name: codex
 
-# Third automated PR reviewer (ADR-0030). Same trigger paths and author gate
-# as opencode. Two jobs, split on privilege: `review` holds read permissions
-# only and is the sole job that checks out PR code; `post` holds the
-# pull-requests write permission and never touches a checkout. The model runs
-# read-only with no credentials; the workflow — not the model — gathers the
-# inputs and posts the single review comment.
+# Third automated PR reviewer (ADR-0030). Same author gate as opencode, on
+# pull_request only: no comment trigger, so no issue_comment-driven checkout
+# of a PR head in a job that holds a secret (the untrusted-checkout class
+# CodeQL flags). Re-run with `gh run rerun` or a push. Two jobs, split on
+# privilege: `review` holds read permissions only and is the sole job that
+# checks out PR code; `post` holds the pull-requests write permission and
+# never touches a checkout. The model runs read-only with no credentials; the
+# workflow — not the model — gathers the inputs and posts the single comment.
 
 on:
-  issue_comment:
-    types: [created]
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
 
 env:
-  PR_NUMBER: ${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.event.issue.number }}
+  PR_NUMBER: ${{ github.event.pull_request.number }}
 
 jobs:
   review:
-    if: |
-      (
-        github.event_name == 'pull_request' &&
-        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)
-      ) ||
-      (
-        github.event_name == 'issue_comment' &&
-        github.event.issue.pull_request != null &&
-        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) &&
-        (
-          contains(github.event.comment.body, ' /codex') ||
-          startsWith(github.event.comment.body, '/codex')
-        )
-      )
+    if: contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)
     runs-on: ubuntu-latest
     # Bounds the cost of a runaway review (ADR-0030: project-scoped key with a budget).
     timeout-minutes: 30
@@ -58,10 +45,10 @@ jobs:
           echo "CODEX_DIR=$codex_dir" >> "$GITHUB_ENV"
           gh api "repos/$GH_REPO/pulls/$PR_NUMBER" > "$codex_dir/pr.json"
 
-          # Fail closed before anything is checked out. The /codex comment path
-          # gates the commenter, not the PR: re-check the author here, and refuse
-          # heads that live in a fork. Vetting and checkout use the same snapshot
-          # of pr.json, so the SHA cannot move between the two.
+          # Fail closed before anything is checked out: re-check the author from
+          # the API (belt and braces over the job-level gate) and refuse heads
+          # that live in a fork. Vetting and checkout use the same snapshot of
+          # pr.json, so the SHA cannot move between the two.
           assoc=$(jq -r .author_association "$codex_dir/pr.json")
           case "$assoc" in
             OWNER|MEMBER|COLLABORATOR) ;;

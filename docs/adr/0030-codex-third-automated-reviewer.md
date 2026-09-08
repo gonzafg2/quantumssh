@@ -55,19 +55,21 @@ not through the Codex cloud GitHub App. It follows the shape of the two
 existing reviewers, with one deliberate tightening:
 
 - **Triggered on every PR** (`opened`, `synchronize`, `reopened`,
-  `ready_for_review`) **from OWNER/MEMBER/COLLABORATOR** only, and on
-  demand via a `/codex` comment on a PR from the same set of authors —
-  the same two trigger paths as opencode. The slash form is deliberate:
-  the Codex cloud App answers any `@codex` mention, so `/codex` cannot
-  collide with it. The action's own actor check (write access required;
-  `allow-bots` stays at its default `false`) is a second gate behind the
-  workflow's `author_association` condition. Dependabot PRs are
-  excluded, as for the other two reviewers.
+  `ready_for_review`) **from OWNER/MEMBER/COLLABORATOR** only, on
+  `pull_request` and nothing else. opencode's on-demand `/oc` comment
+  trigger is deliberately not mirrored: an `issue_comment`-driven
+  checkout of a PR head inside a job that holds a secret is the
+  untrusted-checkout class CodeQL flags — it did, twice, on the PR that
+  landed this ADR — and all it buys is a re-run without a push, which
+  `gh run rerun` already provides. The action's own actor check (write
+  access required; `allow-bots` stays at its default `false`) is a second
+  gate behind the workflow's `author_association` condition. Dependabot
+  PRs are excluded, as for the other two reviewers.
 - **Same-repository heads only.** Before anything is checked out, the
   workflow re-reads the PR from the API, re-checks the author's
-  association (the comment path gates the commenter, not the PR) and
-  refuses a head that lives in a fork — even a collaborator's. Vetting
-  and checkout use the same API snapshot, so the SHA cannot move between
+  association and refuses a head that lives in a fork — even a
+  collaborator's, whose PR would receive no secret anyway. Vetting and
+  checkout use the same API snapshot, so the SHA cannot move between
   them.
 - **Pinned to a full commit SHA**, bumped by Dependabot's
   `github-actions` ecosystem like the other actions and reviewed against
@@ -221,6 +223,18 @@ of issue that two providers both miss is exactly what a third is for.
 Keeps the count at two. Rejected because provider diversity is the goal,
 not the count; ADR-0025 stands and DeepSeek's catch profile is not
 superseded by Codex's.
+
+### Alternative 5: Mirror opencode's on-demand comment trigger
+
+A `/codex` comment as the twin of `/oc`. It was implemented first and
+then removed: on `issue_comment` the job must check out a PR head it
+resolved itself while holding the API key, which CodeQL reports as an
+untrusted checkout in a privileged context plus a TOCTOU, and no
+runtime vetting makes those static findings go away. Rejected because
+the on-demand path buys only a re-run without a push, which
+`gh run rerun` provides, at the cost of a permanent security finding
+that would have to be dismissed by hand. opencode's `/oc` is unaffected;
+it never checks out the PR head with `actions/checkout`.
 
 ## Links
 
