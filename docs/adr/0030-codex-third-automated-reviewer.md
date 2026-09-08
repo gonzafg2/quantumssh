@@ -57,37 +57,58 @@ existing reviewers, with one deliberate tightening:
 - **Triggered on every PR** (`opened`, `synchronize`, `reopened`,
   `ready_for_review`) **from OWNER/MEMBER/COLLABORATOR** only, and on
   demand via a `/codex` comment on a PR from the same set of authors —
-  the same two trigger paths as opencode. The action's own actor check
-  (write access required; `allow-bots` stays at its default `false`) is
-  a second gate behind the workflow's `author_association` condition.
-  Dependabot PRs are excluded, as for the other two reviewers.
+  the same two trigger paths as opencode. The slash form is deliberate:
+  the Codex cloud App answers any `@codex` mention, so `/codex` cannot
+  collide with it. The action's own actor check (write access required;
+  `allow-bots` stays at its default `false`) is a second gate behind the
+  workflow's `author_association` condition. Dependabot PRs are
+  excluded, as for the other two reviewers.
+- **Same-repository heads only.** Before anything is checked out, the
+  workflow re-reads the PR from the API, re-checks the author's
+  association (the comment path gates the commenter, not the PR) and
+  refuses a head that lives in a fork — even a collaborator's. Vetting
+  and checkout use the same API snapshot, so the SHA cannot move between
+  them.
 - **Pinned to a full commit SHA**, bumped by Dependabot's
   `github-actions` ecosystem like the other actions and reviewed against
   the pin comment before merge. The Codex CLI the action installs
   (`codex-version`) is pinned too, with a dated comment; Dependabot does
   not track that input, so it is bumped by hand.
-- **Permissions:** `contents: read`, `pull-requests: write`,
-  `issues: read`. No `contents: write`. No `id-token: write` — unlike the
-  other two reviewers, this action authenticates with an API key, not
-  OIDC, so the OIDC permission is not needed and is not granted.
+- **Permissions, split on privilege.** Two jobs: `review` holds
+  `contents: read` and `pull-requests: read` and is the only job that
+  checks out PR code; `post` holds `pull-requests: write` and never
+  touches a checkout — it downloads the assembled comment as an artifact
+  and posts it. No `contents: write` anywhere. No `id-token: write` —
+  unlike the other two reviewers, this action authenticates with an API
+  key, not OIDC, so the OIDC permission is not needed and is not
+  granted.
 - **Credential:** an `OPENAI_API_KEY` repository secret, scoped to a
   dedicated OpenAI project with a hard monthly budget.
-- **Execution posture (the tightening):** Codex runs read-only —
-  `safety-strategy: read-only`, so it cannot mutate the checkout — and
-  without credentials of its own. The workflow, not the model, gathers
-  the review inputs: it checks out the PR and pre-fetches the existing PR
-  comments (for the REVIEW-FORMAT step-1 iteration check) into the
-  prompt before invoking Codex. The model never holds `GITHUB_TOKEN`, and
-  the action serves inference through a local proxy instead of exporting
-  the API key to the commands Codex runs; with the sandbox denying those
-  commands network access, prompt-injection through PR content cannot
-  turn into a push, a comment, or an exfiltration.
-- **Posting:** a separate, deterministic workflow step posts the
-  action's `final-message` output as **one** PR comment using the job's
-  `GITHUB_TOKEN`. The comment therefore appears as `github-actions[bot]`;
-  its first line identifies it as the Codex review so the other
-  reviewers' iteration check can classify it. Inline comments are not
-  required.
+- **Execution posture (the tightening):** Codex runs without
+  credentials of its own and without privilege. The workflow, not the
+  model, gathers the review inputs: it checks out the PR and pre-fetches
+  the existing PR comments (for the REVIEW-FORMAT step-1 iteration
+  check) into the prompt before invoking Codex. The model never holds
+  `GITHUB_TOKEN`. The action runs it under `safety-strategy: drop-sudo`
+  — sudo, supplementary groups and capabilities removed, `no_new_privs`
+  set — with the `:read-only` permission profile: the commands it runs
+  can read the checkout but cannot write or reach the network. The API
+  key lives in the action's local proxy process and is not exported to
+  those commands. Prompt-injection through PR content therefore cannot
+  turn into a push, a comment, or a network exfiltration. The residual
+  channel is the review text itself, which the workflow posts verbatim:
+  the model can print anything it can read — the public checkout, its
+  own prompt, and the proxy's memory only if it defeated the same-user
+  process isolation that `drop-sudo` leaves in place. The action
+  documents `read-only` and `unsafe` as the strategies where that memory
+  read is trivial because sudo is kept; neither is used.
+  `unprivileged-user` (a separate UID for Codex) is the upgrade path if
+  that residual ever matters.
+- **Posting:** the separate, deterministic `post` job publishes the
+  assembled report as **one** PR comment using its own `GITHUB_TOKEN`.
+  The comment therefore appears as `github-actions[bot]`; its header
+  identifies it as the Codex review so the other reviewers' iteration
+  check can classify it. Inline comments are not required.
 - **Prompt:** the same MANIFIESTO commitments, threat-model rules and
   `CLAUDE.md` classification the other reviewers receive, the same
   "absence of evidence in CI is not evidence of absence" rule, and the
@@ -114,9 +135,10 @@ review pass.
   catch profile widens exactly as ADR-0025 intended.
 - Codex applies `AGENTS.md` review guidance natively, so the file the
   repository already maintains does double duty.
-- The read-only, credential-free execution posture is stricter than the
-  two existing reviewers. It is a bar they could adopt later; it is not a
-  reason to loosen it here.
+- The credential-free execution posture — no GitHub token in the
+  model's hands, no network and no writes for its commands, no sudo — is
+  stricter than the two existing reviewers on that axis. It is a bar
+  they could adopt later; it is not a reason to loosen it here.
 - The decision is recorded, so the next "why three reviewers?" question
   points at this ADR instead of being re-litigated.
 
@@ -127,8 +149,9 @@ review pass.
   budget.
 - A third external service receives PR content. The content is already
   public; the residual exposure is the API key itself, mitigated by
-  scoping and budget, by the read-only sandbox, and by never handing the
-  key to a shell the model controls.
+  scoping and budget, by `drop-sudo`, by the read-only profile, and by
+  keeping the key in the proxy process rather than in the commands the
+  model runs.
 - A new third-party action runs in CI (threat model §5.5.2.a). Mitigated
   by the full-SHA pin, minimal permissions, and Dependabot-driven,
   reviewed bumps.
@@ -149,9 +172,11 @@ review pass.
   run since has been skipped because only Dependabot PRs were opened.
   The PR that lands this ADR is the first live exercise of all three at
   once.
-- The Codex cloud GitHub App is not installed, and remains uninstalled.
-  Nothing in this ADR prevents revisiting that if the App gains
-  repository-controlled, PR-reviewable configuration.
+- The Codex cloud GitHub App is installed on the maintainer's account
+  but has no environment for this repository: it answers an `@codex`
+  mention with a set-up prompt and does nothing else. It stays
+  unconfigured. Nothing in this ADR prevents revisiting that if the App
+  gains repository-controlled, PR-reviewable configuration.
 
 ## Alternatives considered
 

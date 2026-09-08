@@ -1,8 +1,11 @@
 name: codex
 
 # Third automated PR reviewer (ADR-0030). Same trigger paths and author gate
-# as opencode; the model runs read-only with no credentials, and the workflow
-# — not the model — gathers the inputs and posts the single review comment.
+# as opencode. Two jobs, split on privilege: `review` holds read permissions
+# only and is the sole job that checks out PR code; `post` holds the
+# pull-requests write permission and never touches a checkout. The model runs
+# read-only with no credentials; the workflow — not the model — gathers the
+# inputs and posts the single review comment.
 
 on:
   issue_comment:
@@ -10,8 +13,11 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
 
+env:
+  PR_NUMBER: ${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.event.issue.number }}
+
 jobs:
-  codex:
+  review:
     if: |
       (
         github.event_name == 'pull_request' &&
@@ -31,15 +37,13 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
-      pull-requests: write # the posting step comments on the PR
-      issues: read
+      pull-requests: read
     env:
       # The model is an operational pin, not an ADR-0030 decision: OpenAI's Codex
       # docs name no single default and rotate the recommended model. gpt-5.6-terra
       # is the documented everyday starting point as of 2026-09-08. Bump it
       # deliberately, with the date.
       CODEX_MODEL: gpt-5.6-terra
-      PR_NUMBER: ${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.event.issue.number }}
     steps:
       - name: Check the OPENAI_API_KEY secret is configured
         env:
@@ -50,7 +54,7 @@ jobs:
             exit 1
           fi
 
-      - name: Resolve the PR head
+      - name: Resolve and vet the PR head
         id: pr
         env:
           GH_TOKEN: ${{ github.token }}
@@ -61,8 +65,26 @@ jobs:
           codex_dir="$RUNNER_TEMP/codex"
           mkdir -p "$codex_dir"
           echo "CODEX_DIR=$codex_dir" >> "$GITHUB_ENV"
-          gh pr view "$PR_NUMBER" --json number,title,author,baseRefName,headRefName,headRefOid > "$codex_dir/pr.json"
-          echo "head_sha=$(jq -r .headRefOid "$codex_dir/pr.json")" >> "$GITHUB_OUTPUT"
+          gh api "repos/$GH_REPO/pulls/$PR_NUMBER" > "$codex_dir/pr.json"
+
+          # Fail closed before anything is checked out. The /codex comment path
+          # gates the commenter, not the PR: re-check the author here, and refuse
+          # heads that live in a fork. Vetting and checkout use the same snapshot
+          # of pr.json, so the SHA cannot move between the two.
+          assoc=$(jq -r .author_association "$codex_dir/pr.json")
+          case "$assoc" in
+            OWNER|MEMBER|COLLABORATOR) ;;
+            *)
+              echo "::error::PR author association is $assoc; only OWNER/MEMBER/COLLABORATOR PRs are reviewed"
+              exit 1
+              ;;
+          esac
+          head_repo=$(jq -r '.head.repo.full_name // ""' "$codex_dir/pr.json")
+          if [ "$head_repo" != "$GH_REPO" ]; then
+            echo "::error::PR head lives in '$head_repo', not in $GH_REPO; fork PRs are not checked out"
+            exit 1
+          fi
+          echo "head_sha=$(jq -r .head.sha "$codex_dir/pr.json")" >> "$GITHUB_OUTPUT"
 
       - name: Checkout the PR head
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -138,7 +160,7 @@ jobs:
           fence="\`\`\`\`\`"
           {
             printf '\n## Pull request\n\n'
-            jq -r '"- Number: #\(.number)\n- Title: \(.title)\n- Author: \(.author.login)\n- Base: \(.baseRefName)\n- Head: \(.headRefName) @ \(.headRefOid)"' "$CODEX_DIR/pr.json"
+            jq -r '"- Number: #\(.number)\n- Title: \(.title)\n- Author: \(.user.login)\n- Base: \(.base.ref)\n- Head: \(.head.ref) @ \(.head.sha)"' "$CODEX_DIR/pr.json"
             printf '\n\n## Previous PR comments\n\n%stext\n' "$fence"
             cat "$CODEX_DIR/comments.txt"
             printf '%s\n\n### Reviews\n\n' "$fence"
@@ -162,17 +184,21 @@ jobs:
           # The CLI the action installs. Dependabot does not track this input:
           # bump it by hand, with the date (0.153.4 was the latest on 2026-09-08).
           codex-version: 0.153.4
-          # Read-only sandbox: Codex reads the checkout but cannot write to it or
-          # reach the network from the commands it runs (ADR-0030). The API key is
-          # served through the action's local proxy, never into that sandbox.
-          safety-strategy: read-only
+          # Privilege: drop-sudo (the action's default) removes sudo, supplementary
+          # groups and capabilities before Codex starts. The action's own docs warn
+          # that `safety-strategy: read-only` keeps sudo, which would let the model
+          # read the API key out of the proxy's memory and print it into the review.
+          # ponytail: drop-sudo leaves Codex on the same UID as the key proxy;
+          # `unprivileged-user` (a separate UID) is the upgrade path if that
+          # residual ever matters.
+          safety-strategy: drop-sudo
+          # Sandbox for the commands Codex runs: read the checkout, no writes, no
+          # network (ADR-0030). Needs Codex >= 0.138.0; see codex-version above.
+          permission-profile: ":read-only"
           # Only actors with write access may trigger the action; no bot bypass.
           allow-bots: false
 
-      - name: Post the review
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
+      - name: Assemble the review comment
         run: |
           set -euo pipefail
           review="$CODEX_DIR/review.md"
@@ -190,4 +216,34 @@ jobs:
               printf '\n\n[review truncated by the workflow at %s bytes]\n' "$max_body_bytes"
             fi
           } > "$CODEX_DIR/comment.md"
-          gh pr comment "$PR_NUMBER" --body-file "$CODEX_DIR/comment.md"
+
+      - name: Hand the comment to the posting job
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: codex-review
+          path: ${{ env.CODEX_DIR }}/comment.md
+          if-no-files-found: error
+          retention-days: 1
+
+  # The only job with a write permission. It never checks out code: it downloads
+  # the assembled comment and posts it.
+  post:
+    needs: review
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Fetch the assembled comment
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: codex-review
+          path: ${{ runner.temp }}/codex
+
+      - name: Post the review
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh pr comment "$PR_NUMBER" --body-file "$RUNNER_TEMP/codex/comment.md"
