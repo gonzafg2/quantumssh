@@ -155,6 +155,17 @@ review pass.
 - A new third-party action runs in CI (threat model §5.5.2.a). Mitigated
   by the full-SHA pin, minimal permissions, and Dependabot-driven,
   reviewed bumps.
+- The secret is reachable by a same-repository PR that edits this
+  workflow: on `pull_request`, the workflow definition comes from the PR
+  branch and repository secrets are available to it, so a compromised
+  collaborator account (threat model §3.2.6) could rewrite `codex.yml`
+  to exfiltrate `OPENAI_API_KEY` before any of its safeguards run. This
+  is the same exposure the two existing reviewer secrets already carry;
+  the project accepts it while it has a single maintainer (ADR-0008)
+  and bounds it with a project-scoped, budgeted, rotatable key. Moving
+  the reviewers to `pull_request_target` with the base-branch definition,
+  or to an approval-gated environment for their secrets, is a decision
+  for all three reviewers at once and belongs in its own ADR.
 - No dedicated bot identity: the review posts as `github-actions[bot]`
   rather than a `codex[bot]`, so it is visually less distinct than the
   other two. Accepted; the fixed first line compensates.
