@@ -1,0 +1,197 @@
+# ADR 0030: Add Codex as a third automated PR reviewer
+
+- **Status:** Proposed
+- **Date:** 2026-09-08 (drafted; becomes the acceptance date when the implementing PR merges)
+- **Deciders:** Project lead
+- **Related:** Mirrors [ADR-0025](0025-opencode-second-automated-reviewer.md) (second reviewer, the precedent this decision extends); constrained by [ADR-0008](0008-branch-protection-zero-required-reviews.md) (automated reviews are advisory, never a merge gate); follows the commit-SHA pinning discipline of [PR #142](https://github.com/gonzafg2/quantumssh/pull/142); reports under the contract in [`.github/REVIEW-FORMAT.md`](../../.github/REVIEW-FORMAT.md); trust-base framing from [`docs/threat-model.md`](../threat-model.md) §5.5.2.a (upstream dependency compromise) and §3.2.6 (project maintainer compromise, via [RFC-0001](../rfcs/0001-threat-model-actor-project-maintainer-compromise.md)). Implementation: `.github/workflows/codex.yml` (TBD — lands with the implementing PR).
+
+## Context
+
+QuantumSSH runs two automated PR reviewers, both on every human-authored PR
+and both bound to the same report contract (`.github/REVIEW-FORMAT.md`):
+
+- **Claude Code Review** — `anthropics/claude-code-action`, Anthropic
+  inference, posts inline comments as `claude[bot]`
+  (`.github/workflows/claude-code-review.yml`).
+- **opencode** — `anomalyco/opencode/github`, DeepSeek V4 Pro inference,
+  posts as `opencode-agent[bot]`, also on demand via `/oc`
+  (`.github/workflows/opencode.yml`, [ADR-0025](0025-opencode-second-automated-reviewer.md)).
+
+A third reviewer runs outside this governance: **GitHub Copilot code
+review**, requested by hand by the maintainer on individual PRs. Per
+GitHub's documentation it reads `CLAUDE.md` and `AGENTS.md` on its own,
+but not `.github/REVIEW-FORMAT.md`, so its reports do not follow the
+contract. It is not automatic (that would need a ruleset, and the
+repository has none) and no ADR records it. This ADR leaves Copilot as
+it is; it is mentioned so the reviewer landscape is stated accurately.
+
+ADR-0025's argument for a second reviewer — different model families
+catch different classes of issues — applies unchanged to a third. OpenAI
+Codex is the remaining major model family with a first-party code-review
+product, and its review guidance is driven by `AGENTS.md`, which this
+repository already maintains.
+
+Two integration shapes exist, and they differ in who controls the
+configuration:
+
+1. **The Codex cloud GitHub App.** Enabled in OpenAI's Codex settings for
+   a connected repository; reviews on `@codex review` or automatically on
+   every new PR; posts a native GitHub review scoped to P0/P1 findings;
+   `@codex fix` can push commits to the branch when the App has
+   permission.
+2. **`openai/codex-action` in GitHub Actions.** A pinned workflow step
+   that runs `codex exec` on the runner with an API key from repository
+   secrets; the workflow supplies the prompt and posts the result itself.
+
+The questions this ADR answers: whether to add a third reviewer, which
+shape, and — as in ADR-0025 — whether the change needs an RFC.
+
+## Decision
+
+We will add OpenAI Codex as a third automated PR reviewer, integrated
+through `openai/codex-action` (the v1 line, pinned to a full commit SHA),
+not through the Codex cloud GitHub App. It follows the shape of the two
+existing reviewers, with one deliberate tightening:
+
+- **Triggered on every PR** (`opened`, `synchronize`, `reopened`,
+  `ready_for_review`) **from OWNER/MEMBER/COLLABORATOR** only, and on
+  demand via a `/codex` comment on a PR from the same set of authors —
+  the same two trigger paths as opencode. The action's own actor check
+  (write access required; `allow-bots` stays at its default `false`) is
+  a second gate behind the workflow's `author_association` condition.
+  Dependabot PRs are excluded, as for the other two reviewers.
+- **Pinned to a full commit SHA**, bumped by Dependabot's
+  `github-actions` ecosystem like the other actions and reviewed against
+  the pin comment before merge.
+- **Permissions:** `contents: read`, `pull-requests: write`,
+  `issues: read`. No `contents: write`. No `id-token: write` — unlike the
+  other two reviewers, this action authenticates with an API key, not
+  OIDC, so the OIDC permission is not needed and is not granted.
+- **Credential:** an `OPENAI_API_KEY` repository secret, scoped to a
+  dedicated OpenAI project with a hard monthly budget.
+- **Execution posture (the tightening):** Codex runs read-only —
+  `safety-strategy: read-only`, so it cannot mutate the checkout — and
+  without credentials of its own. The workflow, not the model, gathers
+  the review inputs: it checks out the PR and pre-fetches the existing PR
+  comments (for the REVIEW-FORMAT step-1 iteration check) into the
+  prompt before invoking Codex. The model never holds `GITHUB_TOKEN` or
+  the API key as a shell-accessible secret, so prompt-injection through
+  PR content cannot turn into a push, a comment, or an exfiltration.
+- **Posting:** a separate, deterministic workflow step posts the
+  action's `final-message` output as **one** PR comment using the job's
+  `GITHUB_TOKEN`. The comment therefore appears as `github-actions[bot]`;
+  its first line identifies it as the Codex review so the other
+  reviewers' iteration check can classify it. Inline comments are not
+  required.
+- **Prompt:** the same MANIFIESTO commitments, threat-model rules and
+  `CLAUDE.md` classification the other reviewers receive, the same
+  "absence of evidence in CI is not evidence of absence" rule, and the
+  `.github/REVIEW-FORMAT.md` contract.
+- **Model:** pinned explicitly in the workflow's `model` input with a
+  dated comment, not fixed by this ADR. OpenAI's Codex documentation
+  names no single default and rotates the recommended model; the pin is
+  an operational detail, bumped deliberately like the action SHA.
+- **Not a merge gate.** ADR-0008 stands: zero required approvals, and the
+  Codex job is not added to the required status checks.
+
+No RFC is required, for the reason ADR-0025 gave: the project already
+sends the diffs of a public repository to two external inference APIs;
+a third provider is an incremental expansion of an established posture,
+not a new class of trust-base change. It touches no cryptographic,
+protocol, or dependency surface of the server — it adds a third CI
+review pass.
+
+## Consequences
+
+### Positive
+
+- Three model families from three providers review every human PR; the
+  catch profile widens exactly as ADR-0025 intended.
+- Codex applies `AGENTS.md` review guidance natively, so the file the
+  repository already maintains does double duty.
+- The read-only, credential-free execution posture is stricter than the
+  two existing reviewers. It is a bar they could adopt later; it is not a
+  reason to loosen it here.
+- The decision is recorded, so the next "why three reviewers?" question
+  points at this ADR instead of being re-litigated.
+
+### Negative
+
+- A third per-PR inference cost. Controlled by the `author_association`
+  gate, the action's write-access check, and the project-scoped key
+  budget.
+- A third external service receives PR content. The content is already
+  public; the residual exposure is the API key itself, mitigated by
+  scoping and budget, by the read-only sandbox, and by never handing the
+  key to a shell the model controls.
+- A new third-party action runs in CI (threat model §5.5.2.a). Mitigated
+  by the full-SHA pin, minimal permissions, and Dependabot-driven,
+  reviewed bumps.
+- No dedicated bot identity: the review posts as `github-actions[bot]`
+  rather than a `codex[bot]`, so it is visually less distinct than the
+  other two. Accepted; the fixed first line compensates.
+
+### Neutral
+
+- A third "voice" on every PR raises the maintainer's triage cost.
+  Same trade-off as ADR-0025: three advisory opinions, one human decision.
+- Every place that says "both reviewers" must say three: `CLAUDE.md`
+  (contribution conventions), `AGENTS.md` (git workflow),
+  `.github/REVIEW-FORMAT.md` (header) and
+  `.github/PULL_REQUEST_TEMPLATE.md` (automated reviews). Done in the
+  implementing PR, not here.
+- The two existing reviewers have not executed since 2026-07-27 — every
+  run since has been skipped because only Dependabot PRs were opened.
+  The implementing PR is the first live exercise of all three at once.
+- The Codex cloud GitHub App is not installed, and remains uninstalled.
+  Nothing in this ADR prevents revisiting that if the App gains
+  repository-controlled, PR-reviewable configuration.
+
+## Alternatives considered
+
+### Alternative 1: The Codex cloud GitHub App
+
+Zero workflow to maintain, native review UI with inline comments,
+automatic reviews on open, `AGENTS.md` rules applied out of the box.
+Rejected because the configuration lives in OpenAI's Codex settings,
+tied to a personal ChatGPT account rather than to a repository secret:
+it cannot be pinned, diffed, or reviewed by PR; the report follows
+Codex's own P0/P1 format rather than `.github/REVIEW-FORMAT.md`; and the
+App holds push permission for `@codex fix` tasks, which this project
+does not want an external agent to have — only signed, signed-off
+maintainer commits enter `main` (ADR-0008, threat model §3.2.6).
+
+### Alternative 2: Require an RFC per CLAUDE.md governance
+
+Rejected for the reason recorded in ADR-0025: an RFC with a 14-day
+comment period would delay a CI-only operational change whose trust
+model is a documented instance of the project's existing
+external-inference-reviewer posture.
+
+### Alternative 3: Stay at two reviewers
+
+Cheaper, fewer trust relationships. Rejected because the marginal cost
+is gated and bounded, and the third model family is the point: a class
+of issue that two providers both miss is exactly what a third is for.
+
+### Alternative 4: Replace opencode with Codex instead of adding it
+
+Keeps the count at two. Rejected because provider diversity is the goal,
+not the count; ADR-0025 stands and DeepSeek's catch profile is not
+superseded by Codex's.
+
+## Links
+
+- Implementation: `.github/workflows/codex.yml` (TBD — implementing PR)
+- Action: <https://github.com/openai/codex-action> (v1 line; `v1.12` at
+  the time of writing — the workflow pins the SHA, not the tag)
+- Codex code review in GitHub (the App alternative):
+  <https://learn.chatgpt.com/docs/third-party/github>
+- Custom review rules via `AGENTS.md`:
+  <https://developers.openai.com/blog/custom-code-review-rules-for-codex>
+- Copilot code review instruction files (for the Context section):
+  <https://docs.github.com/en/copilot/how-tos/use-copilot-agents/request-a-code-review/use-code-review>
+- Related ADRs: [ADR-0025](0025-opencode-second-automated-reviewer.md),
+  [ADR-0008](0008-branch-protection-zero-required-reviews.md)
+- Report contract: [`.github/REVIEW-FORMAT.md`](../../.github/REVIEW-FORMAT.md)
+- Governance: [CLAUDE.md § RFC vs ADR vs plain PR](../../CLAUDE.md)
