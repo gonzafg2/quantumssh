@@ -1,9 +1,9 @@
 # ADR 0030: Add Codex as a third automated PR reviewer
 
 - **Status:** Proposed
-- **Date:** 2026-09-08 (drafted; becomes the acceptance date when the implementing PR merges)
+- **Date:** 2026-09-08 (drafted; becomes the acceptance date on merge)
 - **Deciders:** Project lead
-- **Related:** Mirrors [ADR-0025](0025-opencode-second-automated-reviewer.md) (second reviewer, the precedent this decision extends); constrained by [ADR-0008](0008-branch-protection-zero-required-reviews.md) (automated reviews are advisory, never a merge gate); follows the commit-SHA pinning discipline of [PR #142](https://github.com/gonzafg2/quantumssh/pull/142); reports under the contract in [`.github/REVIEW-FORMAT.md`](../../.github/REVIEW-FORMAT.md); trust-base framing from [`docs/threat-model.md`](../threat-model.md) §5.5.2.a (upstream dependency compromise) and §3.2.6 (project maintainer compromise, via [RFC-0001](../rfcs/0001-threat-model-actor-project-maintainer-compromise.md)). Implementation: `.github/workflows/codex.yml` (TBD — lands with the implementing PR).
+- **Related:** Mirrors [ADR-0025](0025-opencode-second-automated-reviewer.md) (second reviewer, the precedent this decision extends); constrained by [ADR-0008](0008-branch-protection-zero-required-reviews.md) (automated reviews are advisory, never a merge gate); follows the commit-SHA pinning discipline of [PR #142](https://github.com/gonzafg2/quantumssh/pull/142); reports under the contract in [`.github/REVIEW-FORMAT.md`](../../.github/REVIEW-FORMAT.md); trust-base framing from [`docs/threat-model.md`](../threat-model.md) §5.5.2.a (upstream dependency compromise) and §3.2.6 (project maintainer compromise, via [RFC-0001](../rfcs/0001-threat-model-actor-project-maintainer-compromise.md)). Implementation: `.github/workflows/codex.yml` (implements this decision; lands in the same PR, as ADR-0025 did).
 
 ## Context
 
@@ -62,7 +62,9 @@ existing reviewers, with one deliberate tightening:
   Dependabot PRs are excluded, as for the other two reviewers.
 - **Pinned to a full commit SHA**, bumped by Dependabot's
   `github-actions` ecosystem like the other actions and reviewed against
-  the pin comment before merge.
+  the pin comment before merge. The Codex CLI the action installs
+  (`codex-version`) is pinned too, with a dated comment; Dependabot does
+  not track that input, so it is bumped by hand.
 - **Permissions:** `contents: read`, `pull-requests: write`,
   `issues: read`. No `contents: write`. No `id-token: write` — unlike the
   other two reviewers, this action authenticates with an API key, not
@@ -74,9 +76,11 @@ existing reviewers, with one deliberate tightening:
   without credentials of its own. The workflow, not the model, gathers
   the review inputs: it checks out the PR and pre-fetches the existing PR
   comments (for the REVIEW-FORMAT step-1 iteration check) into the
-  prompt before invoking Codex. The model never holds `GITHUB_TOKEN` or
-  the API key as a shell-accessible secret, so prompt-injection through
-  PR content cannot turn into a push, a comment, or an exfiltration.
+  prompt before invoking Codex. The model never holds `GITHUB_TOKEN`, and
+  the action serves inference through a local proxy instead of exporting
+  the API key to the commands Codex runs; with the sandbox denying those
+  commands network access, prompt-injection through PR content cannot
+  turn into a push, a comment, or an exfiltration.
 - **Posting:** a separate, deterministic workflow step posts the
   action's `final-message` output as **one** PR comment using the job's
   `GITHUB_TOKEN`. The comment therefore appears as `github-actions[bot]`;
@@ -139,10 +143,11 @@ review pass.
   (contribution conventions), `AGENTS.md` (git workflow),
   `.github/REVIEW-FORMAT.md` (header) and
   `.github/PULL_REQUEST_TEMPLATE.md` (automated reviews). Done in the
-  implementing PR, not here.
+  same PR.
 - The two existing reviewers have not executed since 2026-07-27 — every
   run since has been skipped because only Dependabot PRs were opened.
-  The implementing PR is the first live exercise of all three at once.
+  The PR that lands this ADR is the first live exercise of all three at
+  once.
 - The Codex cloud GitHub App is not installed, and remains uninstalled.
   Nothing in this ADR prevents revisiting that if the App gains
   repository-controlled, PR-reviewable configuration.
@@ -182,7 +187,7 @@ superseded by Codex's.
 
 ## Links
 
-- Implementation: `.github/workflows/codex.yml` (TBD — implementing PR)
+- Implementation: `.github/workflows/codex.yml`
 - Action: <https://github.com/openai/codex-action> (v1 line; `v1.12` at
   the time of writing — the workflow pins the SHA, not the tag)
 - Codex code review in GitHub (the App alternative):

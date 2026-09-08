@@ -1,0 +1,193 @@
+name: codex
+
+# Third automated PR reviewer (ADR-0030). Same trigger paths and author gate
+# as opencode; the model runs read-only with no credentials, and the workflow
+# — not the model — gathers the inputs and posts the single review comment.
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+jobs:
+  codex:
+    if: |
+      (
+        github.event_name == 'pull_request' &&
+        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)
+      ) ||
+      (
+        github.event_name == 'issue_comment' &&
+        github.event.issue.pull_request != null &&
+        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) &&
+        (
+          contains(github.event.comment.body, ' /codex') ||
+          startsWith(github.event.comment.body, '/codex')
+        )
+      )
+    runs-on: ubuntu-latest
+    # Bounds the cost of a runaway review (ADR-0030: project-scoped key with a budget).
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: write # the posting step comments on the PR
+      issues: read
+    env:
+      # The model is an operational pin, not an ADR-0030 decision: OpenAI's Codex
+      # docs name no single default and rotate the recommended model. gpt-5.6-terra
+      # is the documented everyday starting point as of 2026-09-08. Bump it
+      # deliberately, with the date.
+      CODEX_MODEL: gpt-5.6-terra
+      PR_NUMBER: ${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.event.issue.number }}
+    steps:
+      - name: Check the OPENAI_API_KEY secret is configured
+        env:
+          HAS_KEY: ${{ secrets.OPENAI_API_KEY != '' }}
+        run: |
+          if [ "$HAS_KEY" != "true" ]; then
+            echo "::error::OPENAI_API_KEY is not configured as a repository secret (ADR-0030); the Codex review cannot run"
+            exit 1
+          fi
+
+      - name: Resolve the PR head
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # Scratch directory outside the checkout, shared with the later steps.
+          codex_dir="$RUNNER_TEMP/codex"
+          mkdir -p "$codex_dir"
+          echo "CODEX_DIR=$codex_dir" >> "$GITHUB_ENV"
+          gh pr view "$PR_NUMBER" --json number,title,author,baseRefName,headRefName,headRefOid > "$codex_dir/pr.json"
+          echo "head_sha=$(jq -r .headRefOid "$codex_dir/pr.json")" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout the PR head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.pr.outputs.head_sha }}
+          fetch-depth: 1
+          # Leave no token in .git/config: the review step holds no credential (ADR-0030).
+          persist-credentials: false
+
+      - name: Gather the review inputs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          # The diff is bounded so a very large PR cannot blow the prompt up.
+          max_diff_bytes=400000
+          gh pr diff "$PR_NUMBER" > "$CODEX_DIR/pr.diff"
+          if [ "$(wc -c < "$CODEX_DIR/pr.diff")" -gt "$max_diff_bytes" ]; then
+            head -c "$max_diff_bytes" "$CODEX_DIR/pr.diff" > "$CODEX_DIR/pr.diff.bounded"
+            printf '\n\n[diff truncated by the workflow at %s bytes]\n' "$max_diff_bytes" >> "$CODEX_DIR/pr.diff.bounded"
+            mv "$CODEX_DIR/pr.diff.bounded" "$CODEX_DIR/pr.diff"
+          fi
+
+          # Previous comments, reviews and inline review comments, for the
+          # REVIEW-FORMAT step-1 iteration check. Pre-fetched here because the
+          # model has neither network nor a token.
+          gh pr view "$PR_NUMBER" --comments > "$CODEX_DIR/comments.txt"
+          gh api "repos/$GH_REPO/pulls/$PR_NUMBER/reviews" --paginate \
+            --jq '.[] | select(.body != "") | "### Review by \(.user.login) (\(.state))\n\n\(.body)\n"' \
+            > "$CODEX_DIR/reviews.md"
+          gh api "repos/$GH_REPO/pulls/$PR_NUMBER/comments" --paginate \
+            --jq '.[] | "- \(.user.login) on \(.path) line \(.line // .original_line): \(.body)"' \
+            > "$CODEX_DIR/review-comments.md"
+
+          cat > "$CODEX_DIR/prompt.md" <<'PROMPT'
+          You are reviewing a pull request for QuantumSSH — a memory-safe, post-quantum-first SSH server in Rust (pre-alpha). Read CLAUDE.md for the project's review criteria and .github/REVIEW-FORMAT.md for the report contract.
+
+          Your environment: the repository is checked out at the PR head, read-only. You have no network, no `gh`, no GitHub token, and cargo cannot reach the network. Everything you need from GitHub — the PR metadata, the previous comments and the diff — is included at the end of this prompt. The absence of network, tools or credentials is never a finding: if you cannot verify something, say so as a limitation.
+
+          Measure every change against the five MANIFIESTO commitments:
+          1. Memory-safe by construction — no first-party `unsafe` (workspace is `unsafe_code = "forbid"`)
+          2. Post-quantum by default — only `mlkem768x25519-sha256` KEX in the default profile, hybrid failure must abort
+          3. Zero legacy — no RSA, DSA, ECDSA-NIST, CBC modes, `diffie-hellman-group1/14-sha1`, `ssh-rsa`, password auth, or compression
+          4. Small surface, sharp edges — reject unjustified dependencies and scope creep
+          5. Permanently open — Apache-2.0, no relicensing
+
+          Apply the threat model's hard rules:
+          - Pre-auth path is the highest-trust surface: no `unsafe`, bounded allocations, must be fuzzable
+          - Fail closed: reject peers that don't offer the hybrid PQ KEX or strict-kex
+          - AEAD-only ciphers, keys zeroized after use, never logged
+          - Transport is a type-state machine: `Expect<Stage>` exposes only valid messages per stage
+          - Audit log fields mandated: `authenticated_identity` and `executing_uid` on every `exec.*` event
+
+          Classify the PR:
+          - ADR/RFC docs under `docs/adr/` or `docs/rfcs/`: review design soundness against the commitments and threat model — do NOT hunt for code bugs
+          - Rust under `crates/`: apply the hard security rules above
+          - CI/workflows: check for unpinned actions, excessive permissions, missing authorization gates, supply-chain risk
+
+          Deprecated is not the same as disallowed: a deprecated-but-not-yet-disallowed primitive is NOT legacy. Check RFC-0007 and RFC-0009 for an open migration window before rejecting one (e.g. `ssh-ed25519` under RFC-0006).
+
+          Report only high-signal findings. Anchor each to a CLAUDE.md rule, threat-model section, or ADR. A finding without an anchor is an opinion — drop it.
+
+          Commit signatures cannot be verified in this environment at all; branch protection enforces them through the GitHub API. Treat them as out of scope, never as missing.
+
+          Follow .github/REVIEW-FORMAT.md exactly. Its step 1 — the iteration check — reads the previous PR comments: they are in the "Previous PR comments" section below instead of coming from `gh pr view`. Classify each earlier issue as resolved, open or partly resolved against the code in the checkout before analysing the diff.
+
+          Your final message must be the review report and nothing else: the workflow posts it to the pull request verbatim as one comment, in the language of the PR description. No preamble, and do not wrap the report in a code fence.
+          PROMPT
+
+          # Five-backtick fences: a diff or a comment may itself contain ``` blocks.
+          fence="\`\`\`\`\`"
+          {
+            printf '\n## Pull request\n\n'
+            jq -r '"- Number: #\(.number)\n- Title: \(.title)\n- Author: \(.author.login)\n- Base: \(.baseRefName)\n- Head: \(.headRefName) @ \(.headRefOid)"' "$CODEX_DIR/pr.json"
+            printf '\n\n## Previous PR comments\n\n%stext\n' "$fence"
+            cat "$CODEX_DIR/comments.txt"
+            printf '%s\n\n### Reviews\n\n' "$fence"
+            cat "$CODEX_DIR/reviews.md"
+            printf '\n### Inline review comments\n\n'
+            cat "$CODEX_DIR/review-comments.md"
+            printf '\n## Diff\n\n%sdiff\n' "$fence"
+            cat "$CODEX_DIR/pr.diff"
+            printf '%s\n' "$fence"
+          } >> "$CODEX_DIR/prompt.md"
+
+      - name: Run the Codex review
+        # Pinned to the v1.12 commit, the same discipline as the other two
+        # reviewers (PR #142). Bump the SHA deliberately.
+        uses: openai/codex-action@86365089eb2b84e0a8fb0717b304f8bdcb13b20e # v1.12
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          prompt-file: ${{ env.CODEX_DIR }}/prompt.md
+          output-file: ${{ env.CODEX_DIR }}/review.md
+          model: ${{ env.CODEX_MODEL }}
+          # The CLI the action installs. Dependabot does not track this input:
+          # bump it by hand, with the date (0.153.4 was the latest on 2026-09-08).
+          codex-version: 0.153.4
+          # Read-only sandbox: Codex reads the checkout but cannot write to it or
+          # reach the network from the commands it runs (ADR-0030). The API key is
+          # served through the action's local proxy, never into that sandbox.
+          safety-strategy: read-only
+          # Only actors with write access may trigger the action; no bot bypass.
+          allow-bots: false
+
+      - name: Post the review
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          review="$CODEX_DIR/review.md"
+          if [ ! -s "$review" ]; then
+            echo "::error::Codex produced no review output"
+            exit 1
+          fi
+          # GitHub caps a comment at 65 536 characters; keep headroom for the header.
+          max_body_bytes=60000
+          {
+            printf '<!-- codex-review -->\n'
+            printf '**Reviewer:** Codex (openai/codex-action, model %s)\n\n' "$CODEX_MODEL"
+            head -c "$max_body_bytes" "$review"
+            if [ "$(wc -c < "$review")" -gt "$max_body_bytes" ]; then
+              printf '\n\n[review truncated by the workflow at %s bytes]\n' "$max_body_bytes"
+            fi
+          } > "$CODEX_DIR/comment.md"
+          gh pr comment "$PR_NUMBER" --body-file "$CODEX_DIR/comment.md"
