@@ -18,12 +18,13 @@ and both bound to the same report contract (`.github/REVIEW-FORMAT.md`):
   (`.github/workflows/opencode.yml`, [ADR-0025](0025-opencode-second-automated-reviewer.md)).
 
 A third reviewer runs outside this governance: **GitHub Copilot code
-review**, requested by hand by the maintainer on individual PRs. Per
-GitHub's documentation it reads `CLAUDE.md` and `AGENTS.md` on its own,
-but not `.github/REVIEW-FORMAT.md`, so its reports do not follow the
-contract. It is not automatic (that would need a ruleset, and the
-repository has none) and no ADR records it. This ADR leaves Copilot as
-it is; it is mentioned so the reviewer landscape is stated accurately.
+review**, requested through the maintainer's account — by hand or via
+the account-level automatic setting — rather than through a repository
+ruleset (the repository has none). Per GitHub's documentation it reads
+`CLAUDE.md` and `AGENTS.md` on its own, but not
+`.github/REVIEW-FORMAT.md`, so its reports do not follow the contract,
+and no ADR records it. This ADR leaves Copilot as it is; it is mentioned
+so the reviewer landscape is stated accurately.
 
 ADR-0025's argument for a second reviewer — different model families
 catch different classes of issues — applies unchanged to a third. OpenAI
@@ -188,6 +189,7 @@ superseded by Codex's.
 ## Links
 
 - Implementation: `.github/workflows/codex.yml`
+- PR: [#151](https://github.com/gonzafg2/quantumssh/pull/151)
 - Action: <https://github.com/openai/codex-action> (v1 line; `v1.12` at
   the time of writing — the workflow pins the SHA, not the tag)
 - Codex code review in GitHub (the App alternative):
