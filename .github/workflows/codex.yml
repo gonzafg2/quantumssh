@@ -84,7 +84,14 @@ jobs:
             echo "::error::PR head lives in '$head_repo', not in $GH_REPO; fork PRs are not checked out"
             exit 1
           fi
-          echo "head_sha=$(jq -r .head.sha "$codex_dir/pr.json")" >> "$GITHUB_OUTPUT"
+          # Assignment first so a jq failure trips set -e; then insist on a real
+          # SHA, because an empty ref would make checkout fall back to main.
+          head_sha="$(jq -r '.head.sha // ""' "$codex_dir/pr.json")"
+          if ! printf '%s' "$head_sha" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "::error::could not resolve a 40-hex head SHA for PR #$PR_NUMBER (got '$head_sha')"
+            exit 1
+          fi
+          echo "head_sha=$head_sha" >> "$GITHUB_OUTPUT"
 
       - name: Checkout the PR head
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -101,25 +108,33 @@ jobs:
         run: |
           set -euo pipefail
 
-          # The diff is bounded so a very large PR cannot blow the prompt up.
-          max_diff_bytes=400000
+          # Every prompt input is bounded: neither a very large PR nor a long
+          # comment history (which anyone can extend on a public repository) may
+          # blow up the prompt or the API bill.
+          bound_file() { # <path> <max bytes>
+            if [ "$(wc -c < "$1")" -gt "$2" ]; then
+              head -c "$2" "$1" > "$1.bounded"
+              printf '\n\n[%s truncated by the workflow at %s bytes]\n' "$(basename "$1")" "$2" >> "$1.bounded"
+              mv "$1.bounded" "$1"
+            fi
+          }
+
           gh pr diff "$PR_NUMBER" > "$CODEX_DIR/pr.diff"
-          if [ "$(wc -c < "$CODEX_DIR/pr.diff")" -gt "$max_diff_bytes" ]; then
-            head -c "$max_diff_bytes" "$CODEX_DIR/pr.diff" > "$CODEX_DIR/pr.diff.bounded"
-            printf '\n\n[diff truncated by the workflow at %s bytes]\n' "$max_diff_bytes" >> "$CODEX_DIR/pr.diff.bounded"
-            mv "$CODEX_DIR/pr.diff.bounded" "$CODEX_DIR/pr.diff"
-          fi
+          bound_file "$CODEX_DIR/pr.diff" 400000
 
           # Previous comments, reviews and inline review comments, for the
           # REVIEW-FORMAT step-1 iteration check. Pre-fetched here because the
           # model has neither network nor a token.
           gh pr view "$PR_NUMBER" --comments > "$CODEX_DIR/comments.txt"
+          bound_file "$CODEX_DIR/comments.txt" 200000
           gh api "repos/$GH_REPO/pulls/$PR_NUMBER/reviews" --paginate \
             --jq '.[] | select(.body != "") | "### Review by \(.user.login) (\(.state))\n\n\(.body)\n"' \
             > "$CODEX_DIR/reviews.md"
+          bound_file "$CODEX_DIR/reviews.md" 100000
           gh api "repos/$GH_REPO/pulls/$PR_NUMBER/comments" --paginate \
             --jq '.[] | "- \(.user.login) on \(.path) line \(.line // .original_line): \(.body)"' \
             > "$CODEX_DIR/review-comments.md"
+          bound_file "$CODEX_DIR/review-comments.md" 100000
 
           cat > "$CODEX_DIR/prompt.md" <<'PROMPT'
           You are reviewing a pull request for QuantumSSH — a memory-safe, post-quantum-first SSH server in Rust (pre-alpha). Read CLAUDE.md for the project's review criteria and .github/REVIEW-FORMAT.md for the report contract.
