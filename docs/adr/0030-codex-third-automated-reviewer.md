@@ -175,8 +175,8 @@ review pass.
 - A third "voice" on every PR raises the maintainer's triage cost.
   Same trade-off as ADR-0025: three advisory opinions, one human decision.
 - Every place that says "both reviewers" must say three: `CLAUDE.md`
-  (contribution conventions), `AGENTS.md` (git workflow),
-  `.github/REVIEW-FORMAT.md` (header) and
+  (contribution conventions and the repo map), `AGENTS.md` (git workflow
+  and key files), `.github/REVIEW-FORMAT.md` (header) and
   `.github/PULL_REQUEST_TEMPLATE.md` (automated reviews). Done in the
   same PR.
 - The two existing reviewers have not executed since 2026-07-27 — every
