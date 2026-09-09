@@ -159,11 +159,21 @@ review pass.
 - A new third-party action runs in CI (threat model §5.5.2.a). Mitigated
   by the full-SHA pin, minimal permissions, and Dependabot-driven,
   reviewed bumps.
+- The Codex CLI the action installs (`codex-version`) is pinned by
+  version number, not by digest, and Dependabot does not track action
+  inputs: a vulnerable CLI release has no automated discovery path and
+  is bumped by hand. Mitigated by the dated-comment pin discipline and
+  by the `drop-sudo` / read-only execution profile, which bounds what a
+  compromised CLI could reach.
 - The secret is reachable by a same-repository PR that edits this
   workflow: on `pull_request`, the workflow definition comes from the PR
   branch and repository secrets are available to it, so a compromised
   collaborator account (threat model §3.2.6) could rewrite `codex.yml`
-  to exfiltrate `OPENAI_API_KEY` before any of its safeguards run. This
+  to exfiltrate `OPENAI_API_KEY` before any of its safeguards run. The
+  same PR can rewrite the governing files the model reads from the
+  checkout — `CLAUDE.md`, `AGENTS.md`, `.github/REVIEW-FORMAT.md` — and
+  so steer the review's criteria and report; reading them from the PR
+  head is intended for a PR reviewer, and the exposure is the same. This
   is the same exposure the two existing reviewer secrets already carry;
   the project accepts it while it has a single maintainer (ADR-0008)
   and bounds it with a project-scoped, budgeted, rotatable key. Moving
