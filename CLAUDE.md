@@ -121,7 +121,7 @@ authoritative reference; the operative rules a reviewer applies:
   (e.g. from a GitHub App) must be re-signed before it can merge.
 - **Never push to `main`.** Open a pull request from a branch.
 - **Spanish and English are both first-class** in issues, PRs, and docs.
-- Automated reviewers (`opencode`, `Claude Code Review`) only trigger for human-authored PRs (`OWNER`/`MEMBER`/`COLLABORATOR`). Dependabot PRs receive CI + manual review only.
+- Automated reviewers (`opencode`, `Claude Code Review`, `codex`) only trigger for human-authored PRs (`OWNER`/`MEMBER`/`COLLABORATOR`). Dependabot PRs receive CI + manual review only.
 
 ## Repo map
 
@@ -137,8 +137,8 @@ authoritative reference; the operative rules a reviewer applies:
 | `crates/quantumssh-core/` | The library — modules `wire`, `kex`, `cipher`, `host_key`, `transport` (type-state machine), `auth`, `channel`, `exec`, `server` |
 | `crates/quantumssh/` | The thin binary entrypoint over the library (two crates, flat — [ADR-0017](docs/adr/0017-phase-1-workspace-topology-two-crates-flat.md)) |
 | `tests/interop/` | `run_openssh_client.sh` — the OpenSSH interop gate driver (ADR-0020) |
-| `.github/workflows/` | CI: `ci`, `audit`, `deny`, `interop` (OpenSSH gate), and the Claude reviewers |
-| [`.github/REVIEW-FORMAT.md`](.github/REVIEW-FORMAT.md) | Report contract both automated reviewers follow |
+| `.github/workflows/` | CI: `ci`, `audit`, `deny`, `interop` (OpenSSH gate), and the three automated reviewers (`claude-code-review`, `opencode`, `codex`) |
+| [`.github/REVIEW-FORMAT.md`](.github/REVIEW-FORMAT.md) | Report contract all three automated reviewers follow |
 
 ## Key commands
 
