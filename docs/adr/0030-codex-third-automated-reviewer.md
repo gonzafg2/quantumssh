@@ -65,10 +65,11 @@ existing reviewers, with one deliberate tightening:
   access required; `allow-bots` stays at its default `false`) is a second
   gate behind the workflow's `author_association` condition. Dependabot
   PRs are excluded, as for the other two reviewers.
-- **Same-repository heads only.** Before anything is checked out, the
-  workflow re-reads the PR from the API, re-checks the author's
-  association and refuses a head that lives in a fork — even a
-  collaborator's, whose PR would receive no secret anyway. Vetting,
+- **Same-repository heads only.** The job-level gate skips a PR whose
+  head lives in a fork — even a collaborator's, whose PR would receive
+  no secret anyway — so it never shows a red check. Before anything is
+  checked out, the workflow additionally re-reads the PR from the API,
+  re-checks the author's association and refuses a fork head. Vetting,
   checkout and the diff (fetched by base and head SHA through the
   compare API, not by PR number) all use the same API snapshot, so the
   SHA cannot move between them.

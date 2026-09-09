@@ -18,7 +18,12 @@ env:
 
 jobs:
   review:
-    if: contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)
+    # Author gate plus same-repository head: a collaborator's fork PR is skipped
+    # here (no red check) rather than refused at runtime; the vet step below
+    # keeps the runtime refusal as belt and braces.
+    if: |
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) &&
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     # Bounds the cost of a runaway review (ADR-0030: project-scoped key with a budget).
     timeout-minutes: 30
@@ -118,6 +123,11 @@ jobs:
             "repos/$GH_REPO/compare/${base_sha}...${head_sha}" > "$CODEX_DIR/pr.diff"
           bound_file "$CODEX_DIR/pr.diff" 400000
 
+          # The PR description: it sets the review's language (REVIEW-FORMAT) and
+          # carries the justification of any new dependency (commitment 4).
+          jq -r '.body // "(no description)"' "$CODEX_DIR/pr.json" > "$CODEX_DIR/description.md"
+          bound_file "$CODEX_DIR/description.md" 20000
+
           # Previous comments, reviews and inline review comments, for the
           # REVIEW-FORMAT step-1 iteration check. Pre-fetched here because the
           # model has neither network nor a token.
@@ -174,7 +184,9 @@ jobs:
           {
             printf '\n## Pull request\n\n'
             jq -r '"- Number: #\(.number)\n- Title: \(.title)\n- Author: \(.user.login)\n- Base: \(.base.ref)\n- Head: \(.head.ref) @ \(.head.sha)"' "$CODEX_DIR/pr.json"
-            printf '\n\n## Previous PR comments\n\n%stext\n' "$fence"
+            printf '\n\n### Description\n\n%stext\n' "$fence"
+            cat "$CODEX_DIR/description.md"
+            printf '%s\n\n## Previous PR comments\n\n%stext\n' "$fence" "$fence"
             cat "$CODEX_DIR/comments.txt"
             printf '%s\n\n### Reviews\n\n%stext\n' "$fence" "$fence"
             cat "$CODEX_DIR/reviews.md"
@@ -248,6 +260,9 @@ jobs:
       pull-requests: write
     steps:
       - name: Fetch the assembled comment
+        # download-artifact v8 reads what upload-artifact v4+ writes (same Artifacts
+        # API since the v3→v4 break); upload-artifact has no v8 line to pair with.
+        # Proven by this job on every run of this workflow.
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: codex-review
