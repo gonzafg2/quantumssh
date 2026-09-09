@@ -109,7 +109,13 @@ jobs:
             fi
           }
 
-          gh pr diff "$PR_NUMBER" > "$CODEX_DIR/pr.diff"
+          # The diff is fetched by the vetted base and head SHAs, not by PR
+          # number: `gh pr diff` would describe whatever the head is *now*,
+          # which can differ from the checkout if a push landed in between.
+          base_sha="$(jq -r '.base.sha // ""' "$CODEX_DIR/pr.json")"
+          head_sha="$(jq -r '.head.sha // ""' "$CODEX_DIR/pr.json")"
+          gh api -H 'Accept: application/vnd.github.diff' \
+            "repos/$GH_REPO/compare/${base_sha}...${head_sha}" > "$CODEX_DIR/pr.diff"
           bound_file "$CODEX_DIR/pr.diff" 400000
 
           # Previous comments, reviews and inline review comments, for the

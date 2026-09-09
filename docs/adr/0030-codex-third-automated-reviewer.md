@@ -68,9 +68,10 @@ existing reviewers, with one deliberate tightening:
 - **Same-repository heads only.** Before anything is checked out, the
   workflow re-reads the PR from the API, re-checks the author's
   association and refuses a head that lives in a fork — even a
-  collaborator's, whose PR would receive no secret anyway. Vetting and
-  checkout use the same API snapshot, so the SHA cannot move between
-  them.
+  collaborator's, whose PR would receive no secret anyway. Vetting,
+  checkout and the diff (fetched by base and head SHA through the
+  compare API, not by PR number) all use the same API snapshot, so the
+  SHA cannot move between them.
 - **Pinned to a full commit SHA**, bumped by Dependabot's
   `github-actions` ecosystem like the other actions and reviewed against
   the pin comment before merge. The Codex CLI the action installs
