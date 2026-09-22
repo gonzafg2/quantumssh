@@ -1,6 +1,6 @@
 # ADR 0020: Gate Phase 1 CI on OpenSSH 10.x interop with a pinned version
 
-- **Status:** Accepted
+- **Status:** Accepted; the asserted-version bullet of §Decision ("must contain `OpenSSH_10.0p1`") is superseded by [ADR-0034](0034-openssh-interop-client-pinned-to-image-build-snapshot.md), which implements the package-version pin
 - **Date:** 2026-06-30 (accepted in the #86 Phase-1 governance sweep)
 - **Deciders:** Project lead
 - **Related:** Implements [RFC-0003](../rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md) §"Acceptance criteria stay as issue #9 defines them" and resolves its unresolved question 4; sources the project's internal Phase-1 decision notes §"Decisión 5"; adds a workflow alongside `.github/workflows/ci.yml`.
