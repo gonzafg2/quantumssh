@@ -70,7 +70,10 @@ how its provider, model and outcome are handled:
   model ids and announced, then reversed, a third within one month.
 - **Proof of review.** After the action succeeds, the job counts the
   comments `opencode-agent[bot]` posted on the PR since the run started
-  (general and inline) and fails if there are none. A green `opencode`
+  (general and inline) that carry this run's URL — the action appends a
+  `[github run](…/actions/runs/<id>)` footer to every comment it posts —
+  and fails if there are none, so a concurrent `/oc` run's comment
+  cannot stand in for this one. A green `opencode`
   check now means a report was published.
 - **Permissions drop to read.** `pull-requests: write` in ADR-0025 was
   recorded as required for posting; it is not — the App token the action
