@@ -3,7 +3,7 @@
 - **Status:** Proposed
 - **Date:** 2026-09-22 (drafted; becomes the acceptance date on merge)
 - **Deciders:** Project lead
-- **Related:** Amends three bullets of [ADR-0025](0025-opencode-second-automated-reviewer.md) §Decision (the provider/model, the `pull-requests: write` permission, and the implicit "green means reviewed"); every other bullet of ADR-0025 stands. [ADR-0030](0030-codex-third-automated-reviewer.md) (Codex) and [ADR-0031](0031-required-status-checks-commit-lint-and-openssh-interop.md) (reviewers stay advisory) are unchanged. Trust-base framing: [`docs/threat-model.md`](../threat-model.md) §5.5.2.a. Implementation: `.github/workflows/opencode.yml` (lands in the same PR, as ADR-0025 and ADR-0030 did).
+- **Related:** Supersedes, in [ADR-0025](0025-opencode-second-automated-reviewer.md) §Decision, the opening sentence (provider DeepSeek, model V4 Pro), the permissions bullet (`pull-requests: write`) and the "sent to DeepSeek" clause of the `No share` bullet; adds a proof-of-review requirement ADR-0025 does not have. The trigger/author-gate, SHA-pin, `share: false` and prompt bullets of ADR-0025 stand. [ADR-0030](0030-codex-third-automated-reviewer.md) (Codex) and [ADR-0031](0031-required-status-checks-commit-lint-and-openssh-interop.md) (reviewers stay advisory) are unchanged. Trust-base framing: [`docs/threat-model.md`](../threat-model.md) §5.5.2.a. Implementation: `.github/workflows/opencode.yml` (lands in the same PR, as ADR-0025 and ADR-0030 did).
 
 ## Context
 
@@ -82,8 +82,10 @@ how its provider, model and outcome are handled:
   review of the same PR without a comment-triggered run being able to
   cancel the one that is publishing.
 - **Everything else in ADR-0025 stands:** the triggers and author gate,
-  the `/oc` on-demand path, the commit-SHA pin, `share: false`, the
-  project prompt and the `.github/REVIEW-FORMAT.md` contract.
+  the `/oc` on-demand path, the commit-SHA pin, `share: false` (the
+  diffs now go to the provider `OPENCODE_MODEL` names, not to DeepSeek
+  as that bullet says), the project prompt and the
+  `.github/REVIEW-FORMAT.md` contract.
 
 No RFC, on ADR-0025's and ADR-0030's reasoning: the project already
 sends the diffs of a public repository to three external inference APIs.
