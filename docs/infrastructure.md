@@ -296,7 +296,8 @@ solo maintainership): see
 
 ### Required status checks
 
-Five CI contexts must report success before a PR can merge:
+Five CI contexts must report success before a PR can merge
+([ADR-0031](./adr/0031-required-status-checks-commit-lint-and-openssh-interop.md)):
 
 - `build (ubuntu-latest)` — formats, lints, tests, and builds on Linux
 - `build (macos-latest)` — same on macOS
