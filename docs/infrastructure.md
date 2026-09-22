@@ -345,7 +345,7 @@ The workspace pins `resolver = "3"`, `edition = "2024"`, and
 current stable. Workspace lints set `unsafe_code = "forbid"`
 ([ADR-0018](./adr/0018-phase-1-unsafe-code-forbid-workspace.md)),
 inherited by both crates: there is no per-block opt-in, `#[allow]`
-cannot override it, and first-party `unsafe` would need an RFC — per
+cannot override it, and first-party `unsafe` would need a superseding ADR — per
 the "memory-safe by construction" commitment in `README.md`.
 
 Decision rationale (the specific resolver / edition / MSRV pinning):

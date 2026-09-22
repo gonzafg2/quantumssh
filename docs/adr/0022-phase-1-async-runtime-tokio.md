@@ -3,7 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-06-30 (accepted in the #86 Phase-1 governance sweep)
 - **Deciders:** Project lead
-- **Related:** Subsidiary to [RFC-0004](../rfcs/0004-phase-1-async-runtime-tokio.md), which decides the *adoption* of Tokio (trust-base impact, alternatives); this ADR fixes the operative detail — version, features, threading. Constrained by [ADR-0010](0010-toolchain-pinning-resolver-3-edition-2024-msrv-1-92.md) (MSRV 1.92) and [ADR-0018](0018-phase-1-unsafe-code-forbid-workspace.md) (`unsafe_code = "forbid"`); the `server.rs` accept loop in [ADR-0017](0017-phase-1-workspace-topology-two-crates-flat.md)'s `quantumssh-core` is built on it. Touches `crates/quantumssh/Cargo.toml` and `crates/quantumssh-core/Cargo.toml` (M3, [#65](https://github.com/gonzafg2/quantumssh/pull/65)); at drafting time `crates/` did not exist.
+- **Related:** Subsidiary to [RFC-0004](../rfcs/0004-phase-1-async-runtime-tokio.md), which decides the *adoption* of Tokio (trust-base impact, alternatives); this ADR fixes the operative detail — version, features, threading. Constrained by [ADR-0010](0010-toolchain-pinning-resolver-3-edition-2024-msrv-1-92.md) (MSRV 1.92) and [ADR-0018](0018-phase-1-unsafe-code-forbid-workspace.md) (`unsafe_code = "forbid"`); the `server.rs` accept loop in [ADR-0017](0017-phase-1-workspace-topology-two-crates-flat.md)'s `quantumssh-core` is built on it. Touches `crates/quantumssh/Cargo.toml` and `crates/quantumssh-core/Cargo.toml` (M0, [#62](https://github.com/gonzafg2/quantumssh/pull/62)); at drafting time `crates/` did not exist.
 
 > **Post-acceptance errata** (per [ADR-0015](0015-permit-annotated-errata-in-adrs.md)):
 >
@@ -19,7 +19,7 @@
 > - **2026-09-22** ([PR #159](https://github.com/gonzafg2/quantumssh/pull/159)):
 >   The Links section said `Implementation: TBD` and that no code had
 >   landed. That was already false on 2026-06-30, when the ADR was
->   accepted in the #86 sweep: the implementing milestone, M3 ([#65](https://github.com/gonzafg2/quantumssh/pull/65)),
+>   accepted in the #86 sweep: the implementing milestone, M0 ([#62](https://github.com/gonzafg2/quantumssh/pull/62)),
 >   had merged. Corrected to name the implementing code; the Related
 >   and Context sentences that said the code did not exist yet now read
 >   as of drafting time.
@@ -106,7 +106,7 @@ Let the implementer pick when writing `server.rs`. Rejected for the same reason 
 
 ## Links
 
-- Implementation: M3 ([#65](https://github.com/gonzafg2/quantumssh/pull/65)) — `tokio` in the workspace `Cargo.toml` and both crate manifests, the accept loop in `crates/quantumssh-core/src/server.rs`, and the runtime construction in `crates/quantumssh/src/main.rs`.
+- Implementation: M0 ([#62](https://github.com/gonzafg2/quantumssh/pull/62)) — `tokio` in the workspace `Cargo.toml` and both crate manifests, the accept loop in `crates/quantumssh-core/src/server.rs`, and the runtime construction in `crates/quantumssh/src/main.rs`.
 - Related ADRs: [ADR-0010](0010-toolchain-pinning-resolver-3-edition-2024-msrv-1-92.md) (MSRV 1.92 compatibility), [ADR-0017](0017-phase-1-workspace-topology-two-crates-flat.md) (which crate constructs the runtime), [ADR-0018](0018-phase-1-unsafe-code-forbid-workspace.md) (`unsafe_code = "forbid"` — Tokio's own `unsafe` is in the dependency, not first-party).
 - Background: [`docs/threat-model.md`](../threat-model.md) §5.1.3 (handshake budget — the `time` feature), §2.8 (service availability — the sequential-loop posture and its explicit non-DoS stance).
 - Tokio LTS policy: the project designates LTS minor releases with published per-line end-of-support dates and backported fixes for at least a year per line; the README's current table lists `1.51.x` as "LTS release until March 2027". Verify the current LTS table in the Tokio README before bumping the pin.

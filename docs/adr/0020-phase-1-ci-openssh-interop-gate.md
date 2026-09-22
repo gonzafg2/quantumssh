@@ -76,4 +76,4 @@ A viable variant, useful when a multi-version matrix (10.0/10.1/10.2) is wanted.
 - Configuration this decision adds: a new interop job alongside `.github/workflows/ci.yml`, plus `tests/interop/run_openssh_client.sh`, landing with the first connectable binary.
 - Related ADRs: [ADR-0011](0011-ci-guards-workspace-state.md) (CI workspace-state guards), [ADR-0019](0019-phase-1-ml-kem-crate-rustcrypto.md) (ML-KEM crate whose wire output this gate validates).
 - Roadmap: Phase 1 / Hito 1 — [`#9`](https://github.com/gonzafg2/quantumssh/issues/9).
-- Implementation: M5 ([#84](https://github.com/gonzafg2/quantumssh/pull/84)) — `.github/workflows/interop.yml` and `tests/interop/run_openssh_client.sh`. The package-version pin from a frozen source that the Decision names is not implemented there: the job pins the image by digest and asserts the `10.0p` line of `ssh -V` ([#98](https://github.com/gonzafg2/quantumssh/pull/98) attempted the snapshot pin and was closed).
+- Implementation: M5 ([#84](https://github.com/gonzafg2/quantumssh/pull/84)) — `.github/workflows/interop.yml` and `tests/interop/run_openssh_client.sh`.

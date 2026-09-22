@@ -11,9 +11,9 @@
 >   The Links section said `Implementation: TBD` and that no code had
 >   landed. That was already false on 2026-06-30, when the ADR was
 >   accepted in the #86 sweep: the implementing milestone, M2 ([#64](https://github.com/gonzafg2/quantumssh/pull/64)),
->   had merged. Corrected to name the implementing code; the Related
->   and Context sentences that said the code did not exist yet now read
->   as of drafting time.
+>   had merged. Corrected to name the implementing code; the Context
+>   sentence that said the lint was still `deny` now reads as of
+>   drafting time.
 
 ## Context
 

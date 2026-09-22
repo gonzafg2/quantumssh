@@ -10,7 +10,7 @@
 > - **2026-09-22** ([PR #159](https://github.com/gonzafg2/quantumssh/pull/159)):
 >   The Links section said `Implementation: TBD` and that no code had
 >   landed. That was already false on 2026-06-30, when the ADR was
->   accepted in the #86 sweep: the implementing milestone, M5 ([#84](https://github.com/gonzafg2/quantumssh/pull/84)),
+>   accepted in the #86 sweep: the implementing milestones, M0 ([#62](https://github.com/gonzafg2/quantumssh/pull/62)) and M5 ([#84](https://github.com/gonzafg2/quantumssh/pull/84)),
 >   had merged. Corrected to name the implementing code.
 
 ## Context
@@ -87,5 +87,5 @@ Variant of Alternative 4 with a smaller privileged blast radius. The Phase 1 rea
 
 - Threat-model counterpart: [RFC-0002](../rfcs/0002-threat-model-phase1-uid-model-and-non-goal.md), §2.5 "Phase-bounded reality" and §8.12 "Per-user UID isolation until Phase 3".
 - Roadmap: Phase 1 / Hito 1 — [`#9`](https://github.com/gonzafg2/quantumssh/issues/9).
-- Implementation: M5 ([#84](https://github.com/gonzafg2/quantumssh/pull/84)) — `crates/quantumssh-core/src/exec.rs` (the service-account UID under which the `exec` channel runs) and `crates/quantumssh-core/src/server.rs` (the listener).
+- Implementation: M0 ([#62](https://github.com/gonzafg2/quantumssh/pull/62)) — `crates/quantumssh-core/src/server.rs` (the listener); M5 ([#84](https://github.com/gonzafg2/quantumssh/pull/84)) — `crates/quantumssh-core/src/exec.rs` (the service-account UID under which the `exec` channel runs).
 - Related future work: a separate ADR will record the operational scope of "single-command execution" (the channel-layer subset of RFC 4254, supported message types, stdin handling, exit-status propagation). That ADR cites this one for the UID question.

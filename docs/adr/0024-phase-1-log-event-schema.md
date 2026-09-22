@@ -12,8 +12,8 @@
 >   landed. That was already false on 2026-06-30, when the ADR was
 >   accepted in the #86 sweep: the implementing milestone, M4 ([#78](https://github.com/gonzafg2/quantumssh/pull/78)) and M5 ([#84](https://github.com/gonzafg2/quantumssh/pull/84)),
 >   had merged. Corrected to name the implementing code; the Related
->   and Context sentences that said the code did not exist yet now read
->   as of drafting time.
+>   sentence that said the code did not exist yet now reads as of
+>   drafting time.
 
 ## Context
 
@@ -96,7 +96,7 @@ Treat the schema as stable immediately. Rejected as premature: Phase 1 has no co
 
 ## Links
 
-- Implementation: M4 ([#78](https://github.com/gonzafg2/quantumssh/pull/78)) and M5 ([#84](https://github.com/gonzafg2/quantumssh/pull/84)) — `tracing` events throughout `quantumssh-core` (`auth.*` emitted in `src/transport.rs`, `exec.*` in `src/channel.rs`), `tracing-subscriber` initialisation in `crates/quantumssh/src/main.rs`, and the escape-safe field formatter in `crates/quantumssh/src/log_fields.rs`.
+- Implementation: M4 ([#78](https://github.com/gonzafg2/quantumssh/pull/78)) and M5 ([#84](https://github.com/gonzafg2/quantumssh/pull/84)) — `tracing` events throughout `quantumssh-core` (`auth.*` emitted in `src/transport.rs`, `exec.*` in `src/channel.rs`), `tracing-subscriber` initialisation in `crates/quantumssh/src/main.rs`; the escape-safe field formatter in `crates/quantumssh/src/log_fields.rs` followed in [#101](https://github.com/gonzafg2/quantumssh/pull/101) (2026-07-06, after acceptance).
 - Related ADRs: [ADR-0016](0016-phase-1-service-account-uid-model.md) (the service-account UID that `executing_uid` records), [ADR-0022](0022-phase-1-async-runtime-tokio.md) (runtime), [ADR-0023](0023-phase-1-channel-layer-scope.md) (the exec boundary producing `exec.*`).
 - Threat model: §2.7 (audit record and the mandated fields), §5.3.1 (why `failure_count` is per-source), §5.4.3 / §5.4.4 (no session content; escape-safe metadata), §5.5.1 (one-way sink, JSON shipping, and the origin of the public-interface-from-Phase-2 commitment), §6.2 (restates it as a mitigation: schema-versioned, stable from Phase 2), §8.12 (the UID gap this schema makes visible).
 - Standards / conventions: OpenSSH key-fingerprint format (`SHA256:` base64, unpadded) for `authenticated_identity`; [`tracing`](https://docs.rs/tracing) and [`tracing-subscriber`](https://docs.rs/tracing-subscriber) as the emission and subscriber layers.
