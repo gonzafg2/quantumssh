@@ -1,7 +1,7 @@
 # ADR 0030: Add Codex as a third automated PR reviewer
 
-- **Status:** Proposed
-- **Date:** 2026-09-08 (drafted; becomes the acceptance date on merge)
+- **Status:** Accepted
+- **Date:** 2026-09-22 (accepted on merge of [#151](https://github.com/gonzafg2/quantumssh/pull/151); drafted 2026-09-08)
 - **Deciders:** Project lead
 - **Related:** Mirrors [ADR-0025](0025-opencode-second-automated-reviewer.md) (second reviewer, the precedent this decision extends); constrained by [ADR-0008](0008-branch-protection-zero-required-reviews.md) (automated reviews are advisory, never a merge gate); follows the commit-SHA pinning discipline of [PR #142](https://github.com/gonzafg2/quantumssh/pull/142); reports under the contract in [`.github/REVIEW-FORMAT.md`](../../.github/REVIEW-FORMAT.md); trust-base framing from [`docs/threat-model.md`](../threat-model.md) §5.5.2.a (upstream dependency compromise) and §3.2.6 (project maintainer compromise, via [RFC-0001](../rfcs/0001-threat-model-actor-project-maintainer-compromise.md)). Implementation: `.github/workflows/codex.yml` (implements this decision; lands in the same PR, as ADR-0025 did).
 
