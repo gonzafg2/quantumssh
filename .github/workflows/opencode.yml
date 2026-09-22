@@ -219,10 +219,11 @@ jobs:
           # accepted: the validation step rejects any other provider, and the
           # `opencode` free models train on what they receive.
           #
-          # The DeepSeek direct-API names are no longer stable pins: since
-          # 2026-09-10 `deepseek-v4-flash` and since 2026-09-14 `deepseek-v4-pro`
-          # are served by V4.1 Flash (DeepSeek API changelog); `deepseek-flash`
-          # is the current id. Judge the reviewer by the quality of its
+          # The DeepSeek direct-API names are not stable pins: on 2026-09-10
+          # `deepseek-v4-flash` was retired and is served by V4.1 Flash
+          # (`deepseek-flash` is the current id), and `deepseek-v4-pro` was
+          # scheduled to follow on 2026-09-14 before DeepSeek reversed that
+          # (pricing page, note 2). Judge the reviewer by the quality of its
           # verdicts, not by the check being green.
           model: ${{ vars.OPENCODE_MODEL }}
           share: false

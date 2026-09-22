@@ -12,13 +12,15 @@ the second automated reviewer with a fixed provider and model: DeepSeek's
 direct API, `deepseek/deepseek-v4-pro`, written into the workflow. Three
 things have changed since 2026-06-13.
 
-1. **The model named in ADR-0025 no longer exists behind its id.** Per
-   DeepSeek's API changelog, `deepseek-v4-flash` has been served by
-   DeepSeek V4.1 Flash since 2026-09-10, and `deepseek-v4-pro` since
-   2026-09-14 (until a V4.1 Pro is released). The reviewer has therefore
-   been running on a different, smaller model than the ADR records, with
-   no change to the repository and nothing in the workflow saying so. A
-   model id on a vendor's direct API is a promise the vendor can revoke.
+1. **A model id on a vendor's direct API is a promise the vendor can
+   revoke.** Per DeepSeek's pricing page, `deepseek-v4-flash` and
+   `deepseek-v4-flash-vision-exp` were retired on 2026-09-10 and their
+   requests are served by DeepSeek V4.1 Flash; the same announcement
+   scheduled `deepseek-v4-pro` — the id ADR-0025 fixed — to be routed to
+   V4.1 Flash from 2026-09-14, and DeepSeek reversed that four days
+   later ("we have decided to continue providing API services for
+   DeepSeek V4 Pro after September 14, 2026"). The reviewer kept running
+   on V4 Pro; nothing in the repository would have said so either way.
 2. **A green check has not meant a review.** The workflow passed when the
    action exited 0, whether or not a comment was posted. On 2026-09-22
    the Claude reviewer showed the failure mode on PR #155: two green runs,
@@ -59,8 +61,8 @@ how its provider, model and outcome are handled:
   used is written to every run's job summary, so a verdict can always be
   matched to the model that wrote it. This is the opposite of ADR-0030's
   dated pin in the workflow file for Codex, and deliberately so: the
-  Codex pin changes rarely, while this reviewer's vendor has re-pointed
-  three model ids in one month.
+  Codex pin changes rarely, while this reviewer's vendor re-pointed two
+  model ids and announced, then reversed, a third within one month.
 - **Proof of review.** After the action succeeds, the job counts the
   comments `opencode-agent[bot]` posted on the PR since the run started
   (general and inline) and fails if there are none. A green `opencode`
@@ -79,8 +81,8 @@ how its provider, model and outcome are handled:
   as an environment variable, not as a committed `opencode.json`, so it
   does not change the permissions of anyone running opencode locally.
   The job has a 30-minute ceiling (the same as the Codex job; a review
-  through Go with the fan-out prompt takes about ten minutes, several
-  times what the direct API took for the same model), and a new push
+  with V4.1 Flash through Go and the fan-out prompt takes seven to ten
+  minutes, against under two with V4 Pro on the direct API), and a new push
   cancels the running review of the same PR without a comment-triggered
   run being able to cancel the one that is publishing.
 - **Everything else in ADR-0025 stands:** the triggers and author gate,
