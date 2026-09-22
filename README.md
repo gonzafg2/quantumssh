@@ -48,7 +48,7 @@ We think there is room for a different answer.
 
 QuantumSSH is built around four technical commitments and one structural one.
 
-**Memory-safe by construction.** Written in Rust. No `unsafe` blocks in the protocol or crypto layers without justification, review, and tests. The borrow checker is a feature, not a tax.
+**Memory-safe by construction.** Written in Rust. No first-party `unsafe`, anywhere: the workspace sets `unsafe_code = "forbid"` ([ADR-0018](./docs/adr/0018-phase-1-unsafe-code-forbid-workspace.md)), with no `#[allow]` escape. The borrow checker is a feature, not a tax.
 
 **Post-quantum by default, not by opt-in.** Hybrid key exchange (ML-KEM + X25519) is the default and only supported family. Users do not need to know what PQ means or how to configure it. The right thing happens out of the box. Signatures — host keys and user authentication — remain classical Ed25519 for now: they carry no harvest-now-decrypt-later exposure, and the IETF post-quantum signature standard for SSH has not settled. That ordering is deliberate; see the [threat model §6.1](./docs/threat-model.md#61-cryptographic-posture).
 

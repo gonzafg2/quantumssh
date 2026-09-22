@@ -13,7 +13,8 @@
 >   accepted in the #86 sweep: the implementing milestones, M2 ([#64](https://github.com/gonzafg2/quantumssh/pull/64)) and M3 ([#65](https://github.com/gonzafg2/quantumssh/pull/65)),
 >   had merged. Corrected to name the implementing code; the Related
 >   sentence that said the code did not exist yet now reads as of
->   drafting time.
+>   drafting time, and the two `(TBD)` markers next to the `kex` module
+>   (Context, Consequences) name the milestone instead.
 
 ## Context
 

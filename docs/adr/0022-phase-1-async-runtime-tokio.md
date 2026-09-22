@@ -20,9 +20,9 @@
 >   The Links section said `Implementation: TBD` and that no code had
 >   landed. That was already false on 2026-06-30, when the ADR was
 >   accepted in the #86 sweep: the implementing milestone, M0 ([#62](https://github.com/gonzafg2/quantumssh/pull/62)),
->   had merged. Corrected to name the implementing code; the Related
->   and Context sentences that said the code did not exist yet now read
->   as of drafting time.
+>   had merged. Corrected to name the implementing code; the Related,
+>   Context and Alternative 2 sentences that said the code did not exist
+>   yet now read as of drafting time.
 
 ## Context
 
@@ -94,7 +94,7 @@ The most literal match for a sequential Phase 1 workload: no thread pool, no `Se
 
 ### Alternative 2: `tokio` with `features = ["full"]`
 
-The placeholder in the current `Cargo.toml` and the path of least resistance. Rejected: `full` links `fs`, `process`, `signal`, `net`, `io-*`, `time`, `sync`, `rt-multi-thread`, and more, most unused in Phase 1. It contradicts "small attack surface" and obscures which runtime capabilities the code actually depends on. An explicit allowlist makes every linked feature a decision.
+The placeholder in the drafting-time `Cargo.toml` and the path of least resistance. Rejected: `full` links `fs`, `process`, `signal`, `net`, `io-*`, `time`, `sync`, `rt-multi-thread`, and more, most unused in Phase 1. It contradicts "small attack surface" and obscures which runtime capabilities the code actually depends on. An explicit allowlist makes every linked feature a decision.
 
 ### Alternative 3: A non-Tokio runtime (`async-std`, `smol`, `glommio`)
 

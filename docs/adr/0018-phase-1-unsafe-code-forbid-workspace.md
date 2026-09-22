@@ -11,9 +11,9 @@
 >   The Links section said `Implementation: TBD` and that no code had
 >   landed. That was already false on 2026-06-30, when the ADR was
 >   accepted in the #86 sweep: the implementing milestone, M0 ([#62](https://github.com/gonzafg2/quantumssh/pull/62)),
->   had merged. Corrected to name the implementing code; the Context
->   sentence that said the lint was still `deny` now reads as of
->   drafting time.
+>   had merged. Corrected to name the implementing code; the Context,
+>   Decision and Consequences sentences that said the lint was still
+>   `deny` or the workspace still empty now read as of drafting time.
 
 ## Context
 
@@ -23,9 +23,9 @@ At drafting time the workspace set `unsafe_code = "deny"` in `[workspace.lints.r
 
 ## Decision
 
-We will set `unsafe_code = "forbid"` in `[workspace.lints.rust]`, replacing the current `"deny"`, so that first-party QuantumSSH code is free of `unsafe` **with no per-item override available**.
+We will set `unsafe_code = "forbid"` in `[workspace.lints.rust]`, replacing the `"deny"` in force at drafting time, so that first-party QuantumSSH code is free of `unsafe` **with no per-item override available**.
 
-- The `Cargo.toml` change lands in the **same PR as the first Phase 1 crate**, so the first crate compiles under `forbid` from its first line. (The lint has no observable effect on today's empty workspace; flipping it only becomes load-bearing once first-party code exists, which is why this ADR advances to Accepted at that point.)
+- The `Cargo.toml` change lands in the **same PR as the first Phase 1 crate**, so the first crate compiles under `forbid` from its first line. (The lint had no observable effect on the then-empty workspace; flipping it only became load-bearing once first-party code existed, which is why this ADR advanced to Accepted at that point.)
 - `forbid` applies workspace-wide via `[lints] workspace = true` inheritance in every member crate ([ADR-0017](0017-phase-1-workspace-topology-two-crates-flat.md)).
 - The constraint binds **first-party code only**. Dependencies keep their own `unsafe`; that is the audited primitive layer RFC-0003 deliberately relies on, and the lint does not (and cannot) reach into them.
 
@@ -44,7 +44,7 @@ We will set `unsafe_code = "forbid"` in `[workspace.lints.rust]`, replacing the 
 
 ### Neutral
 
-- No effect on the dependency tree or build output today; the workspace is empty. The change is forward-looking by design.
+- No effect on the dependency tree or build output at drafting time; the workspace was empty. The change was forward-looking by design.
 
 ## Alternatives considered
 

@@ -13,7 +13,8 @@
 >   accepted in the #86 sweep: the implementing milestone, M5 ([#84](https://github.com/gonzafg2/quantumssh/pull/84)),
 >   had merged. Corrected to name the implementing code; the Related
 >   sentence that said the code did not exist yet now reads as of
->   drafting time.
+>   drafting time, and the Decision's "ADR-0024 (TBD — in review as
+>   PR #50)" links to the accepted ADR-0024.
 
 ## Context
 
