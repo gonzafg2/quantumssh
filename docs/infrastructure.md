@@ -356,10 +356,11 @@ see [ADR-0010](./adr/0010-toolchain-pinning-resolver-3-edition-2024-msrv-1-92.md
 
 ### CI guard implementation note
 
-Each CI workflow that runs a Cargo subcommand is gated by a small
-predicate, but the predicates are not the same across the three
-workflows: they match the actual failure mode of the Cargo command
-they protect.
+Each of the three workflows that ran a Cargo subcommand during Phase 0
+(`ci.yml`, `deny.yml`, `audit.yml`) is gated by a small predicate, but
+the predicates are not the same across them: they match the actual
+failure mode of the Cargo command they protect. `interop.yml`, added in
+M5 once the workspace had members, runs `cargo build` with no guard.
 
 - `ci.yml` and `deny.yml` are gated on **`workspace.members` being
   non-empty**, read from `Cargo.toml` with the standard-library
