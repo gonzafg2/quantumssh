@@ -80,8 +80,21 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
+          TRANSCRIPT: ${{ steps.claude-review.outputs.execution_file }}
         run: |
           set -euo pipefail
+
+          # The action refuses to run a workflow file that differs from the
+          # one on the default branch ("Skipping action due to workflow
+          # validation") and exits 0 without a transcript. That is its
+          # guard against a PR rewriting this workflow; the consequence is
+          # that a PR editing this file cannot get a Claude review before it
+          # merges. Red on purpose, with the reason, rather than a green
+          # nobody can tell from a review.
+          if [ -z "$TRANSCRIPT" ]; then
+            echo "::error::Claude Code Review left no transcript: the action skipped itself. If the log of 'Run Claude Code Review' says 'Skipping action due to workflow validation', this PR changes .github/workflows/claude-code-review.yml and the action will not review it until the change is on main — expected for workflow edits, red so the missing review is visible. Any other cause is a silent failure: re-run the job."
+            exit 1
+          fi
 
           # --paginate emits one length per page; awk sums them.
           count() {

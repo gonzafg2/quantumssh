@@ -27,7 +27,12 @@ different reasons:
 
 The first two are the plugin's design; the third is the failure this ADR
 exists for, and nothing in the workflow could tell it apart from the
-other two. [ADR-0032](0032-opencode-reviewer-provider-model-variable-and-proof-of-review.md)
+other two. A fourth case surfaced while landing this ADR: the action
+refuses to run a workflow file that differs from the one on the default
+branch ("Skipping action due to workflow validation") and exits 0
+without a transcript — its guard against a PR rewriting the workflow,
+which means a PR that edits `claude-code-review.yml` cannot receive a
+Claude review before it merges. [ADR-0032](0032-opencode-reviewer-provider-model-variable-and-proof-of-review.md)
 already closed the equivalent gap for opencode by counting the comments
 the action posted before letting the check pass.
 
@@ -36,10 +41,12 @@ the action posted before letting the check pass.
 We will make every automated reviewer's check green only when a report
 is on the PR:
 
-- **Claude Code Review.** After the action succeeds, a step counts the
-  general comments, inline comments and reviews on the PR by `claude[bot]`
-  (or `anthropic-code-agent[bot]`, the action's other posting identity)
-  and fails the job when there are none. Because the plugin reviews a PR
+- **Claude Code Review.** After the action succeeds, a step fails the job
+  when the action left no transcript (it skipped itself; the message
+  names the workflow-validation case), and otherwise counts the general
+  comments, inline comments and reviews on the PR by `claude[bot]` (or
+  `anthropic-code-agent[bot]`, the action's other posting identity) and
+  fails the job when there are none. Because the plugin reviews a PR
   once, the count covers the whole PR, not the current run: a green check
   means *this PR has a Claude review*, not *this push was reviewed*. That
   is what the plugin offers, and the workflow says so rather than
@@ -71,6 +78,10 @@ is on the PR:
   workflow's; ADR-0030's Codex and ADR-0032's opencode do re-review each
   push, so a PR still gets two fresh reads per push.
 - One more `gh api` step per run (three paginated reads, seconds).
+- A PR that edits `claude-code-review.yml` shows a red `claude-review`
+  by design: the action will not review it, and the step says why. The
+  check is advisory (ADR-0031), so the PR merges on the other two
+  reviewers; the PR that lands this ADR is the first example.
 
 ### Neutral
 
