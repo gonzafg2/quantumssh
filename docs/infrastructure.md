@@ -411,8 +411,7 @@ tracker.
   [`README.md`](../README.md) (English),
   [`MANIFIESTO.es.md`](../MANIFIESTO.es.md) (Spanish).
 - **Threat model**: [`docs/threat-model.md`](./threat-model.md)
-  (currently a skeleton; will be substantiated before the first
-  cryptographic code lands).
+  (substantive; structural changes go through the RFC process).
 - **Contribution workflow**, DCO sign-off, commit conventions:
   [`CONTRIBUTING.md`](../CONTRIBUTING.md).
 - **Per-record DNS step-by-step or registrar / DNS-host panel

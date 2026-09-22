@@ -26,13 +26,18 @@ warnings.
 - **Pre-auth path is the highest-trust surface** (threat model §4.1).
   `wire.rs` is the entry point: pure functions over byte slices, bounded
   allocations, no I/O, fuzzable by construction.
-- **Transport is a type-state machine.** The current code covers M2
-  (handshake through NEWKEYS). Never loosen this to accept-and-branch.
+- **Transport is a type-state machine** (M3, `transport.rs`): stages run
+  from version exchange through KEX, NEWKEYS, `Expect<UserAuth>` and
+  `Expect<AuthAccepted>` into the `session`/`exec` channel, with
+  mid-session re-keying (ADR-0026). Never loosen this to
+  accept-and-branch.
 - **AEAD-only.** The MAC list is nominal — never exercised, never consulted
   in negotiation. Both ciphers are AEAD (`chacha20-poly1305@openssh.com`,
   `aes256-gcm@openssh.com`).
-- **Server is sequential** (ADR-0022): spawn-and-join, one connection at a
-  time, bounded by the handshake budget.
+- **Server is concurrent since Phase 2** (ADR-0028, `server.rs`): a
+  `JoinSet` accept loop with admission control and graceful shutdown,
+  each connection bounded by the handshake budget. Phase 1's sequential
+  spawn-and-join loop (ADR-0022) is history.
 - **Audit log is two-layer** (ADR-0024): `tracing` facade with a separate
   audit layer whose filter is compiled in — `RUST_LOG` cannot suppress audit
   events. All output to stderr.
