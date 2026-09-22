@@ -1,10 +1,29 @@
 name: opencode
 
+# Second automated PR reviewer (ADR-0025, provider and model per ADR-0032).
+# The model is not in this file: it lives in the repository variable
+# OPENCODE_MODEL, validated below, so changing it is `gh variable set`, not
+# a PR. A green check means a review was actually posted — the last step
+# fails the job otherwise.
+
 on:
   issue_comment:
     types: [created]
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
+
+# A new push makes the running review of the same PR moot; the surviving run
+# reviews the accumulated diff. cancel-in-progress is CONDITIONAL on purpose:
+# concurrency cancellation happens at run level, before any job `if` is
+# evaluated, and the verdict opencode posts is itself an issue_comment — an
+# unconditional cancel would create a run that kills the run publishing it.
+# Only pull_request runs (pushes) cancel the live one; an issue_comment run
+# joins the group, waits, and is discarded by the job `if` (or runs, if it
+# was a human `/oc`). The group covers both events: pull_request.number in
+# one, issue.number in the other.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   opencode:
@@ -25,31 +44,182 @@ jobs:
         )
       )
     runs-on: ubuntu-latest
+    # A review here takes about two minutes. Without a ceiling GitHub allows
+    # 360; a hung permission prompt (see OPENCODE_CONFIG_CONTENT) would burn
+    # all of it.
+    timeout-minutes: 15
     permissions:
       contents: read
       id-token: write
-      pull-requests: write
+      # The review is posted by the opencode-agent GitHub App with the token
+      # the action obtains through OIDC; the workflow token only reads (the
+      # previous comments for the REVIEW-FORMAT iteration check, the commit
+      # verification, and the proof-of-review count below).
+      pull-requests: read
       issues: read
     steps:
       - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
-          persist-credentials: false
+          # The comment-triggered path (`/oc`) runs the action's configureGit,
+          # which reads `http.https://github.com/.extraheader` with a shell
+          # that aborts when the key is missing, then overwrites it with the
+          # App token. The key must exist. The token it holds is the read-only
+          # one this job is granted; the pull_request path never touches it.
+          persist-credentials: true
+
+      # checkout@v7 stores the token in extraheader and, additionally, in a
+      # file via includeIf.gitdir. opencode only overwrites extraheader; the
+      # includeIf survives and git sends two Authorization headers → HTTP 400
+      # ("Duplicate header"). Keep extraheader, drop the includeIf.
+      - name: Drop the checkout's includeIf credential
+        run: |
+          set -euo pipefail
+          while IFS= read -r key; do
+            [ -n "$key" ] || continue
+            git config --local --unset-all "$key"
+          done < <(git config --local --name-only --get-regexp '^includeIf\.gitdir:' || true)
+
+      # opencode does fail without a credential, but with "undefined is not an
+      # object (evaluating 'p.rest')", which says nothing. This step names the
+      # cause. The model is the repository variable OPENCODE_MODEL, with no
+      # default here on purpose: if the variable were missing and the step
+      # went on with a value written in this file, the review would run on a
+      # model nobody chose and the verdict would not say which.
+      #
+      # Which credential is required depends on the provider, the part before
+      # the first `/` of the model. Everything enters through `env:`; nothing
+      # is interpolated with `${{ }}` inside the script.
+      - name: Validate the model and its credential
+        env:
+          MODEL: ${{ vars.OPENCODE_MODEL }}
+          REPO: ${{ github.repository }}
+          KEY_GO: ${{ secrets.OPENCODE_GO_API_KEY }}
+          KEY_DEEPSEEK: ${{ secrets.DEEPSEEK_API_KEY }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "$MODEL" ]; then
+            echo "::error::Missing repository variable OPENCODE_MODEL. Set it with 'gh variable set OPENCODE_MODEL --repo $REPO --body opencode-go/deepseek-v4.1-flash'."
+            exit 1
+          fi
+
+          # Without this, a value with no `/` would fall through below as
+          # "unsupported provider" with the whole model as the provider name.
+          case "$MODEL" in
+            ?*/?*) ;;
+            *)
+              echo "::error::OPENCODE_MODEL='$MODEL' is not of the form <provider>/<model>. Fix it with 'gh variable set OPENCODE_MODEL --repo $REPO --body opencode-go/deepseek-v4.1-flash'."
+              exit 1
+              ;;
+          esac
+
+          provider="${MODEL%%/*}"
+          case "$provider" in
+            opencode-go)
+              secret=OPENCODE_GO_API_KEY
+              key="$KEY_GO"
+              ;;
+            deepseek)
+              secret=DEEPSEEK_API_KEY
+              key="$KEY_DEEPSEEK"
+              ;;
+            *)
+              echo "::error::Provider '$provider' of OPENCODE_MODEL='$MODEL' is not supported (ADR-0032). Supported: opencode-go and deepseek; change the variable with 'gh variable set OPENCODE_MODEL --repo $REPO --body <provider>/<model>'."
+              exit 1
+              ;;
+          esac
+
+          if [ -z "$key" ]; then
+            echo "::error::OPENCODE_MODEL='$MODEL' uses provider $provider and the secret $secret is missing. Add it with 'gh secret set $secret --repo $REPO'."
+            exit 1
+          fi
+
+          echo "Model: $MODEL (provider $provider, credential $secret)."
+
+          # Recorded in the job summary so the quality of each verdict can be
+          # matched to the model that wrote it.
+          {
+            echo "### opencode review"
+            echo ""
+            echo "Model: \`$MODEL\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Taken before the review so no comment from an earlier run counts as
+      # proof of this one.
+      - name: Mark the start of the review
+        id: start
+        run: echo "ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
 
       - name: Run opencode
+        id: opencode
         uses: anomalyco/opencode/github@77fc88c8ade8e5a620ebbe1197f3a572d29ae91a
         env:
+          # Both keys are passed although a review uses one: switching provider
+          # stays a change of OPENCODE_MODEL only. DeepSeek reads
+          # DEEPSEEK_API_KEY by default. OpenCode Go reads OPENCODE_API_KEY,
+          # not OPENCODE_GO_API_KEY (models.dev, checked 2026-09-21), so the
+          # `provider` block of OPENCODE_CONFIG_CONTENT below points it at the
+          # secret explicitly; without it Go would run with no credential.
+          OPENCODE_GO_API_KEY: ${{ secrets.OPENCODE_GO_API_KEY }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           # Without this the agent has no credentials: `gh` fails, so it cannot read
           # previous PR comments for the iteration check, nor confirm commit signatures
           # through .commit.verification.verified — the only place SSH signatures can be
           # verified, since a runner has no gpg.ssh.allowedSignersFile. Scoped by the
-          # job's permissions above (contents: read — it cannot push).
+          # job's permissions above (read-only — it cannot push or comment).
           GH_TOKEN: ${{ github.token }}
+          # When no permission rule matches, opencode's default for a path
+          # outside the repository is `ask` — and on a runner nobody can
+          # answer, so the job hangs until the timeout (observed: a review
+          # blocked on reading /etc/os-release to check what ubuntu-latest
+          # ships). `deny` fails fast with an error the agent can act on.
+          # Reading the system stays allowed, since that is what makes it
+          # useful on CI changes; everything else outside the checkout is
+          # denied instead of asked. Two spellings because two code paths
+          # produce them: shell asks for `<dir>/*`, file reads for `<dir>/**`.
+          #
+          # Passed as an environment variable and not as an opencode.json in
+          # the repository on purpose: on a real machine it should ask, and a
+          # committed file would change the permissions of anyone running
+          # opencode locally.
+          OPENCODE_CONFIG_CONTENT: |
+            {
+              "permission": {
+                "external_directory": {
+                  "*": "deny",
+                  "/etc/*": "allow",
+                  "/etc/**": "allow"
+                }
+              },
+              "provider": {
+                "opencode-go": {
+                  "options": {
+                    "apiKey": "{env:OPENCODE_GO_API_KEY}"
+                  }
+                }
+              }
+            }
         with:
-          model: deepseek/deepseek-v4-pro
+          # `<provider>/<model>`, validated above and written to the job
+          # summary. Providers this workflow supports: opencode-go (a fixed
+          # monthly subscription fronting several open-weight models with a
+          # published zero-retention / no-training policy per model) and
+          # deepseek (the direct API, kept as fallback). Free tiers are not
+          # accepted: the validation step rejects any other provider, and the
+          # `opencode` free models train on what they receive.
+          #
+          # The DeepSeek direct-API names are no longer stable pins: since
+          # 2026-09-10 `deepseek-v4-flash` and since 2026-09-14 `deepseek-v4-pro`
+          # are served by V4.1 Flash (DeepSeek API changelog); `deepseek-flash`
+          # is the current id. Judge the reviewer by the quality of its
+          # verdicts, not by the check being green.
+          model: ${{ vars.OPENCODE_MODEL }}
           share: false
+          # Without use_github_token the action exchanges OIDC for a token of
+          # the opencode-agent GitHub App; the review is posted as
+          # opencode-agent[bot].
           prompt: |
             You are reviewing a PR for QuantumSSH — a memory-safe, post-quantum-first SSH server in Rust (pre-alpha). Read CLAUDE.md for the project's review criteria.
 
@@ -84,8 +254,47 @@ jobs:
 
             Read `.github/REVIEW-FORMAT.md` and follow it exactly. It is the report contract: the iteration check against previous comments, the section layout, the severity bands and the confidence threshold. Start with its step 1 — reading the existing PR comments and classifying earlier issues as resolved, open or partly resolved — before analysing the diff.
 
+            Your final answer IS PUBLISHED AUTOMATICALLY as a PR comment by the GitHub App that runs you. Do not try to post it yourself with `gh` or the API — your token is read-only and you do not need to — and do not include notes about your environment or about how the report gets published: write only the report, also when you find nothing.
+
             When making commits, follow Conventional Commits exactly:
             - Format: `<type>(<optional scope>): <short summary>`
             - Types: feat, fix, docs, chore, refactor, test, perf, ci, build, security
             - Always sign off: `git commit -s -S`
             - A blank line separates subject from body; body explains why, cross-references the issue/RFC.
+
+      # A green check has to mean a review happened. opencode has commented on
+      # every run so far, but that is observed habit, not a guarantee: if it
+      # finished without posting, the check would pass and nobody would know
+      # (today's claude-review shows the failure mode: green, no report).
+      # Only runs when the previous step succeeded: when opencode already
+      # failed, the job is red and repeating the error here is noise.
+      # Counts comments by opencode-agent[bot], the login the App token
+      # signs with; the codex reviewer posts as github-actions[bot] and
+      # Claude as claude[bot], so the count is specific to this reviewer.
+      - name: Require proof that the review was posted
+        if: always() && steps.opencode.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.issue.number || github.event.pull_request.number }}
+          SINCE: ${{ steps.start.outputs.ts }}
+        run: |
+          set -euo pipefail
+
+          # --paginate emits one length per page; awk sums them.
+          count() {
+            gh api "repos/$REPO/$1/$PR/comments" --paginate \
+              --jq "[.[] | select(.user.login == \"opencode-agent[bot]\") | select(.created_at >= \"$SINCE\")] | length" \
+              | awk '{s += $1} END {print s + 0}'
+          }
+
+          GENERAL=$(count issues)
+          INLINE=$(count pulls)
+          TOTAL=$((GENERAL + INLINE))
+
+          echo "Comments by opencode-agent[bot] since $SINCE: $GENERAL general, $INLINE inline."
+
+          if [ "$TOTAL" -eq 0 ]; then
+            echo "::error::opencode finished successfully but posted no comment on the PR. A green check with no comment is indistinguishable from a review that never happened, so the job fails on purpose. Check the log of the 'Run opencode' step."
+            exit 1
+          fi
