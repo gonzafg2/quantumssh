@@ -87,8 +87,9 @@ how its provider, model and outcome are handled:
   as an environment variable, not as a committed `opencode.json`, so it
   does not change the permissions of anyone running opencode locally.
   The job has a 30-minute ceiling (the same as the Codex job; a review
-  with V4.1 Flash through Go and the fan-out prompt takes seven to ten
-  minutes, against under two with V4 Pro on the direct API), and a new push
+  with V4.1 Flash through Go and the fan-out prompt took seven to
+  fifteen minutes over the eight rounds of #157, against under two with
+  V4 Pro on the direct API), and a new push
   cancels the running review of the same PR without a comment-triggered
   run being able to cancel the one that is publishing.
 - **Same-repository heads only.** The action checks out the PR head
