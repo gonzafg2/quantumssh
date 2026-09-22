@@ -97,6 +97,7 @@ jobs:
       # the first `/` of the model. Everything enters through `env:`; nothing
       # is interpolated with `${{ }}` inside the script.
       - name: Validate the model and its credential
+        id: validate
         env:
           MODEL: ${{ vars.OPENCODE_MODEL }}
           REPO: ${{ github.repository }}
@@ -142,6 +143,8 @@ jobs:
           fi
 
           echo "Model: $MODEL (provider $provider, credential $secret)."
+          # The run step passes only this provider's secret to the action.
+          echo "provider=$provider" >> "$GITHUB_OUTPUT"
 
           # Recorded in the job summary so the quality of each verdict can be
           # matched to the model that wrote it.
@@ -161,14 +164,15 @@ jobs:
         id: opencode
         uses: anomalyco/opencode/github@77fc88c8ade8e5a620ebbe1197f3a572d29ae91a
         env:
-          # Both keys are passed although a review uses one: switching provider
-          # stays a change of OPENCODE_MODEL only. DeepSeek reads
-          # DEEPSEEK_API_KEY by default. OpenCode Go reads OPENCODE_API_KEY,
-          # not OPENCODE_GO_API_KEY (models.dev, checked 2026-09-21), so the
-          # `provider` block of OPENCODE_CONFIG_CONTENT below points it at the
-          # secret explicitly; without it Go would run with no credential.
-          OPENCODE_GO_API_KEY: ${{ secrets.OPENCODE_GO_API_KEY }}
-          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          # Only the selected provider's secret reaches the action; the other
+          # is an empty string. Switching provider stays a change of
+          # OPENCODE_MODEL only. DeepSeek reads DEEPSEEK_API_KEY by default.
+          # OpenCode Go reads OPENCODE_API_KEY, not OPENCODE_GO_API_KEY
+          # (models.dev, checked 2026-09-21), so the `provider` block of
+          # OPENCODE_CONFIG_CONTENT below points it at the secret explicitly;
+          # without it Go would run with no credential.
+          OPENCODE_GO_API_KEY: ${{ steps.validate.outputs.provider == 'opencode-go' && secrets.OPENCODE_GO_API_KEY || '' }}
+          DEEPSEEK_API_KEY: ${{ steps.validate.outputs.provider == 'deepseek' && secrets.DEEPSEEK_API_KEY || '' }}
           # Without this the agent has no credentials: `gh` fails, so it cannot read
           # previous PR comments for the iteration check, nor confirm commit signatures
           # through .commit.verification.verified — the only place SSH signatures can be
@@ -274,8 +278,11 @@ jobs:
       # Only runs when the previous step succeeded: when opencode already
       # failed, the job is red and repeating the error here is noise.
       # Counts comments by opencode-agent[bot], the login the App token
-      # signs with; the codex reviewer posts as github-actions[bot] and
-      # Claude as claude[bot], so the count is specific to this reviewer.
+      # signs with, that carry THIS run's URL: the action appends a
+      # "[github run](…/actions/runs/<id>)" footer to every comment it
+      # posts, so a comment from a concurrent `/oc` run of the same PR
+      # cannot stand in for this one. The timestamp bound stays as a second
+      # filter.
       - name: Require proof that the review was posted
         if: always() && steps.opencode.outcome == 'success'
         env:
@@ -283,13 +290,14 @@ jobs:
           REPO: ${{ github.repository }}
           PR: ${{ github.event.issue.number || github.event.pull_request.number }}
           SINCE: ${{ steps.start.outputs.ts }}
+          RUN_PATH: /${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
 
           # --paginate emits one length per page; awk sums them.
           count() {
             gh api "repos/$REPO/$1/$PR/comments" --paginate \
-              --jq "[.[] | select(.user.login == \"opencode-agent[bot]\") | select(.created_at >= \"$SINCE\")] | length" \
+              --jq "[.[] | select(.user.login == \"opencode-agent[bot]\") | select(.created_at >= \"$SINCE\") | select(.body | contains(\"$RUN_PATH\"))] | length" \
               | awk '{s += $1} END {print s + 0}'
           }
 
@@ -297,7 +305,7 @@ jobs:
           INLINE=$(count pulls)
           TOTAL=$((GENERAL + INLINE))
 
-          echo "Comments by opencode-agent[bot] since $SINCE: $GENERAL general, $INLINE inline."
+          echo "Comments by opencode-agent[bot] since $SINCE linking $RUN_PATH: $GENERAL general, $INLINE inline."
 
           if [ "$TOTAL" -eq 0 ]; then
             echo "::error::opencode finished successfully but posted no comment on the PR. A green check with no comment is indistinguishable from a review that never happened, so the job fails on purpose. Check the log of the 'Run opencode' step."
