@@ -76,8 +76,9 @@ how its provider, model and outcome are handled:
   recorded as required for posting; it is not — the App token the action
   obtains through OIDC posts the review. The job keeps `contents: read`,
   `pull-requests: read`, `issues: read` and `id-token: write`. The
-  workflow token is passed to the agent read-only, for the iteration
-  check and the commit-verification lookup ADR-0030 also relies on.
+  workflow token is passed to the agent read-only, for the
+  REVIEW-FORMAT iteration check and the commit-verification lookup its
+  prompt asks for (Codex, under ADR-0030, holds no token at all).
 - **No hangs, no runaway cost.** opencode's default for a path outside
   the checkout is `ask`, which on a runner waits until the timeout; the
   workflow supplies a permission config that allows reading `/etc` (so
