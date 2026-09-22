@@ -1,6 +1,6 @@
 # ADR 0025: Add opencode as a second automated PR reviewer
 
-- **Status:** Accepted
+- **Status:** Accepted; the provider/model, `pull-requests: write` and outcome bullets are superseded by [ADR-0032](0032-opencode-reviewer-provider-model-variable-and-proof-of-review.md)
 - **Date:** 2026-06-13
 - **Deciders:** Project lead
 - **Related:** `.github/workflows/opencode.yml` (implements this decision); `.github/workflows/claude-code-review.yml` (existing reviewer this decision mirrors)
