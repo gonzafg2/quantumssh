@@ -1,8 +1,8 @@
 # Review format
 
-The report contract for the automated reviewers (`Claude Code Review` and `opencode`). Both
-workflows point at this file rather than restating the format, so a review reads the same
-whichever reviewer produced it. What to review lives in
+The report contract for the automated reviewers (`Claude Code Review`, `opencode` and `codex`).
+All three workflows point at this file rather than restating the format, so a review reads the
+same whichever reviewer produced it. What to review lives in
 [`CLAUDE.md`](../CLAUDE.md); this file only covers how to report it.
 
 ## Step 1 — the iteration check
@@ -13,7 +13,7 @@ Before reviewing, read the existing comments on the PR:
 gh pr view <number> --comments
 ```
 
-**If there are previous reviews** (from either reviewer, from Copilot, or from a human):
+**If there are previous reviews** (from any of the reviewers, from Copilot, or from a human):
 
 - List every issue raised earlier and classify it: ✅ resolved · ❌ open · 🔄 partly resolved.
 - Check each one against the **current** code, not against the reply in the thread. An issue

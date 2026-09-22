@@ -88,7 +88,7 @@ warnings.
   (`git commit -s`), and signed (`git commit -S`). CI rejects unsigned or
   unsigned-off commits.
 - Spanish and English are both first-class in issues, PRs, and commits.
-- Automated reviewers (`opencode`, `Claude Code Review`) only run on PRs from `OWNER`/`MEMBER`/`COLLABORATOR`. Dependabot and other bots are excluded.
+- Automated reviewers (`opencode`, `Claude Code Review`, `codex`) only run on PRs from `OWNER`/`MEMBER`/`COLLABORATOR`. Dependabot and other bots are excluded.
 
 ## Dependencies
 
@@ -108,7 +108,7 @@ warnings.
 | `docs/threat-model.md` | Defensive posture |
 | `docs/adr/` | Architecture Decision Records |
 | `docs/rfcs/` | RFCs (shape-determining decisions) |
-| `.github/REVIEW-FORMAT.md` | Report contract both automated reviewers follow |
+| `.github/REVIEW-FORMAT.md` | Report contract all three automated reviewers follow |
 | `deny.toml` | `cargo deny` configuration |
 | `clippy.toml` | Clippy tuning |
 | `rust-toolchain.toml` | Pinned toolchain (stable, MSRV 1.92) |
