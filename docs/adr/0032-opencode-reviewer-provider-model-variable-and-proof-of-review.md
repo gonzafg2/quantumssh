@@ -53,7 +53,12 @@ how its provider, model and outcome are handled:
   command that adds it. Free tiers are refused by construction — the
   `opencode` free models train on what they receive, and `opencode` is
   not a supported provider. Adding or removing a provider is an ADR
-  change; it is where the trust base moves.
+  change; it is where the trust base moves. Within `opencode-go`, the
+  boundary is Go's own per-model table: a model whose row reads "not
+  used" for training and zero-day retention may be selected by variable
+  alone, whatever company serves it behind Go; a model with training use
+  or non-zero retention (the "Contributor" entries, for instance) is a
+  trust-base change and needs an ADR.
 - **The model is the repository variable `OPENCODE_MODEL`**, of the form
   `<provider>/<model>`, with no default in the workflow: a missing
   variable fails the job rather than reviewing on a model nobody chose.
@@ -85,6 +90,14 @@ how its provider, model and outcome are handled:
   minutes, against under two with V4 Pro on the direct API), and a new push
   cancels the running review of the same PR without a comment-triggered
   run being able to cancel the one that is publishing.
+- **Same-repository heads only.** The action checks out the PR head
+  itself — a fork head included — while the provider secret and the
+  OIDC token are in the job. As ADR-0030 does for Codex, the job skips a
+  `pull_request` whose head lives in a fork, and on both paths a step
+  reads the PR from the API and refuses a fork head before any secret is
+  exposed. ADR-0030's remark that the `/oc` path "never checks out the
+  PR head" was true of `actions/checkout` only; this closes the gap it
+  left.
 - **Everything else in ADR-0025 stands:** the triggers and author gate,
   the `/oc` on-demand path, the commit-SHA pin, `share: false` (the
   diffs now go to the provider `OPENCODE_MODEL` names, not to DeepSeek

@@ -28,10 +28,15 @@ concurrency:
 
 jobs:
   opencode:
+    # Author gate plus, on pull_request, same-repository head: a collaborator's
+    # fork PR is skipped here (no red check) rather than refused at runtime.
+    # The comment path cannot see the head repository in its payload; the
+    # vet step below refuses fork heads there, before any secret is exposed.
     if: |
       (
         github.event_name == 'pull_request' &&
-        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)
+        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) &&
+        github.event.pull_request.head.repo.full_name == github.repository
       ) ||
       (
         github.event_name == 'issue_comment' &&
@@ -73,6 +78,25 @@ jobs:
           # "actions/checkout@v6 no longer stores credentials in .git/config").
           # No reason to leave the workflow token in the checkout.
           persist-credentials: false
+
+      # The action checks out the PR head itself (a fork head through
+      # `git remote add fork … && git fetch && git checkout`) while the
+      # provider secret and the OIDC token are in the job. The job `if` only
+      # sees the head repository on pull_request events; here the PR is read
+      # from the API on both paths and a head that lives in a fork is refused
+      # before any secret is exposed — the same gate codex.yml applies.
+      - name: Refuse fork heads
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.issue.number || github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          head_repo="$(gh api "repos/$REPO/pulls/$PR" --jq '.head.repo.full_name // ""')"
+          if [ "$head_repo" != "$REPO" ]; then
+            echo "::error::PR #$PR head lives in '$head_repo', not in $REPO; fork PRs are not reviewed by this workflow"
+            exit 1
+          fi
 
       # opencode does fail without a credential, but with "undefined is not an
       # object (evaluating 'p.rest')", which says nothing. This step names the
