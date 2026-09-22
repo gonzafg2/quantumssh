@@ -5,6 +5,14 @@
 - **Deciders:** Project lead
 - **Related:** Implements [RFC-0003](../rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md) §"Acceptance criteria stay as issue #9 defines them" and resolves its unresolved question 4; sources the project's internal Phase-1 decision notes §"Decisión 5"; adds a workflow alongside `.github/workflows/ci.yml`.
 
+> **Post-acceptance errata** (per [ADR-0015](0015-permit-annotated-errata-in-adrs.md)):
+>
+> - **2026-09-22** ([PR #159](https://github.com/gonzafg2/quantumssh/pull/159)):
+>   The Links section said `Implementation: TBD` and that no code had
+>   landed. That was already false on 2026-06-30, when the ADR was
+>   accepted in the #86 sweep: the implementing milestone, M5 ([#84](https://github.com/gonzafg2/quantumssh/pull/84)),
+>   had merged. Corrected to name the implementing code.
+
 ## Context
 
 [RFC-0003](../rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md) chose a greenfield SSH stack. Its sharpest residual risk (Drawback 3) is **silent protocol divergence**: code written against the RFC text and the `draft-ietf-sshm-mlkem-hybrid-kex` Internet-Draft can pass a `quantumssh ↔ quantumssh` test suite while still failing against what a real OpenSSH client does on the wire (the `C_INIT`/`S_REPLY` encoding, the `K_PQ || K_CL` order, the `K` byte encoding). The README non-goal is explicit — *"if your client cannot speak modern, hybrid-PQ SSH, it does not connect"* — so if the reference PQ-capable client (OpenSSH 10.x) cannot connect, the product does not work.
@@ -68,4 +76,4 @@ A viable variant, useful when a multi-version matrix (10.0/10.1/10.2) is wanted.
 - Configuration this decision adds: a new interop job alongside `.github/workflows/ci.yml`, plus `tests/interop/run_openssh_client.sh`, landing with the first connectable binary.
 - Related ADRs: [ADR-0011](0011-ci-guards-workspace-state.md) (CI workspace-state guards), [ADR-0019](0019-phase-1-ml-kem-crate-rustcrypto.md) (ML-KEM crate whose wire output this gate validates).
 - Roadmap: Phase 1 / Hito 1 — [`#9`](https://github.com/gonzafg2/quantumssh/issues/9).
-- Implementation: TBD (no code or workflow has landed yet; the gate is wired up in the first-crate PR).
+- Implementation: M5 ([#84](https://github.com/gonzafg2/quantumssh/pull/84)) — `.github/workflows/interop.yml` and `tests/interop/run_openssh_client.sh`. The package-version pin from a frozen source that the Decision names is not implemented there: the job pins the image by digest and asserts the `10.0p` line of `ssh -V` ([#98](https://github.com/gonzafg2/quantumssh/pull/98) attempted the snapshot pin and was closed).

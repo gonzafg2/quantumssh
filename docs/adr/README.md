@@ -115,7 +115,10 @@ that ADR is the authoritative reference for the rule and its rationale.
 4. **Discussion happens on the PR.** Material objections must be
    resolved before merge; the ADR is then accepted by lazy consensus.
 5. **On merge, the ADR is Accepted.** It is now load-bearing for the
-   project.
+   project. The file itself merges with `Status: Proposed`; its Status
+   line is flipped to `Accepted`, with the merge date as the acceptance
+   date, in a follow-up PR — the practice since the #86 sweep (ADR-0030,
+   0031 and 0032 were flipped together in #158).
 
 For decisions that need broader discussion before a position is
 formed, write the RFC first. Once the RFC is accepted, the

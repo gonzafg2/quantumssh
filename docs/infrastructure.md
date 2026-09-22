@@ -342,10 +342,11 @@ Decision rationale (shipping the virtual manifest in Phase 0): see
 
 The workspace pins `resolver = "3"`, `edition = "2024"`, and
 `rust-version = "1.92"`. The `rust-toolchain.toml` pins the channel to
-current stable. Workspace lints include `unsafe_code = "deny"` by
-default; opting into `unsafe` will be a deliberate per-block decision
-with justification, review, and tests — per the "memory-safe by
-construction" commitment in `README.md`.
+current stable. Workspace lints set `unsafe_code = "forbid"`
+([ADR-0018](./adr/0018-phase-1-unsafe-code-forbid-workspace.md)),
+inherited by both crates: there is no per-block opt-in, `#[allow]`
+cannot override it, and first-party `unsafe` would need an RFC — per
+the "memory-safe by construction" commitment in `README.md`.
 
 Decision rationale (the specific resolver / edition / MSRV pinning):
 see [ADR-0010](./adr/0010-toolchain-pinning-resolver-3-edition-2024-msrv-1-92.md).

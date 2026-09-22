@@ -38,8 +38,9 @@ git commit -s -m "feat: add hybrid key exchange handler"
 ```
 
 This appends a line of the form `Signed-off-by: Your Name <you@example.com>`
-to the commit message. The CI will reject pull requests containing
-commits without sign-off.
+to the commit message. Reviewers check for it; nothing in CI enforces
+the sign-off yet, while commit signatures (`-S`) are enforced by branch
+protection on `main`.
 
 **We do not require a Contributor License Agreement (CLA).** The DCO is
 sufficient. Your contributions remain licensed under Apache 2.0 (the
@@ -123,9 +124,10 @@ the issue or RFC the change is associated with.
   truth.
 - Lint clean with `clippy` at the project's configured level. If you
   need to silence a lint, comment why next to the `#[allow]`.
-- No `unsafe` in the protocol or crypto layers without an accompanying
-  justification, review, and tests. The workspace lints set
-  `unsafe_code = "deny"` by default; opting out is a deliberate act.
+- No first-party `unsafe`, anywhere. The workspace sets
+  `unsafe_code = "forbid"` ([ADR-0018](docs/adr/0018-phase-1-unsafe-code-forbid-workspace.md)),
+  which `#[allow]` cannot override; dependencies may contain `unsafe`,
+  that is the audited primitive layer.
 - Keep functions small and named after what they do. Prefer boring code
   that obviously works over clever code that probably works.
 

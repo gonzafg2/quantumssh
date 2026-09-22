@@ -85,8 +85,10 @@ warnings.
 
 - Branch from `main`, PR against `main`. Never push to `main`.
 - Commits: Conventional Commits (`feat:`, `fix:`, `docs:`, …), DCO sign-off
-  (`git commit -s`), and signed (`git commit -S`). CI rejects unsigned or
-  unsigned-off commits.
+  (`git commit -s`), and signed (`git commit -S`). Branch protection on
+  `main` rejects commits without a verified signature; the required
+  `commit-lint` check rejects subjects that are not Conventional Commits;
+  the sign-off is checked by reviewers, not by automation.
 - Spanish and English are both first-class in issues, PRs, and commits.
 - Automated reviewers (`opencode`, `Claude Code Review`, `codex`) only run on PRs from `OWNER`/`MEMBER`/`COLLABORATOR`. Dependabot and other bots are excluded.
 

@@ -49,4 +49,4 @@ about? Trade-offs you considered? -->
 ## Automated reviews
 
 PRs authored by `dependabot[bot]` (and other bots) do not trigger opencode, Claude Code Review or codex.
-They are covered by CI (`fmt`/`clippy`/`test`/`deny`/`audit`) and manual review when needed.
+They are covered by CI (`commit-lint`, `build` — fmt, clippy, tests, release build —, `cargo deny`, `openssh-interop`; `cargo audit` runs weekly, not per PR) and manual review when needed.

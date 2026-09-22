@@ -5,6 +5,14 @@
 - **Deciders:** Project lead
 - **Related:** Implements [RFC-0003](../rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md) §"Operational dependencies of this decision"; sources the project's internal Phase-1 decision notes §"Decisión 3"; constrained by [ADR-0010](0010-toolchain-pinning-resolver-3-edition-2024-msrv-1-92.md) (MSRV 1.92) and [ADR-0018](0018-phase-1-unsafe-code-forbid-workspace.md) (`unsafe_code = "forbid"`).
 
+> **Post-acceptance errata** (per [ADR-0015](0015-permit-annotated-errata-in-adrs.md)):
+>
+> - **2026-09-22** ([PR #159](https://github.com/gonzafg2/quantumssh/pull/159)):
+>   The Links section said `Implementation: TBD` and that no code had
+>   landed. That was already false on 2026-06-30, when the ADR was
+>   accepted in the #86 sweep: the implementing milestone, M2 ([#64](https://github.com/gonzafg2/quantumssh/pull/64)),
+>   had merged. Corrected to name the implementing code.
+
 ## Context
 
 [RFC-0003](../rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md) commits Phase 1 to a greenfield stack built on audited primitive crates and names the ML-KEM-768 crate selection as a follow-up ADR. The post-quantum half of the `mlkem768x25519-sha256` hybrid KEX is the single most consequential dependency choice in the cryptographic core: it sits in the pre-authentication path, it must conform to NIST FIPS 203 final, and Phase 1's `unsafe_code` lint (`"deny"` today, promoted to `"forbid"` by the planned [ADR-0018](0018-phase-1-unsafe-code-forbid-workspace.md)) requires it to keep any `unsafe` confined inside the dependency rather than forcing first-party escapes.
@@ -85,4 +93,4 @@ Rejected as a production dependency. It is the only candidate with an explicit `
 - Upstream convergence: [`russh` PR #660](https://github.com/Eugeny/russh/pull/660) (migration to `RustCrypto/ml-kem`).
 - Constrained by: [ADR-0010](0010-toolchain-pinning-resolver-3-edition-2024-msrv-1-92.md) (MSRV), [ADR-0018](0018-phase-1-unsafe-code-forbid-workspace.md) (`unsafe_code = "forbid"`).
 - Roadmap: Phase 1 / Hito 1 — [`#9`](https://github.com/gonzafg2/quantumssh/issues/9).
-- Implementation: TBD (the dependency is declared in the first `quantumssh-core` `Cargo.toml`; no code has landed yet).
+- Implementation: M2 ([#64](https://github.com/gonzafg2/quantumssh/pull/64)) — `ml-kem` declared in the workspace `Cargo.toml` and `crates/quantumssh-core/Cargo.toml`; used by `crates/quantumssh-core/src/kex.rs`.

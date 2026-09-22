@@ -5,6 +5,14 @@
 - **Deciders:** Project lead
 - **Related:** Operational counterpart to [RFC-0002](../rfcs/0002-threat-model-phase1-uid-model-and-non-goal.md); this ADR depends on the merge of [PR #24](https://github.com/gonzafg2/quantumssh/pull/24) and should land after it.
 
+> **Post-acceptance errata** (per [ADR-0015](0015-permit-annotated-errata-in-adrs.md)):
+>
+> - **2026-09-22** ([PR #159](https://github.com/gonzafg2/quantumssh/pull/159)):
+>   The Links section said `Implementation: TBD` and that no code had
+>   landed. That was already false on 2026-06-30, when the ADR was
+>   accepted in the #86 sweep: the implementing milestone, M5 ([#84](https://github.com/gonzafg2/quantumssh/pull/84)),
+>   had merged. Corrected to name the implementing code.
+
 ## Context
 
 [RFC-0002](../rfcs/0002-threat-model-phase1-uid-model-and-non-goal.md) documents the threat-model side: §8.12 declares per-user UID isolation a Phase-1 non-goal, with a closure condition pointing at Phase 3 privilege-separation work. This ADR documents the **operational** side: the concrete OS-level posture Phase 1 deploys to make that non-goal honest.
@@ -79,5 +87,5 @@ Variant of Alternative 4 with a smaller privileged blast radius. The Phase 1 rea
 
 - Threat-model counterpart: [RFC-0002](../rfcs/0002-threat-model-phase1-uid-model-and-non-goal.md), §2.5 "Phase-bounded reality" and §8.12 "Per-user UID isolation until Phase 3".
 - Roadmap: Phase 1 / Hito 1 — [`#9`](https://github.com/gonzafg2/quantumssh/issues/9).
-- Implementation: TBD (Phase 1 listener and exec-channel handler — no code has landed yet; see [ADR-0009](0009-workspace-no-members-during-phase-0.md) for the current workspace state).
+- Implementation: M5 ([#84](https://github.com/gonzafg2/quantumssh/pull/84)) — `crates/quantumssh-core/src/exec.rs` (the service-account UID under which the `exec` channel runs) and `crates/quantumssh-core/src/server.rs` (the listener).
 - Related future work: a separate ADR will record the operational scope of "single-command execution" (the channel-layer subset of RFC 4254, supported message types, stdin handling, exit-status propagation). That ADR cites this one for the UID question.

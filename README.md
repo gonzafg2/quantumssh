@@ -171,7 +171,7 @@ We owe the community honesty about what already exists in this space. Several pr
 
 **`russh`** is a Rust library implementing the SSH protocol, both client and server primitives. QuantumSSH does not depend on `russh` as a crate — Phase 1 implements the SSH-2 protocol layers greenfield, on audited cryptographic primitive crates ([RFC-0003](./docs/rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md)). `russh` is the closest reference implementation we read while building, and that role is acknowledged in RFC-0003 §"What does not change": the project's protocol work in Rust is a teaching artifact, not a competitor.
 
-**Open Quantum Safe (`liboqs`, `liboqs-rust`)** at the University of Waterloo provides the post-quantum primitives that make this kind of project possible at all. Their `openssh` fork is research-oriented and based on older OpenSSH. We use their cryptographic libraries; we do not fork their SSH.
+**Open Quantum Safe (`liboqs`, `liboqs-rust`)** at the University of Waterloo provides the post-quantum primitives that make this kind of project possible at all. Their `openssh` fork is research-oriented and based on older OpenSSH. QuantumSSH does not depend on `liboqs`: [ADR-0019](./docs/adr/0019-phase-1-ml-kem-crate-rustcrypto.md) chose RustCrypto's pure-Rust `ml-kem` over `liboqs-rust` (C bindings). Their work made the field legible for everyone building on it; we do not fork their SSH.
 
 **Microsoft `Quantum-Safe-OpenSSH`** is a research fork of OpenSSH with PQ algorithms, distributed as Azure VM images. It is explicitly research-only and not for production.
 

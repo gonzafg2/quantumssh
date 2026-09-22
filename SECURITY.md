@@ -104,8 +104,10 @@ In scope:
 
 Out of scope (please report to the upstream project instead):
 
-- Vulnerabilities in `russh`, `tokio`, `liboqs`, or other third-party
-  dependencies. We will of course react to upstream advisories, but
+- Vulnerabilities in the third-party crates we build on (`ml-kem`,
+  `x25519-dalek`, `ed25519-dalek`, `chacha20`, `poly1305`, `aes-gcm`,
+  `tokio`, or any other dependency in `Cargo.lock`). We will of course
+  react to upstream advisories, but
   primary disclosure should be coordinated with the upstream maintainers.
 - Issues in operating system kernels, system libraries, or container
   runtimes that QuantumSSH happens to run on.

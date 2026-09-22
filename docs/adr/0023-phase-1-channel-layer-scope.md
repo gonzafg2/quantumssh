@@ -5,6 +5,14 @@
 - **Deciders:** Project lead
 - **Related:** Fulfils the "ADR-TBD ('scope of single-command execution')" placeholder named in [RFC-0003](../rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md) §"Reference-level explanation"; builds on [ADR-0021](0021-phase-1-negotiation-profile.md) (the transport this rides on) and [ADR-0022](0022-phase-1-async-runtime-tokio.md) (`spawn_blocking` exec model); realises `docs/threat-model.md` §2.5 (command-execution authority) and §5.4 (session-layer attack vectors); bounded by §8.12 (per-user UID non-goal). Planned implementation (TBD): the `channel` module of `quantumssh-core`, which does not exist yet.
 
+> **Post-acceptance errata** (per [ADR-0015](0015-permit-annotated-errata-in-adrs.md)):
+>
+> - **2026-09-22** ([PR #159](https://github.com/gonzafg2/quantumssh/pull/159)):
+>   The Links section said `Implementation: TBD` and that no code had
+>   landed. That was already false on 2026-06-30, when the ADR was
+>   accepted in the #86 sweep: the implementing milestone, M5 ([#84](https://github.com/gonzafg2/quantumssh/pull/84)),
+>   had merged. Corrected to name the implementing code.
+
 ## Context
 
 [RFC-0003](../rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md) committed Phase 1 to a greenfield transport and named, but deferred, the exact subset of the RFC 4254 connection protocol the walking skeleton implements: "the RFC 4254 channel layer subset documented in ADR-TBD ('scope of single-command execution')". This ADR is that document.
@@ -87,7 +95,7 @@ Let `channel.rs` define its own scope as it is written. Rejected for the reason 
 
 ## Links
 
-- Implementation: TBD — the `channel` module of `quantumssh-core`, once the first crate lands. Does not exist in the repository yet.
+- Implementation: M5 ([#84](https://github.com/gonzafg2/quantumssh/pull/84)) — `crates/quantumssh-core/src/channel.rs` and `crates/quantumssh-core/src/exec.rs`.
 - Interop assertions: ADR-0020 `integration::openssh_smoke` (`ssh … echo hello` → `hello`, exit 0) exercises open → `exec` → data → `exit-status` → close.
 - Related ADRs: [ADR-0021](0021-phase-1-negotiation-profile.md) (transport the channel rides on), [ADR-0022](0022-phase-1-async-runtime-tokio.md) (`spawn_blocking` child-process model), [ADR-0016](0016-phase-1-service-account-uid-model.md) (the service-account UID the child runs as).
 - Threat model: §2.5 (command-execution authority), §5.4.1–§5.4.4 (session-layer vectors — agent/port forwarding, PTY escapes, exfiltration; all out of scope or off by default here), §8.12 (per-user UID non-goal that bounds what `exec` means in Phase 1).

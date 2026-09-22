@@ -5,6 +5,14 @@
 - **Deciders:** Project lead
 - **Related:** Implements [RFC-0003](../rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md) §"Operational dependencies of this decision" and records, operationally, the resolution RFC-0003 reached on its unresolved question 2 (promote immediately); depends on [ADR-0017](0017-phase-1-workspace-topology-two-crates-flat.md) (workspace shape); touches `Cargo.toml` `[workspace.lints.rust]`.
 
+> **Post-acceptance errata** (per [ADR-0015](0015-permit-annotated-errata-in-adrs.md)):
+>
+> - **2026-09-22** ([PR #159](https://github.com/gonzafg2/quantumssh/pull/159)):
+>   The Links section said `Implementation: TBD` and that no code had
+>   landed. That was already false on 2026-06-30, when the ADR was
+>   accepted in the #86 sweep: the implementing milestone, M0 ([#62](https://github.com/gonzafg2/quantumssh/pull/62)),
+>   had merged. Corrected to name the implementing code.
+
 ## Context
 
 The workspace today sets `unsafe_code = "deny"` in `[workspace.lints.rust]` (`Cargo.toml`). `deny` makes `unsafe` a hard error *but* permits a per-item escape hatch: an `#[allow(unsafe_code)]` on a function or block silently re-enables it. `forbid` is the stronger sibling — it refuses the `#[allow]` override entirely, so no future commit can quietly reintroduce `unsafe` anywhere in first-party code.
@@ -56,4 +64,4 @@ Rejected as needless asymmetry. The binary is a ≤50-LoC entrypoint ([ADR-0017]
 - Configuration this decision changes: `Cargo.toml` `[workspace.lints.rust]` (`unsafe_code`), landing with the first Phase 1 crate.
 - Related ADRs: [ADR-0017](0017-phase-1-workspace-topology-two-crates-flat.md) (lint inheritance across the two crates).
 - Roadmap: Phase 1 / Hito 1 — [`#9`](https://github.com/gonzafg2/quantumssh/issues/9).
-- Implementation: TBD (no code has landed yet; the lint flip is part of the first-crate PR).
+- Implementation: M0 ([#62](https://github.com/gonzafg2/quantumssh/pull/62)) — `unsafe_code = "forbid"` under `[workspace.lints.rust]` in `Cargo.toml`, inherited by both crates through `[lints] workspace = true`.
