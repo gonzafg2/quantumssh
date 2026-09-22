@@ -11,11 +11,13 @@
 >   The Links section said `Implementation: TBD` and that no code had
 >   landed. That was already false on 2026-06-30, when the ADR was
 >   accepted in the #86 sweep: the implementing milestone, M0 ([#62](https://github.com/gonzafg2/quantumssh/pull/62)),
->   had merged. Corrected to name the implementing code.
+>   had merged. Corrected to name the implementing code; the Related
+>   and Context sentences that said the code did not exist yet now read
+>   as of drafting time.
 
 ## Context
 
-The workspace today sets `unsafe_code = "deny"` in `[workspace.lints.rust]` (`Cargo.toml`). `deny` makes `unsafe` a hard error *but* permits a per-item escape hatch: an `#[allow(unsafe_code)]` on a function or block silently re-enables it. `forbid` is the stronger sibling — it refuses the `#[allow]` override entirely, so no future commit can quietly reintroduce `unsafe` anywhere in first-party code.
+At drafting time the workspace set `unsafe_code = "deny"` in `[workspace.lints.rust]` (`Cargo.toml`); M0 ([#62](https://github.com/gonzafg2/quantumssh/pull/62)) landed it as `forbid`. `deny` makes `unsafe` a hard error *but* permits a per-item escape hatch: an `#[allow(unsafe_code)]` on a function or block silently re-enables it. `forbid` is the stronger sibling — it refuses the `#[allow]` override entirely, so no future commit can quietly reintroduce `unsafe` anywhere in first-party code.
 
 [RFC-0003](../rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md) chose a greenfield stack whose dependencies are pure-Rust primitive crates that confine their own `unsafe` internally (the audited fiat-crypto backend, `RustCrypto/ml-kem`). Because no chosen dependency requires QuantumSSH first-party code to write or `#[allow]` `unsafe`, the escape hatch that `deny` leaves open buys nothing — and MANIFIESTO #1 ("memory-safe by construction") is most literally honoured by the variant that removes it. RFC-0003's unresolved question 2 asked whether to make this promotion immediately or defer it; it was resolved at acceptance in favour of *immediately*.
 

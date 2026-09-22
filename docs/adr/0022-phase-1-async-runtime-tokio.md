@@ -3,7 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-06-30 (accepted in the #86 Phase-1 governance sweep)
 - **Deciders:** Project lead
-- **Related:** Subsidiary to [RFC-0004](../rfcs/0004-phase-1-async-runtime-tokio.md), which decides the *adoption* of Tokio (trust-base impact, alternatives); this ADR fixes the operative detail — version, features, threading. Constrained by [ADR-0010](0010-toolchain-pinning-resolver-3-edition-2024-msrv-1-92.md) (MSRV 1.92) and [ADR-0018](0018-phase-1-unsafe-code-forbid-workspace.md) (`unsafe_code = "forbid"`); the `server.rs` accept loop in [ADR-0017](0017-phase-1-workspace-topology-two-crates-flat.md)'s `quantumssh-core` is built on it. Will touch (TBD — `crates/` does not exist yet) `crates/quantumssh/Cargo.toml` and `crates/quantumssh-core/Cargo.toml`.
+- **Related:** Subsidiary to [RFC-0004](../rfcs/0004-phase-1-async-runtime-tokio.md), which decides the *adoption* of Tokio (trust-base impact, alternatives); this ADR fixes the operative detail — version, features, threading. Constrained by [ADR-0010](0010-toolchain-pinning-resolver-3-edition-2024-msrv-1-92.md) (MSRV 1.92) and [ADR-0018](0018-phase-1-unsafe-code-forbid-workspace.md) (`unsafe_code = "forbid"`); the `server.rs` accept loop in [ADR-0017](0017-phase-1-workspace-topology-two-crates-flat.md)'s `quantumssh-core` is built on it. Touches `crates/quantumssh/Cargo.toml` and `crates/quantumssh-core/Cargo.toml` (M3, [#65](https://github.com/gonzafg2/quantumssh/pull/65)); at drafting time `crates/` did not exist.
 
 > **Post-acceptance errata** (per [ADR-0015](0015-permit-annotated-errata-in-adrs.md)):
 >
@@ -20,11 +20,13 @@
 >   The Links section said `Implementation: TBD` and that no code had
 >   landed. That was already false on 2026-06-30, when the ADR was
 >   accepted in the #86 sweep: the implementing milestone, M3 ([#65](https://github.com/gonzafg2/quantumssh/pull/65)),
->   had merged. Corrected to name the implementing code.
+>   had merged. Corrected to name the implementing code; the Related
+>   and Context sentences that said the code did not exist yet now read
+>   as of drafting time.
 
 ## Context
 
-[RFC-0003](../rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md) specifies the nine cryptographic primitive crates in detail but says nothing about the async runtime; the adoption of Tokio — a dependency that materially expands the trust base on the networking path — is decided by [RFC-0004](../rfcs/0004-phase-1-async-runtime-tokio.md), per the RFC lane rule. This ADR records the subsidiary operative choices. The current root `Cargo.toml` carries `tokio` only as a commented placeholder (`# tokio = { version = "1", features = ["full"] }`). Before `server.rs` can be written, the runtime, its feature set, and its threading model must be fixed: the accept loop's shape, whether per-connection state must be `Send`, and which `tokio` modules are linked all follow from this choice.
+[RFC-0003](../rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md) specifies the nine cryptographic primitive crates in detail but says nothing about the async runtime; the adoption of Tokio — a dependency that materially expands the trust base on the networking path — is decided by [RFC-0004](../rfcs/0004-phase-1-async-runtime-tokio.md), per the RFC lane rule. This ADR records the subsidiary operative choices. At drafting time the root `Cargo.toml` carried `tokio` only as a commented placeholder (`# tokio = { version = "1", features = ["full"] }`). Before `server.rs` could be written, the runtime, its feature set, and its threading model must be fixed: the accept loop's shape, whether per-connection state must be `Send`, and which `tokio` modules are linked all follow from this choice.
 
 Two questions are entangled and must be separated:
 

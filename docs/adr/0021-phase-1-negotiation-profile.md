@@ -3,7 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-06-30 (accepted in the #86 Phase-1 governance sweep)
 - **Deciders:** Project lead
-- **Related:** Implements [RFC-0003](../rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md) (greenfield stack) at the wire level; consumes [ADR-0019](0019-phase-1-ml-kem-crate-rustcrypto.md) (ML-KEM crate); realises `docs/threat-model.md` §6.1 (cryptographic posture) and §5.2 (key-exchange attack vectors); its KEX selection and no-downgrade behaviour are exercised end-to-end by [ADR-0020](0020-phase-1-ci-openssh-interop-gate.md) (OpenSSH interop gate). Planned implementation (TBD): the `kex` and `transport` modules of `quantumssh-core`, which do not exist yet — the first crate has not landed.
+- **Related:** Implements [RFC-0003](../rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md) (greenfield stack) at the wire level; consumes [ADR-0019](0019-phase-1-ml-kem-crate-rustcrypto.md) (ML-KEM crate); realises `docs/threat-model.md` §6.1 (cryptographic posture) and §5.2 (key-exchange attack vectors); its KEX selection and no-downgrade behaviour are exercised end-to-end by [ADR-0020](0020-phase-1-ci-openssh-interop-gate.md) (OpenSSH interop gate). Implementation: the `kex` and `transport` modules of `quantumssh-core` (M2, [#64](https://github.com/gonzafg2/quantumssh/pull/64)); at drafting time they did not exist.
 
 > **Post-acceptance errata** (per [ADR-0015](0015-permit-annotated-errata-in-adrs.md)):
 >
@@ -11,7 +11,9 @@
 >   The Links section said `Implementation: TBD` and that no code had
 >   landed. That was already false on 2026-06-30, when the ADR was
 >   accepted in the #86 sweep: the implementing milestone, M2 ([#64](https://github.com/gonzafg2/quantumssh/pull/64)),
->   had merged. Corrected to name the implementing code.
+>   had merged. Corrected to name the implementing code; the Related
+>   and Context sentences that said the code did not exist yet now read
+>   as of drafting time.
 
 ## Context
 

@@ -11,11 +11,13 @@
 >   The Links section said `Implementation: TBD` and that no code had
 >   landed. That was already false on 2026-06-30, when the ADR was
 >   accepted in the #86 sweep: the implementing milestone, M2 ([#64](https://github.com/gonzafg2/quantumssh/pull/64)),
->   had merged. Corrected to name the implementing code.
+>   had merged. Corrected to name the implementing code; the Related
+>   and Context sentences that said the code did not exist yet now read
+>   as of drafting time.
 
 ## Context
 
-[RFC-0003](../rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md) commits Phase 1 to a greenfield stack built on audited primitive crates and names the ML-KEM-768 crate selection as a follow-up ADR. The post-quantum half of the `mlkem768x25519-sha256` hybrid KEX is the single most consequential dependency choice in the cryptographic core: it sits in the pre-authentication path, it must conform to NIST FIPS 203 final, and Phase 1's `unsafe_code` lint (`"deny"` today, promoted to `"forbid"` by the planned [ADR-0018](0018-phase-1-unsafe-code-forbid-workspace.md)) requires it to keep any `unsafe` confined inside the dependency rather than forcing first-party escapes.
+[RFC-0003](../rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md) commits Phase 1 to a greenfield stack built on audited primitive crates and names the ML-KEM-768 crate selection as a follow-up ADR. The post-quantum half of the `mlkem768x25519-sha256` hybrid KEX is the single most consequential dependency choice in the cryptographic core: it sits in the pre-authentication path, it must conform to NIST FIPS 203 final, and Phase 1's `unsafe_code` lint (`"deny"` at drafting time, `"forbid"` since M0 under [ADR-0018](0018-phase-1-unsafe-code-forbid-workspace.md)) requires it to keep any `unsafe` confined inside the dependency rather than forcing first-party escapes.
 
 Six candidates were surveyed: `RustCrypto/ml-kem`, `libcrux-ml-kem`, `aws-lc-rs`, `liboqs-rust`, `pqcrypto-mlkem`, and `fips203`. The classical half (X25519) is settled separately in the same RFC stack and is noted here only for completeness. This ADR records the ML-KEM crate choice and the conditions under which the fallback would be taken.
 
