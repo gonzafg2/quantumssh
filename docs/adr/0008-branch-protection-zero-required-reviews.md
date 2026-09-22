@@ -1,6 +1,6 @@
 # ADR 0008: Require PR + signed commits + linear history, with zero approving reviews
 
-- **Status:** Accepted
+- **Status:** Accepted; the required-status-checks bullet is superseded by [ADR-0031](0031-required-status-checks-commit-lint-and-openssh-interop.md)
 - **Date:** 2026-05-10
 - **Deciders:** Project lead
 - **Related:** `GOVERNANCE.md`, [ADR-0006](0006-commit-signing-ssh-not-gpg.md) (signing back-end), `docs/infrastructure.md` § "Branch protection on `main`"

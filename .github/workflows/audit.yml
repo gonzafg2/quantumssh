@@ -35,7 +35,9 @@ jobs:
 
       - name: Install Rust toolchain
         if: steps.lockfile.outputs.present == '1'
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # v1
+        with:
+          toolchain: stable
 
       - name: Cache cargo registry, index and target
         if: steps.lockfile.outputs.present == '1'

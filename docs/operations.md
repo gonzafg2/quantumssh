@@ -217,7 +217,7 @@ Expected output (formatting irrelevant; values matter):
 ```json
 {
   "required_signatures":     true,
-  "required_status_checks":  ["build (ubuntu-latest)", "build (macos-latest)", "cargo deny"],
+  "required_status_checks":  ["build (ubuntu-latest)", "build (macos-latest)", "cargo deny", "commit-lint", "openssh-interop"],
   "required_linear_history": true,
   "enforce_admins":          true
 }

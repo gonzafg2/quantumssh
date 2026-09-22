@@ -296,11 +296,15 @@ solo maintainership): see
 
 ### Required status checks
 
-Three CI contexts must report success before a PR can merge:
+Five CI contexts must report success before a PR can merge
+([ADR-0031](./adr/0031-required-status-checks-commit-lint-and-openssh-interop.md)):
 
 - `build (ubuntu-latest)` — formats, lints, tests, and builds on Linux
 - `build (macos-latest)` — same on macOS
 - `cargo deny` — license, advisories, sources, and bans
+- `commit-lint` — every commit subject in the PR follows Conventional Commits
+- `openssh-interop` — the OpenSSH client gate
+  ([ADR-0020](./adr/0020-phase-1-ci-openssh-interop-gate.md))
 
 The full configuration is readable via `gh api` (see
 [`operations.md`](./operations.md) for the invocation).
