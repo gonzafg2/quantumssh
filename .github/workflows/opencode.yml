@@ -67,24 +67,12 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
-          # The comment-triggered path (`/oc`) runs the action's configureGit,
-          # which reads `http.https://github.com/.extraheader` with a shell
-          # that aborts when the key is missing, then overwrites it with the
-          # App token. The key must exist. The token it holds is the read-only
-          # one this job is granted; the pull_request path never touches it.
-          persist-credentials: true
-
-      # checkout@v7 stores the token in extraheader and, additionally, in a
-      # file via includeIf.gitdir. opencode only overwrites extraheader; the
-      # includeIf survives and git sends two Authorization headers → HTTP 400
-      # ("Duplicate header"). Keep extraheader, drop the includeIf.
-      - name: Drop the checkout's includeIf credential
-        run: |
-          set -euo pipefail
-          while IFS= read -r key; do
-            [ -n "$key" ] || continue
-            git config --local --unset-all "$key"
-          done < <(git config --local --name-only --get-regexp '^includeIf\.gitdir:' || true)
+          # The opencode CLI sets its own App-token `extraheader` for its git
+          # fetches and tolerates the key being absent (its configureGit
+          # checks the exit code of `git config --get`, with the comment
+          # "actions/checkout@v6 no longer stores credentials in .git/config").
+          # No reason to leave the workflow token in the checkout.
+          persist-credentials: false
 
       # opencode does fail without a credential, but with "undefined is not an
       # object (evaluating 'p.rest')", which says nothing. This step names the
@@ -219,12 +207,13 @@ jobs:
           # accepted: the validation step rejects any other provider, and the
           # `opencode` free models train on what they receive.
           #
-          # The DeepSeek direct-API names are not stable pins: on 2026-09-10
-          # `deepseek-v4-flash` was retired and is served by V4.1 Flash
-          # (`deepseek-flash` is the current id), and `deepseek-v4-pro` was
-          # scheduled to follow on 2026-09-14 before DeepSeek reversed that
-          # (pricing page, note 2). Judge the reviewer by the quality of its
-          # verdicts, not by the check being green.
+          # The DeepSeek direct-API names are not stable pins: `deepseek-v4-flash`
+          # is retired and served by V4.1 Flash (`deepseek-flash` is the
+          # current id; pricing page, note 1), and the 2026-09-10 changelog
+          # entry scheduled `deepseek-v4-pro` to follow on 2026-09-14, then
+          # recorded the reversal ("continue providing API services for
+          # DeepSeek V4 Pro after September 14, 2026"). Judge the reviewer by
+          # the quality of its verdicts, not by the check being green.
           model: ${{ vars.OPENCODE_MODEL }}
           share: false
           # Without use_github_token the action exchanges OIDC for a token of

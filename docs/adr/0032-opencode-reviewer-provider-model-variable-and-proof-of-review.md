@@ -13,12 +13,12 @@ direct API, `deepseek/deepseek-v4-pro`, written into the workflow. Three
 things have changed since 2026-06-13.
 
 1. **A model id on a vendor's direct API is a promise the vendor can
-   revoke.** Per DeepSeek's pricing page, `deepseek-v4-flash` and
-   `deepseek-v4-flash-vision-exp` were retired on 2026-09-10 and their
-   requests are served by DeepSeek V4.1 Flash; the same announcement
-   scheduled `deepseek-v4-pro` — the id ADR-0025 fixed — to be routed to
-   V4.1 Flash from 2026-09-14, and DeepSeek reversed that four days
-   later ("we have decided to continue providing API services for
+   revoke.** `deepseek-v4-flash` and `deepseek-v4-flash-vision-exp` are
+   retired and their requests are served by DeepSeek V4.1 Flash
+   (pricing page, note 1). The changelog entry of 2026-09-10 that
+   released V4.1 Flash scheduled `deepseek-v4-pro` — the id ADR-0025
+   fixed — for the same routing from 2026-09-14, and now records the
+   reversal ("we have decided to continue providing API services for
    DeepSeek V4 Pro after September 14, 2026"). The reviewer kept running
    on V4 Pro; nothing in the repository would have said so either way.
 2. **A green check has not meant a review.** The workflow passed when the
@@ -118,11 +118,12 @@ in use, the fallback is one `gh variable set` away.
 - The reviewer is a Flash-class model. Its verdicts, not the check,
   are what to watch: generic findings or missing `path:line` anchors are
   the signal to move `OPENCODE_MODEL` to a Pro-class entry on Go.
-- `persist-credentials: true` on the checkout, because the action's
-  comment-triggered path reads the git credential header and aborts when
-  it is absent. The token persisted is the job's read-only one, and the
-  duplicate copy checkout leaves in `includeIf` is removed so git does
-  not send two `Authorization` headers.
+- The pinned action SHA pins a thin composite: at run time it installs
+  the opencode CLI from upstream's latest release (`curl … | bash`), so
+  the code that configures git, talks to the provider and posts the
+  comment is not fixed by the pin. ADR-0025 already accepted this
+  action; this ADR records the shape of the pin honestly rather than
+  changing it.
 - A change of provider set, unlike a change of model, needs an ADR.
 
 ### Neutral
@@ -163,8 +164,10 @@ fixes — nobody reads it.
 - Implementation: `.github/workflows/opencode.yml`; repository variable
   `OPENCODE_MODEL`; secrets `OPENCODE_GO_API_KEY`, `DEEPSEEK_API_KEY`.
 - OpenCode Go: <https://opencode.ai/docs/go/> (per-model training and
-  retention table); DeepSeek API changelog:
-  <https://api-docs.deepseek.com/updates/>.
+  retention table); DeepSeek API changelog
+  (<https://api-docs.deepseek.com/updates/>, entry of 2026-09-10) and
+  pricing page (<https://api-docs.deepseek.com/quick_start/pricing>,
+  note 1).
 - Related ADRs: [ADR-0025](0025-opencode-second-automated-reviewer.md)
   (amended), [ADR-0030](0030-codex-third-automated-reviewer.md),
   [ADR-0031](0031-required-status-checks-commit-lint-and-openssh-interop.md).
