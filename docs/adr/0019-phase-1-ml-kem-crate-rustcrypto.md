@@ -11,9 +11,9 @@
 >   The Links section said `Implementation: TBD` and that no code had
 >   landed. That was already false on 2026-06-30, when the ADR was
 >   accepted in the #86 sweep: the implementing milestone, M2 ([#64](https://github.com/gonzafg2/quantumssh/pull/64)),
->   had merged. Corrected to name the implementing code; the Context
->   sentence that said the lint was still `deny` now reads as of
->   drafting time.
+>   had merged. Corrected to name the implementing code; the Context and
+>   Decision sentences that said the lint was still `deny` or `forbid`
+>   still planned now read as of drafting time.
 
 ## Context
 
@@ -33,7 +33,7 @@ ml-kem = { version = "0.3.0", default-features = false, features = ["zeroize"] }
 
 Reasons, in order:
 
-1. **Pure Rust, zero FFI, no `unsafe` on the exposed surface** — compatible with the workspace `unsafe_code` lint, including the planned `"forbid"` promotion ([ADR-0018](0018-phase-1-unsafe-code-forbid-workspace.md)).
+1. **Pure Rust, zero FFI, no `unsafe` on the exposed surface** — compatible with the workspace `unsafe_code` lint, including the `"forbid"` promotion, planned at drafting time and in force since M0 ([ADR-0018](0018-phase-1-unsafe-code-forbid-workspace.md)).
 2. **It is the path `russh` itself adopted in 0.59** ([PR #660](https://github.com/Eugeny/russh/pull/660), 2026-03-26), so the stack does not diverge from the wider Rust SSH ecosystem even if RFC-0003's Option B fallback is ever taken.
 3. **Apache-2.0 OR MIT**, compatible with the project's Apache-2.0 licence.
 4. **NIST ACVP KATs run in CI**; conformant to FIPS 203 final (2024-08-13).

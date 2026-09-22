@@ -75,7 +75,7 @@ Additional binding decisions:
 
 ### Positive
 
-- One authoritative source for the wire profile: the `kex` module (TBD) and the ADR-0020 interop tests are to reference this ADR rather than scattered prose across RFC-0003, the README, and the threat model.
+- One authoritative source for the wire profile: the `kex` module (M2, [#64](https://github.com/gonzafg2/quantumssh/pull/64)) and the ADR-0020 interop tests are to reference this ADR rather than scattered prose across RFC-0003, the README, and the threat model.
 - Every name-list is the smallest set consistent with the MANIFIESTO and the two-AEAD resilience hedge recorded in Alternative 1: one KEX, one host-key type, two AEAD ciphers, no compression, no legacy. MANIFIESTO #3 ("zero legacy") is mechanically auditable against this file.
 - Dropping `hmac` from the Phase 1 dependency set removes a crate that would otherwise be compiled but never called — consistent with MANIFIESTO #4 ("small attack surface").
 - The `SSH_DISCONNECT_KEY_EXCHANGE_FAILED` behaviour makes the "no downgrade" guarantee a testable property, not an aspiration.
