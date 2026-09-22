@@ -3,14 +3,14 @@
 - **Status:** Accepted
 - **Date:** 2026-06-30 (accepted in the #86 Phase-1 governance sweep)
 - **Deciders:** Project lead
-- **Related:** Realises `docs/threat-model.md` §2.7 (audit record) and its mandated `authenticated_identity` / `executing_uid` fields; makes the §8.12 per-user-UID gap visible in logs; consumes [ADR-0022](0022-phase-1-async-runtime-tokio.md) (the runtime that emits) and [ADR-0023](0023-phase-1-channel-layer-scope.md) (the exec boundary that produces `exec.*` events). Implementation: subscriber init in the `quantumssh` binary (M0 [#62](https://github.com/gonzafg2/quantumssh/pull/62)), `tracing` calls in `quantumssh-core` (M4 [#78](https://github.com/gonzafg2/quantumssh/pull/78), M5 [#84](https://github.com/gonzafg2/quantumssh/pull/84)); at drafting time neither existed.
+- **Related:** Realises `docs/threat-model.md` §2.7 (audit record) and its mandated `authenticated_identity` / `executing_uid` fields; makes the §8.12 per-user-UID gap visible in logs; consumes [ADR-0022](0022-phase-1-async-runtime-tokio.md) (the runtime that emits) and [ADR-0023](0023-phase-1-channel-layer-scope.md) (the exec boundary that produces `exec.*` events). Implementation: subscriber init in the `quantumssh` binary (M0 [#62](https://github.com/gonzafg2/quantumssh/pull/62)), the `auth.*` and `exec.*` events in `quantumssh-core` (M4 [#78](https://github.com/gonzafg2/quantumssh/pull/78), M5 [#84](https://github.com/gonzafg2/quantumssh/pull/84)); at drafting time neither existed.
 
 > **Post-acceptance errata** (per [ADR-0015](0015-permit-annotated-errata-in-adrs.md)):
 >
 > - **2026-09-22** ([PR #159](https://github.com/gonzafg2/quantumssh/pull/159)):
 >   The Links section said `Implementation: TBD` and that no code had
 >   landed. That was already false on 2026-06-30, when the ADR was
->   accepted in the #86 sweep: the implementing milestones, M0 ([#62](https://github.com/gonzafg2/quantumssh/pull/62)) for the subscriber, M4 ([#78](https://github.com/gonzafg2/quantumssh/pull/78)) and M5 ([#84](https://github.com/gonzafg2/quantumssh/pull/84)) for the events,
+>   accepted in the #86 sweep: the implementing milestones, M0 ([#62](https://github.com/gonzafg2/quantumssh/pull/62)) for the subscriber, M4 ([#78](https://github.com/gonzafg2/quantumssh/pull/78)) and M5 ([#84](https://github.com/gonzafg2/quantumssh/pull/84)) for the `auth.*` and `exec.*` events,
 >   had merged. Corrected to name the implementing code; the Related
 >   sentence that said the code did not exist yet now reads as of
 >   drafting time.

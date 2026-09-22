@@ -26,9 +26,10 @@ QuantumSSH closed Phase 0 on 2026-05-10. The repository scaffolding,
 governance documents, CI workflows, project PGP key, DNS zone with
 DNSSEC, TLS termination with HSTS, CAA whitelist, inbound email
 forwarding, and branch protection on `main` were all put in place
-across that single window. No Rust source code has been written yet;
-the `Cargo.toml` is a virtual manifest with no member crates (see
-[Workspace topology](#workspace-topology) for the rationale).
+across that single window. At that point no Rust source code had been
+written and the `Cargo.toml` was a virtual manifest with no member
+crates; the two crates landed in M0 (#62, 2026-06-12) — see
+[Workspace topology](#workspace-topology).
 
 This document is gap-honest. The project does **not** currently publish
 an SLO or a status page, does not run a third-party security audit (one
@@ -328,10 +329,12 @@ still empty (see [CI guard implementation note](#ci-guard-implementation-note)).
 
 ### Workspace topology
 
-The `Cargo.toml` at the repo root is a workspace manifest with
-`members = []`. There is no Rust source code yet; the workspace-level
-structural decisions are locked in ahead of the first crate so Phase 1
-inherits them without retrofitting. The CI workflows guard against
+The `Cargo.toml` at the repo root is a workspace manifest whose
+`members` are `crates/quantumssh-core` and `crates/quantumssh`
+([ADR-0017](./adr/0017-phase-1-workspace-topology-two-crates-flat.md)).
+During Phase 0 it was `members = []` with no Rust source code; the
+workspace-level structural decisions were locked in ahead of the first
+crate so Phase 1 inherited them without retrofitting. The CI workflows guard against
 Cargo's refusal to operate on an empty manifest until the first crate
 lands; the guards self-disable on that event.
 

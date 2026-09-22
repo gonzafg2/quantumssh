@@ -101,7 +101,7 @@ Phase 0 also delivered the project's supporting infrastructure (DNS with DNSSEC,
 ### Phase 1 — Walking skeleton (complete)
 Tracked in [#9](https://github.com/gonzafg2/quantumssh/issues/9) (closed). Stack and tooling decisions are Accepted:
 
-- **Stack:** greenfield SSH-2 transport, KEX, auth, and channel layers on audited primitive crates (`ml-kem`, `x25519-dalek`, `ed25519-dalek`, `chacha20poly1305`, `aes-gcm`) — no `russh` dependency ([RFC-0003](./docs/rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md)).
+- **Stack:** greenfield SSH-2 transport, KEX, auth, and channel layers on audited primitive crates (`ml-kem`, `x25519-dalek`, `ed25519-dalek`, `chacha20` + `poly1305`, `aes-gcm`) — no `russh` dependency ([RFC-0003](./docs/rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md)).
 - **Workspace:** `crates/quantumssh` (binary) + `crates/quantumssh-core` (library), `unsafe_code = "forbid"` workspace-wide ([ADR-0017](./docs/adr/0017-phase-1-workspace-topology-two-crates-flat.md), [ADR-0018](./docs/adr/0018-phase-1-unsafe-code-forbid-workspace.md)).
 - **ML-KEM-768 crate:** `RustCrypto/ml-kem` ([ADR-0019](./docs/adr/0019-phase-1-ml-kem-crate-rustcrypto.md)).
 - **CI interop gate:** every PR exercises a real OpenSSH 10.x client end-to-end ([ADR-0020](./docs/adr/0020-phase-1-ci-openssh-interop-gate.md)).
