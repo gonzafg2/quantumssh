@@ -78,9 +78,11 @@ how its provider, model and outcome are handled:
   and denies everything else outside the repository. The config travels
   as an environment variable, not as a committed `opencode.json`, so it
   does not change the permissions of anyone running opencode locally.
-  The job has a 15-minute ceiling, and a new push cancels the running
-  review of the same PR without a comment-triggered run being able to
-  cancel the one that is publishing.
+  The job has a 30-minute ceiling (the same as the Codex job; a review
+  through Go with the fan-out prompt takes about ten minutes, several
+  times what the direct API took for the same model), and a new push
+  cancels the running review of the same PR without a comment-triggered
+  run being able to cancel the one that is publishing.
 - **Everything else in ADR-0025 stands:** the triggers and author gate,
   the `/oc` on-demand path, the commit-SHA pin, `share: false` (the
   diffs now go to the provider `OPENCODE_MODEL` names, not to DeepSeek

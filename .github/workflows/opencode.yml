@@ -45,10 +45,14 @@ jobs:
         )
       )
     runs-on: ubuntu-latest
-    # A review here takes about two minutes. Without a ceiling GitHub allows
-    # 360; a hung permission prompt (see OPENCODE_CONFIG_CONTENT) would burn
-    # all of it.
-    timeout-minutes: 15
+    # Without a ceiling GitHub allows 360 minutes; a hung permission prompt
+    # (see OPENCODE_CONFIG_CONTENT) would burn all of it. Measured on #157
+    # with opencode-go/deepseek-v4.1-flash and the fan-out prompt below: the
+    # first review took 9m38s; the second was cut at a 15-minute ceiling
+    # while still working (subagent step 83, no permission prompt in the
+    # log). Same as codex.yml. If a run reaches this, the model or the prompt
+    # is the problem, not the ceiling.
+    timeout-minutes: 30
     permissions:
       contents: read
       id-token: write
