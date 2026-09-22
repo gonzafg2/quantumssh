@@ -11,13 +11,14 @@
 >   The Links section said `Implementation: TBD` and that no code had
 >   landed. That was already false on 2026-06-30, when the ADR was
 >   accepted in the #86 sweep: the implementing milestone, M0 ([#62](https://github.com/gonzafg2/quantumssh/pull/62)),
->   had merged. Corrected to name the implementing code; the Consequences
->   sentence that said the lint was still `deny` now reads as of drafting
->   time.
+>   had merged. Corrected to name the implementing code; the Context
+>   sentence that called the workspace currently empty and the
+>   Consequences sentence that said the lint was still `deny` now read as
+>   of drafting time.
 
 ## Context
 
-[RFC-0003](../rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md) commits Phase 1 to a greenfield SSH stack. The first implementation PR must add the first crate(s) to the currently empty workspace, and the physical shape it picks is durable: every later module, test target, and dependency edge is laid down relative to it, and re-shaping a workspace mid-Phase-1 is churn the project would rather not pay.
+[RFC-0003](../rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md) commits Phase 1 to a greenfield SSH stack. The first implementation PR had to add the first crate(s) to the workspace, empty at drafting time, and the physical shape it picked is durable: every later module, test target, and dependency edge is laid down relative to it, and re-shaping a workspace mid-Phase-1 is churn the project would rather not pay.
 
 Three shapes were on the table: a single `quantumssh` crate holding everything; a conservative two-to-three crate split; or a granular four-to-five crate split (`-core`, `-transport`, `-auth`, `-channel`, …) mirroring how `russh` and the new `OranPie/RuSSH` lay themselves out. This ADR records which shape the first commit settles on, and why early fragmentation is the wrong default. It does not re-open the greenfield decision — that lives in RFC-0003.
 

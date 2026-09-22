@@ -11,7 +11,9 @@
 >   The Links section said `Implementation: TBD` and that no code had
 >   landed. That was already false on 2026-06-30, when the ADR was
 >   accepted in the #86 sweep: the implementing milestone, M5 ([#84](https://github.com/gonzafg2/quantumssh/pull/84)),
->   had merged. Corrected to name the implementing code.
+>   had merged. Corrected to name the implementing code; the Consequences
+>   sentence that placed the gate in the first-crate PR now says it was
+>   wired up in M5, once a connectable binary existed.
 
 ## Context
 
@@ -45,7 +47,7 @@ Phase 1 deliberately does **not** add `cargo-fuzz` (nightly, CI cost; Phase 3 ow
 
 - Running inside a container adds setup time (apt install of `openssh-client`, build toolchain) versus a bare runner. Mitigation: trixie-slim is small; the cost is a few minutes, acceptable for a required correctness gate.
 - A pinned OpenSSH can lag a freshly released wire-format fix until the bump PR lands. Mitigation: that lag is the point — it is a reviewed window, not silent drift; a matrix against 10.0/10.1/10.2 is named as a soft, post-Phase-1 enhancement.
-- The interop gate cannot run until the first crate produces a connectable binary, so it is wired up in the first-crate PR, not before.
+- The interop gate could not run until a connectable binary existed, so it was wired up in M5 ([#84](https://github.com/gonzafg2/quantumssh/pull/84)), not in the first-crate PR (M0) as drafted.
 
 ### Neutral
 
