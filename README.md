@@ -52,9 +52,9 @@ QuantumSSH is built around four technical commitments and one structural one.
 
 **Post-quantum by default, not by opt-in.** Hybrid key exchange (ML-KEM + X25519) is the default and only supported family. Users do not need to know what PQ means or how to configure it. The right thing happens out of the box. Signatures — host keys and user authentication — remain classical Ed25519 for now: they carry no harvest-now-decrypt-later exposure, and the IETF post-quantum signature standard for SSH has not settled. That ordering is deliberate; see the [threat model §6.1](./docs/threat-model.md#61-cryptographic-posture).
 
-**Zero legacy.** No SSH-1. No RSA-1024. No DSA. No CBC modes. No `diffie-hellman-group1-sha1`. No password auth in the default profile. We refuse to inherit 25 years of "it's still there because someone's old router needs it."
+**Zero legacy.** No SSH-1. No RSA. No DSA. No ECDSA over NIST curves. No CBC modes. No `diffie-hellman-group1/14-sha1`. No `ssh-rsa`. No password authentication. No compression. None of it is compiled in, not merely configured off, and the line moves with what NIST and the IETF disallow ([RFC-0009](./docs/rfcs/0009-zero-legacy-moving-frontier.md)). We refuse to inherit 25 years of "it's still there because someone's old router needs it."
 
-**Small attack surface.** The MVP supports public-key authentication, command execution, interactive PTY shell, and SFTP. That is it. Port forwarding, X11 forwarding, agent forwarding, and other features are explicit opt-ins, gated behind feature flags and configuration.
+**Small attack surface.** The `0.1.0` MVP is public-key authentication, command execution, an interactive PTY shell, and SFTP. That is it. Today the server does public-key authentication and single-command `exec`; PTY and SFTP are Phase 2 work ([#109](https://github.com/gonzafg2/quantumssh/issues/109)). Port forwarding, X11 forwarding, agent forwarding, and other features are explicit opt-ins, gated behind feature flags and configuration.
 
 **Open source as a permanent commitment.** This is not a marketing posture. See the next section.
 

@@ -321,9 +321,11 @@ Server-side, the repository runs:
 - **`cargo-deny`** action on every PR
 - **`cargo-audit`** on a weekly cron (Mondays 06:00 UTC)
 
-All of these are configured to fail loud, not silent. The cron and the
-PR action are gated by lightweight predicates while the workspace is
-still empty (see [CI guard implementation note](#ci-guard-implementation-note)).
+All of these are configured to fail loud, not silent. During Phase 0
+the cron and the PR action were gated by lightweight predicates while
+the workspace was still empty; the predicates remain in the workflows
+and are inert now that it has members (see
+[CI guard implementation note](#ci-guard-implementation-note)).
 
 ## Build and CI scaffolding
 
