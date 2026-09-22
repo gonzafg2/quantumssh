@@ -1,7 +1,7 @@
 # ADR 0032: Run the opencode reviewer through OpenCode Go, with the model in a repository variable and proof of review
 
-- **Status:** Proposed
-- **Date:** 2026-09-22 (drafted; becomes the acceptance date on merge)
+- **Status:** Accepted
+- **Date:** 2026-09-22 (accepted on merge of [#157](https://github.com/gonzafg2/quantumssh/pull/157))
 - **Deciders:** Project lead
 - **Related:** Supersedes, in [ADR-0025](0025-opencode-second-automated-reviewer.md) §Decision, the opening sentence (provider DeepSeek, model V4 Pro), the permissions bullet (`pull-requests: write`) and the "sent to DeepSeek" clause of the `No share` bullet; adds a proof-of-review requirement ADR-0025 does not have. The trigger/author-gate, SHA-pin, `share: false` and prompt bullets of ADR-0025 stand. [ADR-0030](0030-codex-third-automated-reviewer.md) (Codex) and [ADR-0031](0031-required-status-checks-commit-lint-and-openssh-interop.md) (reviewers stay advisory) are unchanged. Trust-base framing: [`docs/threat-model.md`](../threat-model.md) §5.5.2.a. Implementation: `.github/workflows/opencode.yml` (lands in the same PR, as ADR-0025 and ADR-0030 did).
 

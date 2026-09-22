@@ -1,7 +1,7 @@
 # ADR 0031: Require `commit-lint` and `openssh-interop` as status checks on `main`
 
-- **Status:** Proposed
-- **Date:** 2026-09-22 (drafted; becomes the acceptance date on merge)
+- **Status:** Accepted
+- **Date:** 2026-09-22 (accepted on merge of [#155](https://github.com/gonzafg2/quantumssh/pull/155))
 - **Deciders:** Project lead
 - **Related:** Amends the required-status-checks bullet of [ADR-0008](0008-branch-protection-zero-required-reviews.md) §Decision (every other bullet of ADR-0008 stands); implements the "required check" bullet of [ADR-0020](0020-phase-1-ci-openssh-interop-gate.md) §Decision; leaves [ADR-0030](0030-codex-third-automated-reviewer.md) §Decision ("not a merge gate") unchanged; the `commit-lint` job was introduced by [PR #67](https://github.com/gonzafg2/quantumssh/pull/67). Documented state: `docs/infrastructure.md` §"Required status checks", `docs/operations.md` §"Branch protection on `main`".
 
