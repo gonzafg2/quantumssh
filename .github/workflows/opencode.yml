@@ -13,17 +13,18 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
 
 # A new push makes the running review of the same PR moot; the surviving run
-# reviews the accumulated diff. cancel-in-progress is CONDITIONAL on purpose:
-# concurrency cancellation happens at run level, before any job `if` is
-# evaluated, and the verdict opencode posts is itself an issue_comment — an
-# unconditional cancel would create a run that kills the run publishing it.
-# Only pull_request runs (pushes) cancel the live one; an issue_comment run
-# joins the group, waits, and is discarded by the job `if` (or runs, if it
-# was a human `/oc`). The group covers both events: pull_request.number in
-# one, issue.number in the other.
+# reviews the accumulated diff. Pushes therefore share the PR's group and
+# cancel the stale in-progress run. Comment-triggered runs do NOT join that
+# group: concurrency is decided at run level, before any job `if` runs, and
+# every comment fires this workflow — including the verdict opencode posts,
+# which would cancel the run publishing it. A group per comment id (unique)
+# also keeps a human `/oc` from being displaced: GitHub holds one pending
+# run per group and replaces it when another is queued, so a `/oc` waiting
+# behind a push would be silently cancelled by the next bot comment. Each
+# comment run starts alone; the job `if` discards the bot ones.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.event.issue.number }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.event.comment.id }}
+  cancel-in-progress: true
 
 jobs:
   opencode:
@@ -254,7 +255,7 @@ jobs:
 
             Read `.github/REVIEW-FORMAT.md` and follow it exactly. It is the report contract: the iteration check against previous comments, the section layout, the severity bands and the confidence threshold. Start with its step 1 — reading the existing PR comments and classifying earlier issues as resolved, open or partly resolved — before analysing the diff.
 
-            Your final answer IS PUBLISHED AUTOMATICALLY as a PR comment by the GitHub App that runs you. Do not try to post it yourself with `gh` or the API — your token is read-only and you do not need to — and do not include notes about your environment or about how the report gets published: write only the report, also when you find nothing.
+            Your final answer IS PUBLISHED AUTOMATICALLY as a PR comment by the GitHub App that runs you. Do not try to post it yourself with `gh` or the API — your token is read-only and you do not need to — and do not include notes about your environment or about how the report gets published. Your final answer must begin with the `## PR Review:` heading and contain only the report: no deliberation, no notes to yourself, no "let me write the report" before it, also when you find nothing.
 
             When making commits, follow Conventional Commits exactly:
             - Format: `<type>(<optional scope>): <short summary>`
