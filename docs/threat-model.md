@@ -1216,11 +1216,14 @@ repeating it.
   the strict-kex boundary, closing the CVE-2023-48795
   prefix-truncation vector that algorithm-name binding alone does
   not address. Defends §5.2.2.
-- **No legacy primitives.** No SSH-1, no RSA-1024, no DSA, no CBC
-  modes, no `diffie-hellman-group1-sha1`, no
+- **No legacy primitives.** No SSH-1, no RSA, no DSA, no ECDSA over
+  NIST curves, no CBC modes, no `diffie-hellman-group1-sha1`, no
   `diffie-hellman-group14-sha1`, no `ssh-rsa` (SHA-1-signed RSA
-  host keys per RFC 9142 §4). Aligned with RFC 9142's MUST-NOT
-  and SHOULD-NOT lists for new deployments.
+  host keys per RFC 9142 §4), no password authentication, no
+  compression — none of it compiled in (the permanent floor,
+  [RFC-0011](rfcs/0011-zero-legacy-floor-reconciliation.md)).
+  Aligned with RFC 9142's MUST-NOT and SHOULD-NOT lists for new
+  deployments.
 
 ### 6.2 Implementation posture
 
