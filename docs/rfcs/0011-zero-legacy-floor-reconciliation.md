@@ -1,6 +1,6 @@
 # RFC 0011: One zero-legacy floor, stated once — MANIFIESTO #3 reconciliation
 
-- **Status:** Draft
+- **Status:** Accepted (2026-09-23)
 - **Authors:** Gonzalo Fleming Garrido
 - **Created:** 2026-09-23
 - **Roadmap issue:** [`#109`](https://github.com/gonzafg2/quantumssh/issues/109) (Phase 2, the current roadmap phase); the reconciliation [RFC-0009](0009-zero-legacy-moving-frontier.md) §Scope boundary deferred
