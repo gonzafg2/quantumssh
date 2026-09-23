@@ -74,13 +74,15 @@ jobs:
       # reviewed". The identity alone is not proof of a report: claude.yml
       # answers `@claude` mentions under the same `claude[bot]` login and
       # the action posts its error messages under it too. Two signals are
-      # accepted instead: an inline comment by that login — only this
-      # workflow mounts the inline-comment MCP tool, so those are exclusive
-      # to the review — or a general comment / review whose body reads as
-      # a report ("PR Review" or "Code review"; the plugin's sandbox has
-      # been seen to flatten the REVIEW-FORMAT heading, so the exact
-      # `## PR Review:` string is not required). Only runs when the action
-      # succeeded: if it failed, the job is already red.
+      # accepted instead: a top-level inline comment by that login — only
+      # this workflow mounts the inline-comment MCP tool; claude.yml's
+      # answers to `@claude` in a review thread are threaded replies
+      # (in_reply_to_id set) and are excluded — or a general comment /
+      # review whose body reads as a report ("PR Review" or "Code review";
+      # the plugin's sandbox has been seen to flatten the REVIEW-FORMAT
+      # heading, so the exact `## PR Review:` string is not required).
+      # Only runs when the action succeeded: if it failed, the job is
+      # already red.
       - name: Require proof that the review was posted
         if: always() && steps.claude-review.outcome == 'success'
         env:
@@ -111,14 +113,14 @@ jobs:
               | awk '{s += $1} END {print s + 0}'
           }
 
-          INLINE=$(count "pulls/$PR/comments" 'true')
+          INLINE=$(count "pulls/$PR/comments" 'select(.in_reply_to_id == null)')
           GENERAL=$(count "issues/$PR/comments" '(.body // "") | test("pr review|code review"; "i")')
           REVIEWS=$(count "pulls/$PR/reviews" '(.body // "") | test("pr review|code review"; "i")')
           TOTAL=$((INLINE + GENERAL + REVIEWS))
 
-          echo "Claude review signals on PR #$PR: $INLINE inline comments, $GENERAL general comments and $REVIEWS reviews reading as a report."
+          echo "Claude review signals on PR #$PR: $INLINE top-level inline comments, $GENERAL general comments and $REVIEWS reviews reading as a report."
 
           if [ "$TOTAL" -eq 0 ]; then
-            echo "::error::Claude Code Review finished successfully but this PR has no review by claude[bot]: no inline comment and no comment or review that reads as a report. A green check with no report is indistinguishable from a review that never happened, so the job fails on purpose. Open the claude-review-transcript artifact: if its last message says it was waiting for a subagent, the agent ended its turn early and a re-run is enough."
+            echo "::error::Claude Code Review finished successfully but this PR has no review by claude[bot]: no top-level inline comment and no comment or review that reads as a report. A green check with no report is indistinguishable from a review that never happened, so the job fails on purpose. Open the claude-review-transcript artifact: if its last message says it was waiting for a subagent, the agent ended its turn early and a re-run is enough."
             exit 1
           fi

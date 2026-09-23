@@ -46,8 +46,9 @@ is on the PR:
   names the workflow-validation case), and otherwise fails the job unless
   the PR carries a review signal by `claude[bot]` (or
   `anthropic-code-agent[bot]`, the action's other posting identity):
-  an inline review comment — only this workflow mounts the
-  inline-comment MCP tool, so those are exclusive to the review — or a
+  a top-level inline review comment — only this workflow mounts the
+  inline-comment MCP tool; `claude.yml`'s answers to `@claude` inside a
+  review thread are threaded replies, which the count excludes — or a
   general comment or review whose body reads as a report ("PR Review"
   or "Code review"). The login alone is not the proof:
   `.github/workflows/claude.yml` answers `@claude` mentions under the
