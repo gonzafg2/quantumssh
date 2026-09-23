@@ -5,7 +5,7 @@
 - **Created:** 2026-09-23
 - **Roadmap issue:** [`#109`](https://github.com/gonzafg2/quantumssh/issues/109) (Phase 2, the current roadmap phase); the reconciliation [RFC-0009](0009-zero-legacy-moving-frontier.md) §Scope boundary deferred
 - **Amends:** MANIFIESTO commitment #3 ("Cero legacy") — the fixed list only; the moving frontier RFC-0009 added stays as it is.
-- **Implementation PR:** this RFC's own PR (docs only: `MANIFIESTO.es.md`, `docs/threat-model.md` §6.1)
+- **Implementation PR:** this RFC's own PR (docs only: `MANIFIESTO.es.md`; `docs/threat-model.md` §5.3.1, §6.1, §6.3; `AGENTS.md`)
 
 ## Summary
 
@@ -16,8 +16,9 @@ NIST curves, CBC modes, `diffie-hellman-group1-sha1` and
 compression — none of it compiled in, not merely configured off**. It writes
 that list into the manifesto, whose commitment #3 still carries the founding
 wording (`RSA-1024`, `group1` only, password auth only "en el perfil por
-defecto"), and into the one restatement in `docs/threat-model.md` §6.1 that
-still disagrees. It does not touch the moving frontier
+defecto"), and into the restatements that still disagree
+(`docs/threat-model.md` §5.3.1, §6.1 and §6.3; `AGENTS.md`, which omitted
+SSH-1). It does not touch the moving frontier
 [RFC-0009](0009-zero-legacy-moving-frontier.md) layered on top of the list, and
 it changes no code: the binary has enforced this floor since Phase 1.
 
@@ -27,8 +28,8 @@ it changes no code: the binary has enforced this floor since Phase 1.
 [#51](https://github.com/gonzafg2/quantumssh/pull/51) (2026-06-10) `CLAUDE.md`
 hard rule #3 has told every reviewer — human and automated — to reject RSA, DSA,
 ECDSA-NIST, CBC, `group1/14-sha1`, `ssh-rsa`, password authentication and
-compression, "not merely configured off". `AGENTS.md` carries the same list.
-PR [#159](https://github.com/gonzafg2/quantumssh/pull/159) (2026-09-22) brought
+compression, "not merely configured off". `AGENTS.md` carries the same list
+minus SSH-1. PR [#159](https://github.com/gonzafg2/quantumssh/pull/159) (2026-09-22) brought
 `README.md` "Zero legacy" to it. But the two documents this repository calls
 authoritative for the commitment say something narrower:
 
@@ -111,12 +112,13 @@ manifesto; the RFC-0009 passage that follows it is unchanged):
 - `docs/threat-model.md` §6.1 "No legacy primitives": `RSA-1024` → RSA; adds
   ECDSA over NIST curves, password authentication, compression, and "none of it
   compiled in". The RFC 9142 anchor stays.
-- `docs/threat-model.md` §5.3.1 test handle and §6.1 "Public-key only": the
+- `docs/threat-model.md` §5.3.1 test handle and §6.3 "Public-key only": the
   two sentences that said password authentication is not offered / public-key
   is the only method "in the default profile" — the same qualifier the
   manifesto drops — now say no other method is compiled in.
-- `README.md` "Zero legacy", `CLAUDE.md` hard rule #3, `AGENTS.md`: already
-  carry the list; untouched.
+- `AGENTS.md` "No legacy crypto": adds SSH-1, the one item its list omitted.
+- `README.md` "Zero legacy" and `CLAUDE.md` hard rule #3: already carry the
+  list; untouched.
 
 ### What this RFC does not touch
 
@@ -130,6 +132,12 @@ manifesto; the RFC-0009 passage that follows it is unchanged):
   the commitment (RFC-0009 §Motivation records why that ordering matters).
 - **Code and configuration.** No code changes; the Phase-2 configuration file
   ([RFC-0010](0010-configuration-file.md)) gains no knob from this RFC.
+- **RFC-0007's text.** Its standing-blocklist paragraph says the list "is
+  broader than the MANIFIESTO #3 prose, which is illustrative". After this RFC
+  the two are identical and the manifesto prose is normative; that clause is
+  superseded in that one respect. RFC-0007 is Accepted and stays as written —
+  accepted RFCs are layered on, not edited (`docs/rfcs/README.md` §After
+  acceptance).
 
 ### Compatibility
 

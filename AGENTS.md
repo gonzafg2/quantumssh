@@ -61,7 +61,7 @@ warnings.
 - **`unsafe_code = "forbid"`** workspace-wide. No first-party `unsafe`, no
   `#[allow]` escape. Dependencies may contain `unsafe` — that's the audited
   primitive layer.
-- **No legacy crypto.** RSA, DSA, ECDSA-NIST, CBC modes,
+- **No legacy crypto.** SSH-1, RSA, DSA, ECDSA-NIST, CBC modes,
   `diffie-hellman-group1/14-sha1`, `ssh-rsa`, password auth, and compression
   are *not compiled in*, not merely configured off. That list is the
   permanent floor; anything NIST/IETF **disallows** is also legacy, while
