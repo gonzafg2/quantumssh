@@ -47,8 +47,9 @@ a **separate** concern, not opened here." This RFC is that concern.
 
 **The gap already cost a PR round.** PR
 [#164](https://github.com/gonzafg2/quantumssh/pull/164) tried to align the
-manifesto as a docs correction; all three automated reviewers (Codex, opencode,
-claude-review) blocked the hunk for the same reason — `CLAUDE.md` puts anything
+manifesto as a docs correction; all three automated reviewers flagged the hunk
+for the same reason — Codex as blocking, opencode as important, claude-review
+in an inline thread on the first commit — because `CLAUDE.md` puts anything
 that "contradicts or refines a `README.md` / `MANIFIESTO.es.md` commitment" in
 the RFC lane. The hunk was dropped; the decision belongs here.
 
@@ -168,8 +169,8 @@ now says so.
 - **Write the enforced list into the manifesto and the threat model (this
   RFC).** Chosen: one list, stated identically everywhere, matching the binary.
 - **Leave the manifesto's founding wording.** Rejected: it contradicts the
-  code, `CLAUDE.md` and `README.md`, and it was already the reason three
-  reviewers blocked #164's hunk.
+  code, `CLAUDE.md` and `README.md`, and it was already the reason #164's hunk
+  was flagged by all three reviewers and dropped.
 - **Narrow `README.md` / `CLAUDE.md` / `AGENTS.md` back to the founding
   wording.** Rejected: it would re-admit RSA-2048+ and a password profile on
   paper, against commitment #2 and against code that has never had them.
