@@ -13,7 +13,9 @@
 >   accepted in the #86 sweep: the implementing milestone, M5 ([#84](https://github.com/gonzafg2/quantumssh/pull/84)),
 >   had merged. Corrected to name the implementing code; the Consequences
 >   sentence that placed the gate in the first-crate PR now says it was
->   wired up in M5, once a connectable binary existed.
+>   wired up in M5, once a connectable binary existed; and the Decision's
+>   "runs the full test suite" — never true of this job, `cargo test`
+>   runs in `ci.yml` — now says so.
 
 ## Context
 
@@ -27,7 +29,7 @@ We will add a **mandatory CI interop job** that exercises a real OpenSSH 10.x cl
 
 - The job runs in a **Debian trixie container** providing OpenSSH 10.0p1-7, on a GitHub-hosted runner, because the default Ubuntu runner ships 9.6p1.
 - The pin is enforced concretely, because the `debian:trixie-slim` *tag* is mutable and Debian's APT repositories advance over time: the container is referenced **by image digest** (`debian@sha256:…`), and `openssh-client` is installed with an **explicit version** (`apt-get install openssh-client=<version>`) from a frozen source (a pinned `snapshot.debian.org` suite, or a vendored `.deb`). The tag name alone is documentation, not the pin.
-- The job asserts the client version — `ssh -V` output (which carries distro/build suffixes, e.g. `OpenSSH_10.0p1 Debian-…`) must **contain** `OpenSSH_10.0p1` — then builds the release binary, runs the full test suite, and runs `tests/interop/run_openssh_client.sh` (connect → pubkey auth → `echo hello` → clean close).
+- The job asserts the client version — `ssh -V` output (which carries distro/build suffixes, e.g. `OpenSSH_10.0p1 Debian-…`) must **contain** `OpenSSH_10.0p1` — then builds the release binary and runs `tests/interop/run_openssh_client.sh` (the full `cargo test` suite runs in `ci.yml`, not in this job) (connect → pubkey auth → `echo hello` → clean close).
 - The interop job is a **required check** for merge into `main`.
 - **The OpenSSH bits are pinned, not floated.** With the digest + package-version pin above, an upstream OpenSSH change that alters wire behaviour never silently breaks an unrelated PR. Bumping the pin (new digest and/or package version) is its own deliberately-reviewed PR ("OpenSSH version bump"), so a wire-format shift during the ongoing PQ-KEX rollout surfaces as a reviewed event, not as a mystery red check on someone else's change. Without the digest + version pin this property does not hold — which is why the pin mechanism is part of this decision, not an implementation detail.
 
