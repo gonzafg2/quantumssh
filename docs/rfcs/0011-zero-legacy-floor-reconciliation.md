@@ -115,7 +115,10 @@ manifesto; the RFC-0009 passage that follows it is unchanged):
 
 - `docs/threat-model.md` §6.1 "No legacy primitives": `RSA-1024` → RSA; adds
   ECDSA over NIST curves, password authentication, compression, and "none of it
-  compiled in". The RFC 9142 anchor stays.
+  compiled in". The RFC 9142 anchor stays, scoped to the key-exchange items —
+  RFC 9142 governs KEX methods only, so the signature, password and
+  compression items rest on the floor alone; the `ssh-rsa` parenthetical no
+  longer cites RFC 9142 §4 for a host-key algorithm.
 - `docs/threat-model.md` §5.3.1 test handle and §6.3 "Public-key only": the
   two sentences that said password authentication is not offered / public-key
   is the only method "in the default profile" — the same qualifier the
