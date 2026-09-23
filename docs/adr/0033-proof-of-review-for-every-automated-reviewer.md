@@ -20,7 +20,8 @@ different reasons:
 - On a **draft** PR (#155), the `code-review` plugin stops by design and
   posts nothing.
 - On a PR it had **already reviewed** (#157, later pushes), the plugin
-  finds its own earlier comment and stops — it reviews a PR once.
+  finds its own earlier general comment and stops — it does not review
+  every push.
 - On #158 the agent **ended its turn early**: after 56 seconds its last
   message was "Both agents are running. I'll wait for them to complete",
   its subagents were still running, and the workflow reported success.
@@ -64,7 +65,8 @@ is on the PR:
   on the PR (its check reads general comments, so a first pass that left
   only inline comments is followed by a second one), the count covers
   the whole PR, not the current run: a green check
-  means *this PR has a Claude review*, not *this push was reviewed*. That
+  means *a review-shaped claude[bot] comment or review is on this PR*,
+  not *this push was reviewed*. That
   is what the plugin offers, and the workflow says so rather than
   pretending otherwise. The job no longer runs on draft PRs (the plugin
   would stop anyway; `ready_for_review` triggers it) nor on PRs whose head
