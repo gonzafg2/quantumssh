@@ -26,7 +26,7 @@ warnings.
 - **Pre-auth path is the highest-trust surface** (threat model §4.1).
   `wire.rs` is the entry point: pure functions over byte slices, bounded
   allocations, no I/O, fuzzable by construction.
-- **Transport is a type-state machine** (M3–M5, `transport.rs`): stages run
+- **Transport is a type-state machine** (M3–M6, `transport.rs`): stages run
   from version exchange through KEX, NEWKEYS, `Expect<UserAuth>` and
   `Expect<AuthAccepted>` into the `session`/`exec` channel, with
   mid-session re-keying (ADR-0026). Never loosen this to

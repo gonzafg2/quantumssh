@@ -25,7 +25,7 @@ At drafting time the workspace set `unsafe_code = "deny"` in `[workspace.lints.r
 
 We will set `unsafe_code = "forbid"` in `[workspace.lints.rust]`, replacing the `"deny"` in force at drafting time, so that first-party QuantumSSH code is free of `unsafe` **with no per-item override available**.
 
-- The `Cargo.toml` change lands in the **same PR as the first Phase 1 crate**, so the first crate compiles under `forbid` from its first line. (The lint had no observable effect on the then-empty workspace; flipping it only became load-bearing once first-party code existed, which is why this ADR advanced to Accepted at that point.)
+- The `Cargo.toml` change lands in the **same PR as the first Phase 1 crate**, so the first crate compiles under `forbid` from its first line. (The lint had no observable effect on the then-empty workspace; flipping it only became load-bearing once first-party code existed; the Status flip followed in the #86 sweep.)
 - `forbid` applies workspace-wide via `[lints] workspace = true` inheritance in every member crate ([ADR-0017](0017-phase-1-workspace-topology-two-crates-flat.md)).
 - The constraint binds **first-party code only**. Dependencies keep their own `unsafe`; that is the audited primitive layer RFC-0003 deliberately relies on, and the lint does not (and cannot) reach into them.
 
