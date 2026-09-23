@@ -1,4 +1,4 @@
-# ADR 0033: A green reviewer check proves a review was posted
+# ADR 0033: A green reviewer check requires a review-shaped report on the PR
 
 - **Status:** Proposed
 - **Date:** 2026-09-22 (drafted; becomes the acceptance date on merge)
@@ -39,8 +39,8 @@ the action posted before letting the check pass.
 
 ## Decision
 
-We will make every automated reviewer's check green only when a report
-is on the PR:
+We will make every automated reviewer's check green only when a
+review-shaped report by that reviewer is on the PR:
 
 - **Claude Code Review.** After the action succeeds, a step fails the job
   when the action left no transcript (it skipped itself; the message

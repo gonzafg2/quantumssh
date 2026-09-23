@@ -80,8 +80,9 @@ jobs:
       # answers to `@claude` in a review thread are threaded replies
       # (in_reply_to_id set) and are excluded — or a general comment /
       # review whose body reads as a report ("PR Review" or "Code review";
-      # the plugin's sandbox has been seen to flatten the REVIEW-FORMAT
-      # heading, so the exact `## PR Review:` string is not required).
+      # the plugin has posted `## Code review` and a `PR Review:` line
+      # without its `##` on real reviews, so the exact `## PR Review:`
+      # string is not required).
       # Only runs when the action succeeded: if it failed, the job is
       # already red.
       - name: Require proof that the review was posted
