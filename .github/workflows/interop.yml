@@ -26,28 +26,65 @@ jobs:
   openssh-interop:
     name: openssh-interop
     runs-on: ubuntu-latest
-    # ADR-0020: pin the base image by digest (the `debian:trixie-slim`
-    # tag is mutable), so the base filesystem is frozen. The OpenSSH
-    # package itself is asserted to the 10.0p line below; freezing its
-    # exact build via snapshot.debian.org is the next hardening step
-    # noted in ADR-0020. Bumping the digest is a reviewed event.
+    # ADR-0020 / ADR-0034: the base image is pinned by digest (the
+    # `debian:trixie-slim` tag is mutable) and the packages come from the
+    # snapshot.debian.org archive state that image was built from, with
+    # openssh-client at an exact version and `ssh -V` asserted verbatim in
+    # the install step. Bumping the digest, the snapshot timestamp, the
+    # package version or the asserted string is one reviewed event
+    # ("OpenSSH version bump"); the four move together.
     container:
-      # debian:trixie-slim
+      # debian:trixie-20260623-slim
       image: debian@sha256:28de0877c2189802884ccd20f15ee41c203573bd87bb6b883f5f46362d24c5c2
     steps:
       - name: Install OpenSSH client + build prerequisites
+        env:
+          # The image's own /etc/apt/sources.list.d/debian.sources carries,
+          # commented out, the snapshot.debian.org timestamp it was built
+          # from; SNAPSHOT must be that timestamp (the step checks it), so the
+          # base filesystem and the packages come from one frozen archive
+          # state. A newer snapshot upgrades libc6 and OpenSSL underneath the
+          # client; an older one cannot satisfy libc6-dev (#98). To bump:
+          # new digest → read its timestamp into SNAPSHOT → resolve the
+          # package version there → re-pin the `ssh -V` string.
+          SNAPSHOT: 20260623T000000Z
+          OPENSSH_CLIENT_VERSION: '1:10.0p1-7+deb13u4'
+          # Exact `ssh -V` of that package from that snapshot. OpenSSL is
+          # part of the string, so it pins the library build as well.
+          SSH_V_EXPECTED: 'OpenSSH_10.0p2 Debian-7+deb13u4, OpenSSL 3.5.6 7 Apr 2026'
         run: |
+          set -euo pipefail
+          grep -q "snapshot.debian.org/archive/debian/${SNAPSHOT}" /etc/apt/sources.list.d/debian.sources \
+            || { echo "::error::SNAPSHOT=${SNAPSHOT} is not the snapshot this image was built from; see /etc/apt/sources.list.d/debian.sources"; exit 1; }
+          # http, not https: the slim image ships no CA bundle, and fetching
+          # one from the live mirror first would reintroduce the mixed-state
+          # failure of #98. apt verifies the Release signatures (Signed-By);
+          # TLS would add confidentiality only. Check-Valid-Until off: the
+          # archived Release files of trixie-updates and trixie-security are
+          # past their seven-day validity window.
+          cat > /etc/apt/sources.list.d/debian.sources <<EOF
+          Types: deb
+          URIs: http://snapshot.debian.org/archive/debian/${SNAPSHOT}/
+          Suites: trixie trixie-updates
+          Components: main
+          Signed-By: /usr/share/keyrings/debian-archive-keyring.pgp
+
+          Types: deb
+          URIs: http://snapshot.debian.org/archive/debian-security/${SNAPSHOT}/
+          Suites: trixie-security
+          Components: main
+          Signed-By: /usr/share/keyrings/debian-archive-keyring.pgp
+          EOF
+          cat > /etc/apt/apt.conf.d/99snapshot <<'EOF'
+          Acquire::Check-Valid-Until "false";
+          Acquire::Retries "3";
+          EOF
           apt-get update
           apt-get install -y --no-install-recommends \
-            ca-certificates curl gcc libc6-dev openssh-client
-          # ADR-0020 asserts the client version. The ADR names 10.0p1, but
-          # trixie's openssh-client (package 1:10.0p1-7+deb13uN) now ships
-          # binary OpenSSH_10.0p2 via a security update — so assert the
-          # 10.0p line (p1/p2), which is exactly the drift the digest +
-          # package-version pin is meant to surface as a reviewed event.
+            ca-certificates curl gcc libc6-dev "openssh-client=${OPENSSH_CLIENT_VERSION}"
           ssh -V 2>&1
-          ssh -V 2>&1 | grep -qE "OpenSSH_10\.0p[0-9]" \
-            || { echo "::error::expected OpenSSH 10.0p line in trixie"; ssh -V; exit 1; }
+          [ "$(ssh -V 2>&1)" = "$SSH_V_EXPECTED" ] \
+            || { echo "::error::ssh -V is not the pinned client; expected '$SSH_V_EXPECTED'"; exit 1; }
           # The hybrid KEX must be offered, or the gate cannot test it.
           ssh -Q kex | grep -qx "mlkem768x25519-sha256" \
             || { echo "::error::mlkem768x25519-sha256 not offered by this client"; exit 1; }
