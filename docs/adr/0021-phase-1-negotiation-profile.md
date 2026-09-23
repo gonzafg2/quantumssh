@@ -3,13 +3,24 @@
 - **Status:** Accepted
 - **Date:** 2026-06-30 (accepted in the #86 Phase-1 governance sweep)
 - **Deciders:** Project lead
-- **Related:** Implements [RFC-0003](../rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md) (greenfield stack) at the wire level; consumes [ADR-0019](0019-phase-1-ml-kem-crate-rustcrypto.md) (ML-KEM crate); realises `docs/threat-model.md` §6.1 (cryptographic posture) and §5.2 (key-exchange attack vectors); its KEX selection and no-downgrade behaviour are exercised end-to-end by [ADR-0020](0020-phase-1-ci-openssh-interop-gate.md) (OpenSSH interop gate). Planned implementation (TBD): the `kex` and `transport` modules of `quantumssh-core`, which do not exist yet — the first crate has not landed.
+- **Related:** Implements [RFC-0003](../rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md) (greenfield stack) at the wire level; consumes [ADR-0019](0019-phase-1-ml-kem-crate-rustcrypto.md) (ML-KEM crate); realises `docs/threat-model.md` §6.1 (cryptographic posture) and §5.2 (key-exchange attack vectors); its KEX selection and no-downgrade behaviour are exercised end-to-end by [ADR-0020](0020-phase-1-ci-openssh-interop-gate.md) (OpenSSH interop gate). Implementation: the `kex` module of `quantumssh-core` (M2, [#64](https://github.com/gonzafg2/quantumssh/pull/64)) and its `transport` module (M3, [#65](https://github.com/gonzafg2/quantumssh/pull/65)); at drafting time they did not exist.
+
+> **Post-acceptance errata** (per [ADR-0015](0015-permit-annotated-errata-in-adrs.md)):
+>
+> - **2026-09-22** ([PR #159](https://github.com/gonzafg2/quantumssh/pull/159)):
+>   The Links section said `Implementation: TBD` and that no code had
+>   landed. That was already false on 2026-06-30, when the ADR was
+>   accepted in the #86 sweep: the implementing milestones, M2 ([#64](https://github.com/gonzafg2/quantumssh/pull/64)) and M3 ([#65](https://github.com/gonzafg2/quantumssh/pull/65)),
+>   had merged. Corrected to name the implementing code; the Related
+>   sentence that said the code did not exist yet now reads as of
+>   drafting time, and the two `(TBD)` markers next to the `kex` module
+>   (Context, Consequences) name the milestone instead.
 
 ## Context
 
 [RFC-0003](../rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md) committed Phase 1 to a greenfield SSH-2 transport. The first thing that transport does on every connection is exchange `SSH_MSG_KEXINIT` (RFC 4253 §7.1), which carries ten name-lists that, intersected with the peer's, decide every algorithm the session uses. What QuantumSSH places in those name-lists *is* its cryptographic posture on the wire — and once a public client population exists (Phase 2, `0.1.0`), the profile becomes a compatibility contract that cannot be narrowed without breaking peers.
 
-RFC-0003, the README, and `docs/threat-model.md` §6.1 each state pieces of the intended profile (hybrid PQ KEX only, Ed25519 host keys, AEAD ciphers, no legacy, strict-kex required) but none assembles the *complete* set of ten name-lists an implementer must hard-code into the `kex` module (TBD). This ADR is that assembly. It does not re-open any algorithm choice RFC-0003 already made; it fixes the exact strings, their order, and the failure behaviour, so the implementation and the ADR-0020 interop tests have one authoritative reference.
+RFC-0003, the README, and `docs/threat-model.md` §6.1 each state pieces of the intended profile (hybrid PQ KEX only, Ed25519 host keys, AEAD ciphers, no legacy, strict-kex required) but none assembles the *complete* set of ten name-lists an implementer must hard-code into the `kex` module (M2, [#64](https://github.com/gonzafg2/quantumssh/pull/64)). This ADR is that assembly. It does not re-open any algorithm choice RFC-0003 already made; it fixes the exact strings, their order, and the failure behaviour, so the implementation and the ADR-0020 interop tests have one authoritative reference.
 
 A specific subtlety this ADR must settle: SSH AEAD ciphers (`chacha20-poly1305@openssh.com`, `aes256-gcm@openssh.com`) provide integrity inherently. The `mac_algorithms` name-lists are still sent in `SSH_MSG_KEXINIT`, but when an AEAD cipher is the negotiated encryption algorithm **MAC selection is skipped entirely and the contents of `mac_algorithms` are ignored** — no separate MAC is computed or applied, and an empty MAC intersection is never a connection failure (per the chacha20-poly1305@openssh.com and OpenSSH AES-GCM specifications: "MAC negotiation MUST be skipped", "failures … MUST NOT cause connection failure"). Because QuantumSSH offers AEAD ciphers *only*, the negotiated MAC is never exercised in any session. The decision below states what nonetheless goes in that field and what that means for the dependency set.
 
@@ -65,7 +76,7 @@ Additional binding decisions:
 
 ### Positive
 
-- One authoritative source for the wire profile: the `kex` module (TBD) and the ADR-0020 interop tests are to reference this ADR rather than scattered prose across RFC-0003, the README, and the threat model.
+- One authoritative source for the wire profile: the `kex` module (M2, [#64](https://github.com/gonzafg2/quantumssh/pull/64)) and the ADR-0020 interop tests are to reference this ADR rather than scattered prose across RFC-0003, the README, and the threat model.
 - Every name-list is the smallest set consistent with the MANIFIESTO and the two-AEAD resilience hedge recorded in Alternative 1: one KEX, one host-key type, two AEAD ciphers, no compression, no legacy. MANIFIESTO #3 ("zero legacy") is mechanically auditable against this file.
 - Dropping `hmac` from the Phase 1 dependency set removes a crate that would otherwise be compiled but never called — consistent with MANIFIESTO #4 ("small attack surface").
 - The `SSH_DISCONNECT_KEY_EXCHANGE_FAILED` behaviour makes the "no downgrade" guarantee a testable property, not an aspiration.
@@ -101,7 +112,7 @@ Since the MAC is never used, the field could be left empty. Rejected: an empty M
 
 ## Links
 
-- Implementation: TBD — when the first crate lands, the KEXINIT construction and negotiation will live in the `kex` and `transport` modules of `quantumssh-core`. These paths do not exist in the repository yet (same posture as ADR-0020's "Implementation: TBD").
+- Implementation: M2 ([#64](https://github.com/gonzafg2/quantumssh/pull/64)) — `crates/quantumssh-core/src/kex.rs` (KEXINIT construction and negotiation); M3 ([#65](https://github.com/gonzafg2/quantumssh/pull/65)) — `crates/quantumssh-core/src/transport.rs`.
 - Interop assertions: ADR-0020's hard acceptance subset (its verbose-KEX assertion and its no-hybrid negative test); ADR-0020 owns the test identifiers and asserted strings.
 - Related ADRs: [ADR-0019](0019-phase-1-ml-kem-crate-rustcrypto.md) (ML-KEM crate), [ADR-0020](0020-phase-1-ci-openssh-interop-gate.md) (interop gate), [ADR-0018](0018-phase-1-unsafe-code-forbid-workspace.md) (`unsafe_code = "forbid"`).
 - Standards: RFC 4253 §7.1 (KEXINIT), RFC 8308 (`ext-info-c`, `server-sig-algs`), RFC 8709 (`ssh-ed25519`), `draft-ietf-sshm-mlkem-hybrid-kex-10` (`mlkem768x25519-sha256`), the `kex-strict-{c,s}-v00@openssh.com` extension (CVE-2023-48795 / Terrapin).

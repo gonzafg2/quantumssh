@@ -5,9 +5,20 @@
 - **Deciders:** Project lead
 - **Related:** Implements [RFC-0003](../rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md) §"Operational dependencies of this decision"; sources the project's internal Phase-1 decision notes §"Decisión 2"; interacts with [ADR-0011](0011-ci-guards-workspace-state.md) (CI guards self-disable on first crate) and [ADR-0018](0018-phase-1-unsafe-code-forbid-workspace.md) (`unsafe_code = "forbid"`).
 
+> **Post-acceptance errata** (per [ADR-0015](0015-permit-annotated-errata-in-adrs.md)):
+>
+> - **2026-09-22** ([PR #159](https://github.com/gonzafg2/quantumssh/pull/159)):
+>   The Links section said `Implementation: TBD` and that no code had
+>   landed. That was already false on 2026-06-30, when the ADR was
+>   accepted in the #86 sweep: the implementing milestone, M0 ([#62](https://github.com/gonzafg2/quantumssh/pull/62)),
+>   had merged. Corrected to name the implementing code; the Context
+>   sentence that called the workspace currently empty and the
+>   Consequences sentence that said the lint was still `deny` now read as
+>   of drafting time.
+
 ## Context
 
-[RFC-0003](../rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md) commits Phase 1 to a greenfield SSH stack. The first implementation PR must add the first crate(s) to the currently empty workspace, and the physical shape it picks is durable: every later module, test target, and dependency edge is laid down relative to it, and re-shaping a workspace mid-Phase-1 is churn the project would rather not pay.
+[RFC-0003](../rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md) commits Phase 1 to a greenfield SSH stack. The first implementation PR had to add the first crate(s) to the workspace, empty at drafting time, and the physical shape it picked is durable: every later module, test target, and dependency edge is laid down relative to it, and re-shaping a workspace mid-Phase-1 is churn the project would rather not pay.
 
 Three shapes were on the table: a single `quantumssh` crate holding everything; a conservative two-to-three crate split; or a granular four-to-five crate split (`-core`, `-transport`, `-auth`, `-channel`, …) mirroring how `russh` and the new `OranPie/RuSSH` lay themselves out. This ADR records which shape the first commit settles on, and why early fragmentation is the wrong default. It does not re-open the greenfield decision — that lives in RFC-0003.
 
@@ -37,7 +48,7 @@ The split is **two, not one and not four-plus**. The binary stays a wiring/CLI s
 - Integration tests target `quantumssh-core` directly, without spawning the binary.
 - Single-responsibility boundary: the binary is entrypoint/CLI; the library is the server. The boundary is enforced by the crate edge, not by convention.
 - `Cargo.lock` appears at the first binary commit, satisfying the `audit.yml` predicate from [ADR-0011](0011-ci-guards-workspace-state.md) with no extra work, and self-disabling the workspace-empty CI guards on the same commit.
-- Lint inheritance is uniform: every crate carries `[lints] workspace = true`, so the workspace `unsafe_code` lint (`"deny"` today; promoted to `"forbid"` by the planned [ADR-0018](0018-phase-1-unsafe-code-forbid-workspace.md)) applies to every crate by construction.
+- Lint inheritance is uniform: every crate carries `[lints] workspace = true`, so the workspace `unsafe_code` lint (`"deny"` at drafting time, `"forbid"` since M0 under [ADR-0018](0018-phase-1-unsafe-code-forbid-workspace.md)) applies to every crate by construction.
 
 ### Negative
 
@@ -68,4 +79,4 @@ A middle option. Rejected because Phase 1 has exactly one product (the server) a
 - Evidence: [`matklad`, *Large Rust Workspaces*](https://matklad.github.io/2021/08/22/large-rust-workspaces.html); [`russh` discussion #315](https://github.com/Eugeny/russh/discussions/315).
 - Interacts with: [ADR-0011](0011-ci-guards-workspace-state.md) (CI workspace-state guards), [ADR-0018](0018-phase-1-unsafe-code-forbid-workspace.md) (`unsafe_code = "forbid"`).
 - Roadmap: Phase 1 / Hito 1 — [`#9`](https://github.com/gonzafg2/quantumssh/issues/9).
-- Implementation: TBD (first Phase 1 crate — no code has landed yet).
+- Implementation: M0 ([#62](https://github.com/gonzafg2/quantumssh/pull/62)) — `crates/quantumssh-core/` and `crates/quantumssh/`, the two flat members of `[workspace] members` in `Cargo.toml`.

@@ -3,7 +3,17 @@
 - **Status:** Accepted
 - **Date:** 2026-06-30 (accepted in the #86 Phase-1 governance sweep)
 - **Deciders:** Project lead
-- **Related:** Realises `docs/threat-model.md` §2.7 (audit record) and its mandated `authenticated_identity` / `executing_uid` fields; makes the §8.12 per-user-UID gap visible in logs; consumes [ADR-0022](0022-phase-1-async-runtime-tokio.md) (the runtime that emits) and [ADR-0023](0023-phase-1-channel-layer-scope.md) (the exec boundary that produces `exec.*` events). Planned implementation (TBD): `tracing` calls in `quantumssh-core`, subscriber init in the `quantumssh` binary. Neither exists yet.
+- **Related:** Realises `docs/threat-model.md` §2.7 (audit record) and its mandated `authenticated_identity` / `executing_uid` fields; makes the §8.12 per-user-UID gap visible in logs; consumes [ADR-0022](0022-phase-1-async-runtime-tokio.md) (the runtime that emits) and [ADR-0023](0023-phase-1-channel-layer-scope.md) (the exec boundary that produces `exec.*` events). Implementation: subscriber init in the `quantumssh` binary (M0 [#62](https://github.com/gonzafg2/quantumssh/pull/62)), the `auth.*` and `exec.*` events in `quantumssh-core` (M4 [#78](https://github.com/gonzafg2/quantumssh/pull/78), M5 [#84](https://github.com/gonzafg2/quantumssh/pull/84)); at drafting time neither existed.
+
+> **Post-acceptance errata** (per [ADR-0015](0015-permit-annotated-errata-in-adrs.md)):
+>
+> - **2026-09-22** ([PR #159](https://github.com/gonzafg2/quantumssh/pull/159)):
+>   The Links section said `Implementation: TBD` and that no code had
+>   landed. That was already false on 2026-06-30, when the ADR was
+>   accepted in the #86 sweep: the implementing milestones, M0 ([#62](https://github.com/gonzafg2/quantumssh/pull/62)) for the subscriber, M4 ([#78](https://github.com/gonzafg2/quantumssh/pull/78)) and M5 ([#84](https://github.com/gonzafg2/quantumssh/pull/84)) for the `auth.*` and `exec.*` events,
+>   had merged. Corrected to name the implementing code; the Related
+>   sentence that said the code did not exist yet now reads as of
+>   drafting time.
 
 ## Context
 
@@ -86,7 +96,7 @@ Treat the schema as stable immediately. Rejected as premature: Phase 1 has no co
 
 ## Links
 
-- Implementation: TBD — `tracing` event/span calls throughout `quantumssh-core`; `tracing-subscriber` init in `quantumssh/src/main.rs`. Neither exists yet.
+- Implementation: M4 ([#78](https://github.com/gonzafg2/quantumssh/pull/78)) and M5 ([#84](https://github.com/gonzafg2/quantumssh/pull/84)) — `tracing` events throughout `quantumssh-core` (`auth.*` emitted in `src/transport.rs`, `exec.*` in `src/channel.rs`); `tracing-subscriber` initialisation in `crates/quantumssh/src/main.rs` (M0, [#62](https://github.com/gonzafg2/quantumssh/pull/62)); the escape-safe field formatter in `crates/quantumssh/src/log_fields.rs` followed in [#101](https://github.com/gonzafg2/quantumssh/pull/101) (2026-07-06, after acceptance).
 - Related ADRs: [ADR-0016](0016-phase-1-service-account-uid-model.md) (the service-account UID that `executing_uid` records), [ADR-0022](0022-phase-1-async-runtime-tokio.md) (runtime), [ADR-0023](0023-phase-1-channel-layer-scope.md) (the exec boundary producing `exec.*`).
 - Threat model: §2.7 (audit record and the mandated fields), §5.3.1 (why `failure_count` is per-source), §5.4.3 / §5.4.4 (no session content; escape-safe metadata), §5.5.1 (one-way sink, JSON shipping, and the origin of the public-interface-from-Phase-2 commitment), §6.2 (restates it as a mitigation: schema-versioned, stable from Phase 2), §8.12 (the UID gap this schema makes visible).
 - Standards / conventions: OpenSSH key-fingerprint format (`SHA256:` base64, unpadded) for `authenticated_identity`; [`tracing`](https://docs.rs/tracing) and [`tracing-subscriber`](https://docs.rs/tracing-subscriber) as the emission and subscriber layers.

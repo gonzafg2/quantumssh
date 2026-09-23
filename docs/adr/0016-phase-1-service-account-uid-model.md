@@ -5,6 +5,18 @@
 - **Deciders:** Project lead
 - **Related:** Operational counterpart to [RFC-0002](../rfcs/0002-threat-model-phase1-uid-model-and-non-goal.md); this ADR depends on the merge of [PR #24](https://github.com/gonzafg2/quantumssh/pull/24) and should land after it.
 
+> **Post-acceptance errata** (per [ADR-0015](0015-permit-annotated-errata-in-adrs.md)):
+>
+> - **2026-09-22** ([PR #159](https://github.com/gonzafg2/quantumssh/pull/159)):
+>   The Links section said `Implementation: TBD` and that no code had
+>   landed. That was already false on 2026-06-30, when the ADR was
+>   accepted in the #86 sweep: the implementing milestones, M0 ([#62](https://github.com/gonzafg2/quantumssh/pull/62)) and M5 ([#84](https://github.com/gonzafg2/quantumssh/pull/84)),
+>   had merged. Corrected to name the implementing code; the Links
+>   entry that awaited a "separate ADR" for single-command execution
+>   names ADR-0023, and the Consequences sentence that promised
+>   operator guidance "when Phase 1 lands" says it is still to be
+>   written.
+
 ## Context
 
 [RFC-0002](../rfcs/0002-threat-model-phase1-uid-model-and-non-goal.md) documents the threat-model side: §8.12 declares per-user UID isolation a Phase-1 non-goal, with a closure condition pointing at Phase 3 privilege-separation work. This ADR documents the **operational** side: the concrete OS-level posture Phase 1 deploys to make that non-goal honest.
@@ -45,7 +57,7 @@ The audit-record requirement from RFC-0002 §2.7 — logging `executing_uid` dis
 
 ### Negative
 
-- Phase 1 cannot support multi-tenant deployments. Every key in `authorized_keys` is operationally equivalent to a key for the service account. Mitigation: documented as a deferred non-goal in RFC-0002 §8.12; operator-facing guidance to be added to `docs/operations.md` when Phase 1 lands (separate ADR or doc PR, not in scope here).
+- Phase 1 cannot support multi-tenant deployments. Every key in `authorized_keys` is operationally equivalent to a key for the service account. Mitigation: documented as a deferred non-goal in RFC-0002 §8.12; operator-facing guidance was planned for `docs/operations.md` once Phase 1 landed and is still to be written (separate doc PR, not in scope here).
 - File-system and process accesses inherit the service account's authority, not the authenticated user's. A reader of §2.5 alone (without §8.12) could misread the implementation's guarantees. Mitigation: §2.5's "Phase-bounded reality" paragraph forwards the reader to §8.12 explicitly.
 - Phase 3 will be a substantive change of posture (running as `root` or with `CAP_SETUID`), not an incremental refinement. Mitigation: that change is gated by its own RFC, named as the closure condition of RFC-0002 §8.12.
 
@@ -79,5 +91,5 @@ Variant of Alternative 4 with a smaller privileged blast radius. The Phase 1 rea
 
 - Threat-model counterpart: [RFC-0002](../rfcs/0002-threat-model-phase1-uid-model-and-non-goal.md), §2.5 "Phase-bounded reality" and §8.12 "Per-user UID isolation until Phase 3".
 - Roadmap: Phase 1 / Hito 1 — [`#9`](https://github.com/gonzafg2/quantumssh/issues/9).
-- Implementation: TBD (Phase 1 listener and exec-channel handler — no code has landed yet; see [ADR-0009](0009-workspace-no-members-during-phase-0.md) for the current workspace state).
-- Related future work: a separate ADR will record the operational scope of "single-command execution" (the channel-layer subset of RFC 4254, supported message types, stdin handling, exit-status propagation). That ADR cites this one for the UID question.
+- Implementation: M0 ([#62](https://github.com/gonzafg2/quantumssh/pull/62)) — `crates/quantumssh-core/src/server.rs` (the listener); M5 ([#84](https://github.com/gonzafg2/quantumssh/pull/84)) — `crates/quantumssh-core/src/exec.rs` (the service-account UID under which the `exec` channel runs).
+- Related: [ADR-0023](0023-phase-1-channel-layer-scope.md) records the operational scope of "single-command execution" (the channel-layer subset of RFC 4254, supported message types, stdin handling, exit-status propagation) and cites this one for the UID question; at drafting time it was still to be written.

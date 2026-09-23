@@ -26,9 +26,10 @@ QuantumSSH closed Phase 0 on 2026-05-10. The repository scaffolding,
 governance documents, CI workflows, project PGP key, DNS zone with
 DNSSEC, TLS termination with HSTS, CAA whitelist, inbound email
 forwarding, and branch protection on `main` were all put in place
-across that single window. No Rust source code has been written yet;
-the `Cargo.toml` is a virtual manifest with no member crates (see
-[Workspace topology](#workspace-topology) for the rationale).
+across that single window. At that point no Rust source code had been
+written and the `Cargo.toml` was a virtual manifest with no member
+crates; the two crates landed in M0 (#62, 2026-06-12) — see
+[Workspace topology](#workspace-topology).
 
 This document is gap-honest. The project does **not** currently publish
 an SLO or a status page, does not run a third-party security audit (one
@@ -320,18 +321,22 @@ Server-side, the repository runs:
 - **`cargo-deny`** action on every PR
 - **`cargo-audit`** on a weekly cron (Mondays 06:00 UTC)
 
-All of these are configured to fail loud, not silent. The cron and the
-PR action are gated by lightweight predicates while the workspace is
-still empty (see [CI guard implementation note](#ci-guard-implementation-note)).
+All of these are configured to fail loud, not silent. During Phase 0
+the cron and the PR action were gated by lightweight predicates while
+the workspace was still empty; the predicates remain in the workflows
+and are inert now that it has members (see
+[CI guard implementation note](#ci-guard-implementation-note)).
 
 ## Build and CI scaffolding
 
 ### Workspace topology
 
-The `Cargo.toml` at the repo root is a workspace manifest with
-`members = []`. There is no Rust source code yet; the workspace-level
-structural decisions are locked in ahead of the first crate so Phase 1
-inherits them without retrofitting. The CI workflows guard against
+The `Cargo.toml` at the repo root is a workspace manifest whose
+`members` are `crates/quantumssh-core` and `crates/quantumssh`
+([ADR-0017](./adr/0017-phase-1-workspace-topology-two-crates-flat.md)).
+During Phase 0 it was `members = []` with no Rust source code; the
+workspace-level structural decisions were locked in ahead of the first
+crate so Phase 1 inherited them without retrofitting. The CI workflows guard against
 Cargo's refusal to operate on an empty manifest until the first crate
 lands; the guards self-disable on that event.
 
@@ -342,20 +347,22 @@ Decision rationale (shipping the virtual manifest in Phase 0): see
 
 The workspace pins `resolver = "3"`, `edition = "2024"`, and
 `rust-version = "1.92"`. The `rust-toolchain.toml` pins the channel to
-current stable. Workspace lints include `unsafe_code = "deny"` by
-default; opting into `unsafe` will be a deliberate per-block decision
-with justification, review, and tests — per the "memory-safe by
-construction" commitment in `README.md`.
+current stable. Workspace lints set `unsafe_code = "forbid"`
+([ADR-0018](./adr/0018-phase-1-unsafe-code-forbid-workspace.md)),
+inherited by both crates: there is no per-block opt-in, `#[allow]`
+cannot override it, and first-party `unsafe` would need a superseding ADR — per
+the "memory-safe by construction" commitment in `README.md`.
 
 Decision rationale (the specific resolver / edition / MSRV pinning):
 see [ADR-0010](./adr/0010-toolchain-pinning-resolver-3-edition-2024-msrv-1-92.md).
 
 ### CI guard implementation note
 
-Each CI workflow that runs a Cargo subcommand is gated by a small
-predicate, but the predicates are not the same across the three
-workflows: they match the actual failure mode of the Cargo command
-they protect.
+Each of the three workflows that ran a Cargo subcommand during Phase 0
+(`ci.yml`, `deny.yml`, `audit.yml`) is gated by a small predicate, but
+the predicates are not the same across them: they match the actual
+failure mode of the Cargo command they protect. `interop.yml`, added in
+M5 once the workspace had members, runs `cargo build` with no guard.
 
 - `ci.yml` and `deny.yml` are gated on **`workspace.members` being
   non-empty**, read from `Cargo.toml` with the standard-library
@@ -407,8 +414,7 @@ tracker.
   [`README.md`](../README.md) (English),
   [`MANIFIESTO.es.md`](../MANIFIESTO.es.md) (Spanish).
 - **Threat model**: [`docs/threat-model.md`](./threat-model.md)
-  (currently a skeleton; will be substantiated before the first
-  cryptographic code lands).
+  (substantive; structural changes go through the RFC process).
 - **Contribution workflow**, DCO sign-off, commit conventions:
   [`CONTRIBUTING.md`](../CONTRIBUTING.md).
 - **Per-record DNS step-by-step or registrar / DNS-host panel

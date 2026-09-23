@@ -48,13 +48,13 @@ We think there is room for a different answer.
 
 QuantumSSH is built around four technical commitments and one structural one.
 
-**Memory-safe by construction.** Written in Rust. No `unsafe` blocks in the protocol or crypto layers without justification, review, and tests. The borrow checker is a feature, not a tax.
+**Memory-safe by construction.** Written in Rust. No first-party `unsafe`, anywhere: the workspace sets `unsafe_code = "forbid"` ([ADR-0018](./docs/adr/0018-phase-1-unsafe-code-forbid-workspace.md)), with no `#[allow]` escape. The borrow checker is a feature, not a tax.
 
 **Post-quantum by default, not by opt-in.** Hybrid key exchange (ML-KEM + X25519) is the default and only supported family. Users do not need to know what PQ means or how to configure it. The right thing happens out of the box. Signatures — host keys and user authentication — remain classical Ed25519 for now: they carry no harvest-now-decrypt-later exposure, and the IETF post-quantum signature standard for SSH has not settled. That ordering is deliberate; see the [threat model §6.1](./docs/threat-model.md#61-cryptographic-posture).
 
-**Zero legacy.** No SSH-1. No RSA-1024. No DSA. No CBC modes. No `diffie-hellman-group1-sha1`. No password auth in the default profile. We refuse to inherit 25 years of "it's still there because someone's old router needs it."
+**Zero legacy.** No SSH-1. No RSA. No DSA. No ECDSA over NIST curves. No CBC modes. No `diffie-hellman-group1/14-sha1`. No `ssh-rsa`. No password authentication. No compression. None of it is compiled in, not merely configured off, and the line moves with what NIST and the IETF disallow ([RFC-0009](./docs/rfcs/0009-zero-legacy-moving-frontier.md)). We refuse to inherit 25 years of "it's still there because someone's old router needs it."
 
-**Small attack surface.** The MVP supports public-key authentication, command execution, interactive PTY shell, and SFTP. That is it. Port forwarding, X11 forwarding, agent forwarding, and other features are explicit opt-ins, gated behind feature flags and configuration.
+**Small attack surface.** The `0.1.0` MVP is public-key authentication, command execution, an interactive PTY shell, and SFTP. That is it. Today the server does public-key authentication and single-command `exec`; PTY and SFTP are Phase 2 work ([#109](https://github.com/gonzafg2/quantumssh/issues/109)). Port forwarding, X11 forwarding, agent forwarding, and other features are explicit opt-ins, gated behind feature flags and configuration.
 
 **Open source as a permanent commitment.** This is not a marketing posture. See the next section.
 
@@ -101,7 +101,7 @@ Phase 0 also delivered the project's supporting infrastructure (DNS with DNSSEC,
 ### Phase 1 — Walking skeleton (complete)
 Tracked in [#9](https://github.com/gonzafg2/quantumssh/issues/9) (closed). Stack and tooling decisions are Accepted:
 
-- **Stack:** greenfield SSH-2 transport, KEX, auth, and channel layers on audited primitive crates (`ml-kem`, `x25519-dalek`, `ed25519-dalek`, `chacha20poly1305`, `aes-gcm`) — no `russh` dependency ([RFC-0003](./docs/rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md)).
+- **Stack:** greenfield SSH-2 transport, KEX, auth, and channel layers on audited primitive crates (`ml-kem`, `x25519-dalek`, `ed25519-dalek`, `chacha20` + `poly1305`, `aes-gcm`) — no `russh` dependency ([RFC-0003](./docs/rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md)).
 - **Workspace:** `crates/quantumssh` (binary) + `crates/quantumssh-core` (library), `unsafe_code = "forbid"` workspace-wide ([ADR-0017](./docs/adr/0017-phase-1-workspace-topology-two-crates-flat.md), [ADR-0018](./docs/adr/0018-phase-1-unsafe-code-forbid-workspace.md)).
 - **ML-KEM-768 crate:** `RustCrypto/ml-kem` ([ADR-0019](./docs/adr/0019-phase-1-ml-kem-crate-rustcrypto.md)).
 - **CI interop gate:** every PR exercises a real OpenSSH 10.x client end-to-end ([ADR-0020](./docs/adr/0020-phase-1-ci-openssh-interop-gate.md)).
@@ -171,7 +171,7 @@ We owe the community honesty about what already exists in this space. Several pr
 
 **`russh`** is a Rust library implementing the SSH protocol, both client and server primitives. QuantumSSH does not depend on `russh` as a crate — Phase 1 implements the SSH-2 protocol layers greenfield, on audited cryptographic primitive crates ([RFC-0003](./docs/rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md)). `russh` is the closest reference implementation we read while building, and that role is acknowledged in RFC-0003 §"What does not change": the project's protocol work in Rust is a teaching artifact, not a competitor.
 
-**Open Quantum Safe (`liboqs`, `liboqs-rust`)** at the University of Waterloo provides the post-quantum primitives that make this kind of project possible at all. Their `openssh` fork is research-oriented and based on older OpenSSH. We use their cryptographic libraries; we do not fork their SSH.
+**Open Quantum Safe (`liboqs`, `liboqs-rust`)** at the University of Waterloo provides the post-quantum primitives that make this kind of project possible at all. Their `openssh` fork is research-oriented and based on older OpenSSH. QuantumSSH does not depend on `liboqs`: [ADR-0019](./docs/adr/0019-phase-1-ml-kem-crate-rustcrypto.md) chose RustCrypto's pure-Rust `ml-kem` over `liboqs-rust` (C bindings). Their work made the field legible for everyone building on it; we do not fork their SSH.
 
 **Microsoft `Quantum-Safe-OpenSSH`** is a research fork of OpenSSH with PQ algorithms, distributed as Azure VM images. It is explicitly research-only and not for production.
 

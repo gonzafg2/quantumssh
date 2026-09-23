@@ -5,17 +5,27 @@
 - **Deciders:** Project lead
 - **Related:** Implements [RFC-0003](../rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md) §"Operational dependencies of this decision" and records, operationally, the resolution RFC-0003 reached on its unresolved question 2 (promote immediately); depends on [ADR-0017](0017-phase-1-workspace-topology-two-crates-flat.md) (workspace shape); touches `Cargo.toml` `[workspace.lints.rust]`.
 
+> **Post-acceptance errata** (per [ADR-0015](0015-permit-annotated-errata-in-adrs.md)):
+>
+> - **2026-09-22** ([PR #159](https://github.com/gonzafg2/quantumssh/pull/159)):
+>   The Links section said `Implementation: TBD` and that no code had
+>   landed. That was already false on 2026-06-30, when the ADR was
+>   accepted in the #86 sweep: the implementing milestone, M0 ([#62](https://github.com/gonzafg2/quantumssh/pull/62)),
+>   had merged. Corrected to name the implementing code; the Context,
+>   Decision and Consequences sentences that said the lint was still
+>   `deny` or the workspace still empty now read as of drafting time.
+
 ## Context
 
-The workspace today sets `unsafe_code = "deny"` in `[workspace.lints.rust]` (`Cargo.toml`). `deny` makes `unsafe` a hard error *but* permits a per-item escape hatch: an `#[allow(unsafe_code)]` on a function or block silently re-enables it. `forbid` is the stronger sibling — it refuses the `#[allow]` override entirely, so no future commit can quietly reintroduce `unsafe` anywhere in first-party code.
+At drafting time the workspace set `unsafe_code = "deny"` in `[workspace.lints.rust]` (`Cargo.toml`); M0 ([#62](https://github.com/gonzafg2/quantumssh/pull/62)) landed it as `forbid`. `deny` makes `unsafe` a hard error *but* permits a per-item escape hatch: an `#[allow(unsafe_code)]` on a function or block silently re-enables it. `forbid` is the stronger sibling — it refuses the `#[allow]` override entirely, so no future commit can quietly reintroduce `unsafe` anywhere in first-party code.
 
 [RFC-0003](../rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md) chose a greenfield stack whose dependencies are pure-Rust primitive crates that confine their own `unsafe` internally (the audited fiat-crypto backend, `RustCrypto/ml-kem`). Because no chosen dependency requires QuantumSSH first-party code to write or `#[allow]` `unsafe`, the escape hatch that `deny` leaves open buys nothing — and MANIFIESTO #1 ("memory-safe by construction") is most literally honoured by the variant that removes it. RFC-0003's unresolved question 2 asked whether to make this promotion immediately or defer it; it was resolved at acceptance in favour of *immediately*.
 
 ## Decision
 
-We will set `unsafe_code = "forbid"` in `[workspace.lints.rust]`, replacing the current `"deny"`, so that first-party QuantumSSH code is free of `unsafe` **with no per-item override available**.
+We will set `unsafe_code = "forbid"` in `[workspace.lints.rust]`, replacing the `"deny"` in force at drafting time, so that first-party QuantumSSH code is free of `unsafe` **with no per-item override available**.
 
-- The `Cargo.toml` change lands in the **same PR as the first Phase 1 crate**, so the first crate compiles under `forbid` from its first line. (The lint has no observable effect on today's empty workspace; flipping it only becomes load-bearing once first-party code exists, which is why this ADR advances to Accepted at that point.)
+- The `Cargo.toml` change lands in the **same PR as the first Phase 1 crate**, so the first crate compiles under `forbid` from its first line. (The lint had no observable effect on the then-empty workspace; flipping it only became load-bearing once first-party code existed; the Status flip followed in the #86 sweep.)
 - `forbid` applies workspace-wide via `[lints] workspace = true` inheritance in every member crate ([ADR-0017](0017-phase-1-workspace-topology-two-crates-flat.md)).
 - The constraint binds **first-party code only**. Dependencies keep their own `unsafe`; that is the audited primitive layer RFC-0003 deliberately relies on, and the lint does not (and cannot) reach into them.
 
@@ -34,7 +44,7 @@ We will set `unsafe_code = "forbid"` in `[workspace.lints.rust]`, replacing the 
 
 ### Neutral
 
-- No effect on the dependency tree or build output today; the workspace is empty. The change is forward-looking by design.
+- No effect on the dependency tree or build output at drafting time; the workspace was empty. The change was forward-looking by design.
 
 ## Alternatives considered
 
@@ -56,4 +66,4 @@ Rejected as needless asymmetry. The binary is a ≤50-LoC entrypoint ([ADR-0017]
 - Configuration this decision changes: `Cargo.toml` `[workspace.lints.rust]` (`unsafe_code`), landing with the first Phase 1 crate.
 - Related ADRs: [ADR-0017](0017-phase-1-workspace-topology-two-crates-flat.md) (lint inheritance across the two crates).
 - Roadmap: Phase 1 / Hito 1 — [`#9`](https://github.com/gonzafg2/quantumssh/issues/9).
-- Implementation: TBD (no code has landed yet; the lint flip is part of the first-crate PR).
+- Implementation: M0 ([#62](https://github.com/gonzafg2/quantumssh/pull/62)) — `unsafe_code = "forbid"` under `[workspace.lints.rust]` in `Cargo.toml`, inherited by both crates through `[lints] workspace = true`.

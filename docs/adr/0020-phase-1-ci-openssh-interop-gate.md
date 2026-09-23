@@ -5,6 +5,18 @@
 - **Deciders:** Project lead
 - **Related:** Implements [RFC-0003](../rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md) §"Acceptance criteria stay as issue #9 defines them" and resolves its unresolved question 4; sources the project's internal Phase-1 decision notes §"Decisión 5"; adds a workflow alongside `.github/workflows/ci.yml`.
 
+> **Post-acceptance errata** (per [ADR-0015](0015-permit-annotated-errata-in-adrs.md)):
+>
+> - **2026-09-22** ([PR #159](https://github.com/gonzafg2/quantumssh/pull/159)):
+>   The Links section said `Implementation: TBD` and that no code had
+>   landed. That was already false on 2026-06-30, when the ADR was
+>   accepted in the #86 sweep: the implementing milestone, M5 ([#84](https://github.com/gonzafg2/quantumssh/pull/84)),
+>   had merged. Corrected to name the implementing code; the Consequences
+>   sentence that placed the gate in the first-crate PR now says it was
+>   wired up in M5, once a connectable binary existed; and the Decision's
+>   "runs the full test suite" — never true of this job, `cargo test`
+>   runs in `ci.yml` — now says so.
+
 ## Context
 
 [RFC-0003](../rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md) chose a greenfield SSH stack. Its sharpest residual risk (Drawback 3) is **silent protocol divergence**: code written against the RFC text and the `draft-ietf-sshm-mlkem-hybrid-kex` Internet-Draft can pass a `quantumssh ↔ quantumssh` test suite while still failing against what a real OpenSSH client does on the wire (the `C_INIT`/`S_REPLY` encoding, the `K_PQ || K_CL` order, the `K` byte encoding). The README non-goal is explicit — *"if your client cannot speak modern, hybrid-PQ SSH, it does not connect"* — so if the reference PQ-capable client (OpenSSH 10.x) cannot connect, the product does not work.
@@ -17,7 +29,7 @@ We will add a **mandatory CI interop job** that exercises a real OpenSSH 10.x cl
 
 - The job runs in a **Debian trixie container** providing OpenSSH 10.0p1-7, on a GitHub-hosted runner, because the default Ubuntu runner ships 9.6p1.
 - The pin is enforced concretely, because the `debian:trixie-slim` *tag* is mutable and Debian's APT repositories advance over time: the container is referenced **by image digest** (`debian@sha256:…`), and `openssh-client` is installed with an **explicit version** (`apt-get install openssh-client=<version>`) from a frozen source (a pinned `snapshot.debian.org` suite, or a vendored `.deb`). The tag name alone is documentation, not the pin.
-- The job asserts the client version — `ssh -V` output (which carries distro/build suffixes, e.g. `OpenSSH_10.0p1 Debian-…`) must **contain** `OpenSSH_10.0p1` — then builds the release binary, runs the full test suite, and runs `tests/interop/run_openssh_client.sh` (connect → pubkey auth → `echo hello` → clean close).
+- The job asserts the client version — `ssh -V` output (which carries distro/build suffixes, e.g. `OpenSSH_10.0p1 Debian-…`) must **contain** `OpenSSH_10.0p1` — then builds the release binary and runs `tests/interop/run_openssh_client.sh` (the full `cargo test` suite runs in `ci.yml`, not in this job) (connect → pubkey auth → `echo hello` → clean close).
 - The interop job is a **required check** for merge into `main`.
 - **The OpenSSH bits are pinned, not floated.** With the digest + package-version pin above, an upstream OpenSSH change that alters wire behaviour never silently breaks an unrelated PR. Bumping the pin (new digest and/or package version) is its own deliberately-reviewed PR ("OpenSSH version bump"), so a wire-format shift during the ongoing PQ-KEX rollout surfaces as a reviewed event, not as a mystery red check on someone else's change. Without the digest + version pin this property does not hold — which is why the pin mechanism is part of this decision, not an implementation detail.
 
@@ -37,7 +49,7 @@ Phase 1 deliberately does **not** add `cargo-fuzz` (nightly, CI cost; Phase 3 ow
 
 - Running inside a container adds setup time (apt install of `openssh-client`, build toolchain) versus a bare runner. Mitigation: trixie-slim is small; the cost is a few minutes, acceptable for a required correctness gate.
 - A pinned OpenSSH can lag a freshly released wire-format fix until the bump PR lands. Mitigation: that lag is the point — it is a reviewed window, not silent drift; a matrix against 10.0/10.1/10.2 is named as a soft, post-Phase-1 enhancement.
-- The interop gate cannot run until the first crate produces a connectable binary, so it is wired up in the first-crate PR, not before.
+- The interop gate could not run until a connectable binary existed, so it was wired up in M5 ([#84](https://github.com/gonzafg2/quantumssh/pull/84)), not in the first-crate PR (M0) as drafted.
 
 ### Neutral
 
@@ -68,4 +80,4 @@ A viable variant, useful when a multi-version matrix (10.0/10.1/10.2) is wanted.
 - Configuration this decision adds: a new interop job alongside `.github/workflows/ci.yml`, plus `tests/interop/run_openssh_client.sh`, landing with the first connectable binary.
 - Related ADRs: [ADR-0011](0011-ci-guards-workspace-state.md) (CI workspace-state guards), [ADR-0019](0019-phase-1-ml-kem-crate-rustcrypto.md) (ML-KEM crate whose wire output this gate validates).
 - Roadmap: Phase 1 / Hito 1 — [`#9`](https://github.com/gonzafg2/quantumssh/issues/9).
-- Implementation: TBD (no code or workflow has landed yet; the gate is wired up in the first-crate PR).
+- Implementation: M5 ([#84](https://github.com/gonzafg2/quantumssh/pull/84)) — `.github/workflows/interop.yml` and `tests/interop/run_openssh_client.sh`.

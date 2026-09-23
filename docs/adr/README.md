@@ -114,8 +114,14 @@ that ADR is the authoritative reference for the rule and its rationale.
    label (`security`, `rust`, etc.).
 4. **Discussion happens on the PR.** Material objections must be
    resolved before merge; the ADR is then accepted by lazy consensus.
-5. **On merge, the ADR is Accepted.** It is now load-bearing for the
-   project.
+5. **On merge, the decision is load-bearing for the project.** The ADR
+   is now authoritative, whatever its Status line says at that moment;
+   "in effect" in the Lifecycle above is the `Accepted` status. The
+   file may merge already reading `Accepted` (ADR-0027 in #92) or still
+   reading `Proposed`; in the latter case the Status line is flipped to
+   `Accepted`, with the merge date as the acceptance date, either in the
+   implementing PR (ADR-0028 and 0029 in #129 and #128) or in a
+   follow-up (ADR-0030, 0031 and 0032 together in #158).
 
 For decisions that need broader discussion before a position is
 formed, write the RFC first. Once the RFC is accepted, the
