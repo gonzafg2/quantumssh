@@ -55,12 +55,15 @@ is on the PR:
   same `claude[bot]` identity, and the review action posts its own error
   messages under it, so an identity-only count could go green on a reply
   or a failure. The exact `.github/REVIEW-FORMAT.md` heading is not
-  required either: the plugin's sandbox has flattened it to a
-  single-line body on real reviews (#156, #159), and a check that goes
-  red on a posted review is as misleading as one that goes green on
-  none. The residual — an `@claude` reply that happens to contain "code
-  review" — is accepted and named here. Because the plugin reviews a PR
-  once, the count covers the whole PR, not the current run: a green check
+  required either: on real reviews the plugin has posted a different
+  heading (`## Code review`, #156) or lost the `##` of its `PR Review:`
+  line (#159), and a check that goes red on a posted review is as
+  misleading as one that goes green on none. The residual — an `@claude`
+  reply that happens to contain "code review" — is accepted and named
+  here. Because the plugin stops when it finds its own general comment
+  on the PR (its check reads general comments, so a first pass that left
+  only inline comments is followed by a second one), the count covers
+  the whole PR, not the current run: a green check
   means *this PR has a Claude review*, not *this push was reviewed*. That
   is what the plugin offers, and the workflow says so rather than
   pretending otherwise. The job no longer runs on draft PRs (the plugin
@@ -110,9 +113,9 @@ Rejected as the only measure: an instruction is not a guarantee, and the
 
 ### Alternative 2: Count only comments posted since the run started, as for opencode
 
-Rejected for this reviewer: it would fail every run after the first on a
-PR, because the plugin posts once per PR by design. The whole-PR count is
-the honest guarantee the plugin allows.
+Rejected for this reviewer: it would fail every run after the plugin
+finds its own general comment on the PR and stops, which is its design.
+The whole-PR count is the honest guarantee the plugin allows.
 
 ### Alternative 3: Make the reviewers required checks and rely on that
 

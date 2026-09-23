@@ -68,10 +68,11 @@ jobs:
       # A green check has to mean this PR has a Claude review (ADR-0033).
       # The action exits 0 whether or not a report was posted: on 2026-09-22
       # it ended its turn "waiting for subagents" after 56 s and posted
-      # nothing (#158). The plugin reviews a PR once — a later run finds its
-      # own earlier comment and stops — so the count is over the whole PR,
-      # not since this run started: green means "reviewed", not "this push
-      # reviewed". The identity alone is not proof of a report: claude.yml
+      # nothing (#158). The plugin stops once it finds its own general
+      # comment on the PR (a first pass that left only inline comments gets
+      # a second one), so the count is over the whole PR, not since this
+      # run started: green means "reviewed", not "this push reviewed". The
+      # identity alone is not proof of a report: claude.yml
       # answers `@claude` mentions under the same `claude[bot]` login and
       # the action posts its error messages under it too. Two signals are
       # accepted instead: a top-level inline comment by that login — only
