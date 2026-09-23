@@ -6,8 +6,15 @@ on:
 
 jobs:
   claude-review:
+    # Author gate; same-repository head (a collaborator's fork PR is skipped,
+    # not checked out next to the OAuth token — the gate codex.yml and
+    # opencode.yml apply); and no drafts: the code-review plugin treats a
+    # draft as a stopping condition and posts nothing, so the run would
+    # only fail the proof step below. ready_for_review re-triggers.
     if: |
-      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -57,3 +64,53 @@ jobs:
           name: claude-review-transcript
           path: ${{ steps.claude-review.outputs.execution_file }}
           retention-days: 7
+
+      # A green check has to mean this PR has a Claude review (ADR-0033).
+      # The action exits 0 whether or not a report was posted: on 2026-09-22
+      # it ended its turn "waiting for subagents" after 56 s and posted
+      # nothing (#158). The plugin reviews a PR once — a later run finds its
+      # own earlier comment and stops — so the count is over the whole PR,
+      # not since this run started: green means "reviewed", not "this push
+      # reviewed". Counts general comments, inline comments and reviews by
+      # the two logins the action posts under. Only runs when the action
+      # succeeded: if it failed, the job is already red.
+      - name: Require proof that the review was posted
+        if: always() && steps.claude-review.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          TRANSCRIPT: ${{ steps.claude-review.outputs.execution_file }}
+        run: |
+          set -euo pipefail
+
+          # The action refuses to run a workflow file that differs from the
+          # one on the default branch ("Skipping action due to workflow
+          # validation") and exits 0 without a transcript. That is its
+          # guard against a PR rewriting this workflow; the consequence is
+          # that a PR editing this file cannot get a Claude review before it
+          # merges. Red on purpose, with the reason, rather than a green
+          # nobody can tell from a review.
+          if [ -z "$TRANSCRIPT" ]; then
+            echo "::error::Claude Code Review left no transcript: the action skipped itself. If the log of 'Run Claude Code Review' says 'Skipping action due to workflow validation', this PR changes .github/workflows/claude-code-review.yml and the action will not review it until the change is on main — expected for workflow edits, red so the missing review is visible. Any other cause is a silent failure: re-run the job."
+            exit 1
+          fi
+
+          # --paginate emits one length per page; awk sums them.
+          count() {
+            gh api "repos/$REPO/$1" --paginate \
+              --jq "[.[] | select(.user.login == \"claude[bot]\" or .user.login == \"anthropic-code-agent[bot]\")] | length" \
+              | awk '{s += $1} END {print s + 0}'
+          }
+
+          GENERAL=$(count "issues/$PR/comments")
+          INLINE=$(count "pulls/$PR/comments")
+          REVIEWS=$(count "pulls/$PR/reviews")
+          TOTAL=$((GENERAL + INLINE + REVIEWS))
+
+          echo "Claude comments on PR #$PR: $GENERAL general, $INLINE inline, $REVIEWS reviews."
+
+          if [ "$TOTAL" -eq 0 ]; then
+            echo "::error::Claude Code Review finished successfully but this PR has no comment or review by claude[bot]. A green check with no report is indistinguishable from a review that never happened, so the job fails on purpose. Open the claude-review-transcript artifact: if its last message says it was waiting for a subagent, the agent ended its turn early and a re-run is enough."
+            exit 1
+          fi
