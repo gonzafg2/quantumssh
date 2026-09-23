@@ -860,8 +860,9 @@ the assets the user has on the host).
 auth in the cryptographic sense, but applicable as a denial
 mechanism.
 
-**Test handle.** Password authentication is **not** offered in
-the default profile. Public-key authentication does not benefit
+**Test handle.** Password authentication is **not** compiled in
+([RFC-0011](rfcs/0011-zero-legacy-floor-reconciliation.md)); there is
+no profile that offers it. Public-key authentication does not benefit
 the attacker from repetition: either the attacker holds the
 private key or they do not. Authentication-failure events must be
 rate-limited per source. The per-target-user dimension is
@@ -1216,11 +1217,17 @@ repeating it.
   the strict-kex boundary, closing the CVE-2023-48795
   prefix-truncation vector that algorithm-name binding alone does
   not address. Defends §5.2.2.
-- **No legacy primitives.** No SSH-1, no RSA-1024, no DSA, no CBC
-  modes, no `diffie-hellman-group1-sha1`, no
+- **No legacy primitives.** No SSH-1, no RSA, no DSA, no ECDSA over
+  NIST curves, no CBC modes, no `diffie-hellman-group1-sha1`, no
   `diffie-hellman-group14-sha1`, no `ssh-rsa` (SHA-1-signed RSA
-  host keys per RFC 9142 §4). Aligned with RFC 9142's MUST-NOT
-  and SHOULD-NOT lists for new deployments.
+  host keys), no password authentication, no compression — none
+  of it compiled in (the permanent floor,
+  [RFC-0011](rfcs/0011-zero-legacy-floor-reconciliation.md)).
+  The key-exchange items align with RFC 9142's MUST-NOT and
+  SHOULD-NOT lists for new deployments; the signature,
+  password-authentication and compression items are on the
+  project's floor independently of RFC 9142, which governs KEX
+  methods only.
 
 ### 6.2 Implementation posture
 
@@ -1242,7 +1249,7 @@ repeating it.
 
 ### 6.3 Authentication posture
 
-- **Public-key only in the default profile.** Defends §5.3.1.
+- **Public-key only — no other method is compiled in.** Defends §5.3.1.
 - **Authentication-event records include key fingerprint.** Defends
   §5.3.3 post-hoc detection.
 - **No `authorized_keys` writes from the server.** Defends §5.3.3
