@@ -68,12 +68,23 @@ jobs:
       # A green check has to mean this PR has a Claude review (ADR-0033).
       # The action exits 0 whether or not a report was posted: on 2026-09-22
       # it ended its turn "waiting for subagents" after 56 s and posted
-      # nothing (#158). The plugin reviews a PR once — a later run finds its
-      # own earlier comment and stops — so the count is over the whole PR,
-      # not since this run started: green means "reviewed", not "this push
-      # reviewed". Counts general comments, inline comments and reviews by
-      # the two logins the action posts under. Only runs when the action
-      # succeeded: if it failed, the job is already red.
+      # nothing (#158). The plugin stops once it finds its own general
+      # comment on the PR (a first pass that left only inline comments gets
+      # a second one), so the count is over the whole PR, not since this
+      # run started: green means "reviewed", not "this push reviewed". The
+      # identity alone is not proof of a report: claude.yml
+      # answers `@claude` mentions under the same `claude[bot]` login and
+      # the action posts its error messages under it too. Two signals are
+      # accepted instead: a top-level inline comment by that login — only
+      # this workflow mounts the inline-comment MCP tool; claude.yml's
+      # answers to `@claude` in a review thread are threaded replies
+      # (in_reply_to_id set) and are excluded — or a general comment /
+      # review whose body reads as a report ("PR Review" or "Code review";
+      # the plugin has posted `## Code review` and a `PR Review:` line
+      # without its `##` on real reviews, so the exact `## PR Review:`
+      # string is not required).
+      # Only runs when the action succeeded: if it failed, the job is
+      # already red.
       - name: Require proof that the review was posted
         if: always() && steps.claude-review.outcome == 'success'
         env:
@@ -96,21 +107,22 @@ jobs:
             exit 1
           fi
 
-          # --paginate emits one length per page; awk sums them.
+          # --paginate emits one length per page; awk sums them. Review
+          # bodies can be null, hence the `// ""`.
+          by_claude='select(.user.login == "claude[bot]" or .user.login == "anthropic-code-agent[bot]")'
           count() {
-            gh api "repos/$REPO/$1" --paginate \
-              --jq "[.[] | select(.user.login == \"claude[bot]\" or .user.login == \"anthropic-code-agent[bot]\")] | length" \
+            gh api "repos/$REPO/$1" --paginate --jq "[.[] | $by_claude | $2] | length" \
               | awk '{s += $1} END {print s + 0}'
           }
 
-          GENERAL=$(count "issues/$PR/comments")
-          INLINE=$(count "pulls/$PR/comments")
-          REVIEWS=$(count "pulls/$PR/reviews")
-          TOTAL=$((GENERAL + INLINE + REVIEWS))
+          INLINE=$(count "pulls/$PR/comments" 'select(.in_reply_to_id == null)')
+          GENERAL=$(count "issues/$PR/comments" 'select((.body // "") | test("pr review|code review"; "i"))')
+          REVIEWS=$(count "pulls/$PR/reviews" 'select((.body // "") | test("pr review|code review"; "i"))')
+          TOTAL=$((INLINE + GENERAL + REVIEWS))
 
-          echo "Claude comments on PR #$PR: $GENERAL general, $INLINE inline, $REVIEWS reviews."
+          echo "Claude review signals on PR #$PR: $INLINE top-level inline comments, $GENERAL general comments and $REVIEWS reviews reading as a report."
 
           if [ "$TOTAL" -eq 0 ]; then
-            echo "::error::Claude Code Review finished successfully but this PR has no comment or review by claude[bot]. A green check with no report is indistinguishable from a review that never happened, so the job fails on purpose. Open the claude-review-transcript artifact: if its last message says it was waiting for a subagent, the agent ended its turn early and a re-run is enough."
+            echo "::error::Claude Code Review finished successfully but this PR has no review by claude[bot]: no top-level inline comment and no comment or review that reads as a report. A green check with no report is indistinguishable from a review that never happened, so the job fails on purpose. Open the claude-review-transcript artifact: if its last message says it was waiting for a subagent, the agent ended its turn early and a re-run is enough."
             exit 1
           fi

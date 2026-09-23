@@ -1,4 +1,4 @@
-# ADR 0033: A green reviewer check proves a review was posted
+# ADR 0033: A green reviewer check requires a review-shaped report on the PR
 
 - **Status:** Proposed
 - **Date:** 2026-09-22 (drafted; becomes the acceptance date on merge)
@@ -20,7 +20,8 @@ different reasons:
 - On a **draft** PR (#155), the `code-review` plugin stops by design and
   posts nothing.
 - On a PR it had **already reviewed** (#157, later pushes), the plugin
-  finds its own earlier comment and stops — it reviews a PR once.
+  finds its own earlier general comment and stops — it does not review
+  every push.
 - On #158 the agent **ended its turn early**: after 56 seconds its last
   message was "Both agents are running. I'll wait for them to complete",
   its subagents were still running, and the workflow reported success.
@@ -38,17 +39,34 @@ the action posted before letting the check pass.
 
 ## Decision
 
-We will make every automated reviewer's check green only when a report
-is on the PR:
+We will make every automated reviewer's check green only when a
+review-shaped report by that reviewer is on the PR:
 
 - **Claude Code Review.** After the action succeeds, a step fails the job
   when the action left no transcript (it skipped itself; the message
-  names the workflow-validation case), and otherwise counts the general
-  comments, inline comments and reviews on the PR by `claude[bot]` (or
-  `anthropic-code-agent[bot]`, the action's other posting identity) and
-  fails the job when there are none. Because the plugin reviews a PR
-  once, the count covers the whole PR, not the current run: a green check
-  means *this PR has a Claude review*, not *this push was reviewed*. That
+  names the workflow-validation case), and otherwise fails the job unless
+  the PR carries a review signal by `claude[bot]` (or
+  `anthropic-code-agent[bot]`, the action's other posting identity):
+  a top-level inline review comment — only this workflow mounts the
+  inline-comment MCP tool; `claude.yml`'s answers to `@claude` inside a
+  review thread are threaded replies, which the count excludes — or a
+  general comment or review whose body reads as a report ("PR Review"
+  or "Code review"). The login alone is not the proof:
+  `.github/workflows/claude.yml` answers `@claude` mentions under the
+  same `claude[bot]` identity, and the review action posts its own error
+  messages under it, so an identity-only count could go green on a reply
+  or a failure. The exact `.github/REVIEW-FORMAT.md` heading is not
+  required either: on real reviews the plugin has posted a different
+  heading (`## Code review`, #156) or lost the `##` of its `PR Review:`
+  line (#159), and a check that goes red on a posted review is as
+  misleading as one that goes green on none. The residual — an `@claude`
+  reply that happens to contain "code review" — is accepted and named
+  here. Because the plugin stops when it finds its own general comment
+  on the PR (its check reads general comments, so a first pass that left
+  only inline comments is followed by a second one), the count covers
+  the whole PR, not the current run: a green check
+  means *a review-shaped claude[bot] comment or review is on this PR*,
+  not *this push was reviewed*. That
   is what the plugin offers, and the workflow says so rather than
   pretending otherwise. The job no longer runs on draft PRs (the plugin
   would stop anyway; `ready_for_review` triggers it) nor on PRs whose head
@@ -97,9 +115,9 @@ Rejected as the only measure: an instruction is not a guarantee, and the
 
 ### Alternative 2: Count only comments posted since the run started, as for opencode
 
-Rejected for this reviewer: it would fail every run after the first on a
-PR, because the plugin posts once per PR by design. The whole-PR count is
-the honest guarantee the plugin allows.
+Rejected for this reviewer: it would fail every run after the plugin
+finds its own general comment on the PR and stops, which is its design.
+The whole-PR count is the honest guarantee the plugin allows.
 
 ### Alternative 3: Make the reviewers required checks and rely on that
 
