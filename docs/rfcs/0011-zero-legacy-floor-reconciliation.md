@@ -26,9 +26,9 @@ it changes no code: the binary has enforced this floor since Phase 1.
 
 **The floor is stated in five places and they do not agree.** Since PR
 [#51](https://github.com/gonzafg2/quantumssh/pull/51) (2026-06-10) `CLAUDE.md`
-hard rule #3 has told every reviewer — human and automated — to reject RSA, DSA,
-ECDSA-NIST, CBC, `group1/14-sha1`, `ssh-rsa`, password authentication and
-compression, "not merely configured off". `AGENTS.md` carries the same list
+hard rule #3 has told every reviewer — human and automated — to reject SSH-1,
+RSA, DSA, ECDSA-NIST, CBC, `group1/14-sha1`, `ssh-rsa`, password authentication
+and compression, "not merely configured off". `AGENTS.md` carries the same list
 minus SSH-1. PR [#159](https://github.com/gonzafg2/quantumssh/pull/159) (2026-09-22) brought
 `README.md` "Zero legacy" to it. But the two documents this repository calls
 authoritative for the commitment say something narrower:
