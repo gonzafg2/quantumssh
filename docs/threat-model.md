@@ -860,8 +860,9 @@ the assets the user has on the host).
 auth in the cryptographic sense, but applicable as a denial
 mechanism.
 
-**Test handle.** Password authentication is **not** offered in
-the default profile. Public-key authentication does not benefit
+**Test handle.** Password authentication is **not** compiled in
+([RFC-0011](rfcs/0011-zero-legacy-floor-reconciliation.md)); there is
+no profile that offers it. Public-key authentication does not benefit
 the attacker from repetition: either the attacker holds the
 private key or they do not. Authentication-failure events must be
 rate-limited per source. The per-target-user dimension is
@@ -1245,7 +1246,7 @@ repeating it.
 
 ### 6.3 Authentication posture
 
-- **Public-key only in the default profile.** Defends §5.3.1.
+- **Public-key only — no other method is compiled in.** Defends §5.3.1.
 - **Authentication-event records include key fingerprint.** Defends
   §5.3.3 post-hoc detection.
 - **No `authorized_keys` writes from the server.** Defends §5.3.3

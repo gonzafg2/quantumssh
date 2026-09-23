@@ -111,6 +111,10 @@ manifesto; the RFC-0009 passage that follows it is unchanged):
 - `docs/threat-model.md` §6.1 "No legacy primitives": `RSA-1024` → RSA; adds
   ECDSA over NIST curves, password authentication, compression, and "none of it
   compiled in". The RFC 9142 anchor stays.
+- `docs/threat-model.md` §5.3.1 test handle and §6.1 "Public-key only": the
+  two sentences that said password authentication is not offered / public-key
+  is the only method "in the default profile" — the same qualifier the
+  manifesto drops — now say no other method is compiled in.
 - `README.md` "Zero legacy", `CLAUDE.md` hard rule #3, `AGENTS.md`: already
   carry the list; untouched.
 
