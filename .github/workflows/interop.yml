@@ -4,7 +4,8 @@ name: Interop
 # OpenSSH 10.x client through connect → publickey auth → exec → clean
 # close against the quantumssh release binary. The default Ubuntu runner
 # ships OpenSSH 9.6p1 (no mlkem768x25519-sha256), so the job runs in a
-# Debian trixie container, which provides OpenSSH 10.0p1.
+# Debian trixie container with openssh-client pinned to the exact build
+# named below (OpenSSH 10.0p2, package 1:10.0p1-7+deb13u4; ADR-0034).
 
 on:
   push:

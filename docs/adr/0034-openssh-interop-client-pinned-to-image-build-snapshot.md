@@ -1,7 +1,7 @@
 # ADR 0034: Pin the OpenSSH interop client to the snapshot its image was built from
 
-- **Status:** Proposed
-- **Date:** 2026-09-22 (drafted; becomes the acceptance date on merge)
+- **Status:** Accepted
+- **Date:** 2026-09-23 (accepted on merge of [#161](https://github.com/gonzafg2/quantumssh/pull/161))
 - **Deciders:** Project lead
 - **Related:** Implements the package-version bullet of [ADR-0020](0020-phase-1-ci-openssh-interop-gate.md) §Decision ("`openssh-client` is installed with an explicit version from a frozen source") and supersedes its asserted-version bullet ("`ssh -V` … must contain `OpenSSH_10.0p1`") with the exact string of the pinned package; every other bullet of ADR-0020 stands. The gate is a required check under [ADR-0031](0031-required-status-checks-commit-lint-and-openssh-interop.md), which is what makes a floating client a problem for every PR. Implementation: `.github/workflows/interop.yml` (lands in the same PR).
 
