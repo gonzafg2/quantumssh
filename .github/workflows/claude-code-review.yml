@@ -114,8 +114,8 @@ jobs:
           }
 
           INLINE=$(count "pulls/$PR/comments" 'select(.in_reply_to_id == null)')
-          GENERAL=$(count "issues/$PR/comments" '(.body // "") | test("pr review|code review"; "i")')
-          REVIEWS=$(count "pulls/$PR/reviews" '(.body // "") | test("pr review|code review"; "i")')
+          GENERAL=$(count "issues/$PR/comments" 'select((.body // "") | test("pr review|code review"; "i"))')
+          REVIEWS=$(count "pulls/$PR/reviews" 'select((.body // "") | test("pr review|code review"; "i"))')
           TOTAL=$((INLINE + GENERAL + REVIEWS))
 
           echo "Claude review signals on PR #$PR: $INLINE top-level inline comments, $GENERAL general comments and $REVIEWS reviews reading as a report."
