@@ -43,15 +43,22 @@ is on the PR:
 
 - **Claude Code Review.** After the action succeeds, a step fails the job
   when the action left no transcript (it skipped itself; the message
-  names the workflow-validation case), and otherwise counts the general
-  comments and reviews on the PR by `claude[bot]` (or
-  `anthropic-code-agent[bot]`, the action's other posting identity)
-  whose body carries the `.github/REVIEW-FORMAT.md` heading
-  `## PR Review:`, and fails the job when there are none. The heading,
-  not the login, is the proof: `.github/workflows/claude.yml` answers
-  `@claude` mentions under the same `claude[bot]` identity, and the
-  review action posts its own error messages under it, so an
-  identity-only count could go green on a reply or a failure. Because the plugin reviews a PR
+  names the workflow-validation case), and otherwise fails the job unless
+  the PR carries a review signal by `claude[bot]` (or
+  `anthropic-code-agent[bot]`, the action's other posting identity):
+  an inline review comment — only this workflow mounts the
+  inline-comment MCP tool, so those are exclusive to the review — or a
+  general comment or review whose body reads as a report ("PR Review"
+  or "Code review"). The login alone is not the proof:
+  `.github/workflows/claude.yml` answers `@claude` mentions under the
+  same `claude[bot]` identity, and the review action posts its own error
+  messages under it, so an identity-only count could go green on a reply
+  or a failure. The exact `.github/REVIEW-FORMAT.md` heading is not
+  required either: the plugin's sandbox has flattened it to a
+  single-line body on real reviews (#156, #159), and a check that goes
+  red on a posted review is as misleading as one that goes green on
+  none. The residual — an `@claude` reply that happens to contain "code
+  review" — is accepted and named here. Because the plugin reviews a PR
   once, the count covers the whole PR, not the current run: a green check
   means *this PR has a Claude review*, not *this push was reviewed*. That
   is what the plugin offers, and the workflow says so rather than

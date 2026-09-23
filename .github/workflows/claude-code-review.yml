@@ -71,12 +71,16 @@ jobs:
       # nothing (#158). The plugin reviews a PR once — a later run finds its
       # own earlier comment and stops — so the count is over the whole PR,
       # not since this run started: green means "reviewed", not "this push
-      # reviewed". Counts general comments and reviews by the two logins
-      # the action posts under whose body carries the REVIEW-FORMAT report
-      # heading: claude.yml answers `@claude` mentions under the same
-      # `claude[bot]` login and the action posts its error messages under
-      # it too, so the identity alone is not proof of a report. Only runs
-      # when the action succeeded: if it failed, the job is already red.
+      # reviewed". The identity alone is not proof of a report: claude.yml
+      # answers `@claude` mentions under the same `claude[bot]` login and
+      # the action posts its error messages under it too. Two signals are
+      # accepted instead: an inline comment by that login — only this
+      # workflow mounts the inline-comment MCP tool, so those are exclusive
+      # to the review — or a general comment / review whose body reads as
+      # a report ("PR Review" or "Code review"; the plugin's sandbox has
+      # been seen to flatten the REVIEW-FORMAT heading, so the exact
+      # `## PR Review:` string is not required). Only runs when the action
+      # succeeded: if it failed, the job is already red.
       - name: Require proof that the review was posted
         if: always() && steps.claude-review.outcome == 'success'
         env:
@@ -99,21 +103,22 @@ jobs:
             exit 1
           fi
 
-          # --paginate emits one length per page; awk sums them. The body
-          # test is the report contract's heading (.github/REVIEW-FORMAT.md).
+          # --paginate emits one length per page; awk sums them. Review
+          # bodies can be null, hence the `// ""`.
+          by_claude='select(.user.login == "claude[bot]" or .user.login == "anthropic-code-agent[bot]")'
           count() {
-            gh api "repos/$REPO/$1" --paginate \
-              --jq "[.[] | select(.user.login == \"claude[bot]\" or .user.login == \"anthropic-code-agent[bot]\") | select(.body | contains(\"## PR Review:\"))] | length" \
+            gh api "repos/$REPO/$1" --paginate --jq "[.[] | $by_claude | $2] | length" \
               | awk '{s += $1} END {print s + 0}'
           }
 
-          GENERAL=$(count "issues/$PR/comments")
-          REVIEWS=$(count "pulls/$PR/reviews")
-          TOTAL=$((GENERAL + REVIEWS))
+          INLINE=$(count "pulls/$PR/comments" 'true')
+          GENERAL=$(count "issues/$PR/comments" '(.body // "") | test("pr review|code review"; "i")')
+          REVIEWS=$(count "pulls/$PR/reviews" '(.body // "") | test("pr review|code review"; "i")')
+          TOTAL=$((INLINE + GENERAL + REVIEWS))
 
-          echo "Claude reports on PR #$PR (comments or reviews with the '## PR Review:' heading): $GENERAL general, $REVIEWS reviews."
+          echo "Claude review signals on PR #$PR: $INLINE inline comments, $GENERAL general comments and $REVIEWS reviews reading as a report."
 
           if [ "$TOTAL" -eq 0 ]; then
-            echo "::error::Claude Code Review finished successfully but this PR has no report by claude[bot] (a comment or review carrying the '## PR Review:' heading). A green check with no report is indistinguishable from a review that never happened, so the job fails on purpose. Open the claude-review-transcript artifact: if its last message says it was waiting for a subagent, the agent ended its turn early and a re-run is enough."
+            echo "::error::Claude Code Review finished successfully but this PR has no review by claude[bot]: no inline comment and no comment or review that reads as a report. A green check with no report is indistinguishable from a review that never happened, so the job fails on purpose. Open the claude-review-transcript artifact: if its last message says it was waiting for a subagent, the agent ended its turn early and a re-run is enough."
             exit 1
           fi
