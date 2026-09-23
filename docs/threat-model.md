@@ -29,8 +29,8 @@ This document is meant to be read by:
 The model is deliberately concrete. Attack vectors are described at a
 level of detail that an implementer can use to design tests; mitigations
 cross-reference the architectural and operational decisions recorded in
-[`docs/adr/`](adr/) and the (forthcoming) RFCs that govern the protocol
-and cryptographic layers.
+[`docs/adr/`](adr/) and the RFCs in [`docs/rfcs/`](rfcs/) that govern
+the protocol and cryptographic layers.
 
 ---
 
@@ -50,9 +50,9 @@ and the design choices that respond to them. It is not a risk assessment
 
 QuantumSSH is a memory-safe, post-quantum-first SSH server, written in
 Rust, intended for production use as the listening side of an SSH
-session. The default profile (Phase 1–2 target; no Rust code has
-landed yet — see the [README roadmap](../README.md#roadmap) for the
-current phase) is designed to support:
+session. The default profile (Phase 1–2 target; Phase 1 has landed — see
+the [README roadmap](../README.md#roadmap) for the current phase) is
+designed to support:
 
 - Hybrid post-quantum key exchange (`mlkem768x25519-sha256`) — Phase 1.
 - Ed25519 host keys (RFC 8709) — Phase 1.
@@ -1596,7 +1596,7 @@ full rationale and operational counterpart.
   <!-- openssh.org is the canonical web host: openssh.com/pq.html
        301-redirects to openssh.org/pq.html (verified 2026-06-11).
        The @openssh.com algorithm suffixes are protocol identifiers,
-       not URLs. Reviewers: do not flag this domain. -->
+       not URLs. -->
 - IETF Internet-Drafts for post-quantum SSH signatures, competing
   and unsettled as of June 2026: pure ML-DSA
   (`draft-rpe-ssh-mldsa`, `draft-sfluhrer-ssh-mldsa`) and composite

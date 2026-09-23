@@ -14,12 +14,16 @@
 >   had merged. Corrected to name the implementing code; the Related
 >   sentence that said the code did not exist yet now reads as of
 >   drafting time.
+> - **2026-09-23** ([PR #164](https://github.com/gonzafg2/quantumssh/pull/164)):
+>   The Context sentence "What does not yet exist is the concrete event
+>   list" now reads as of drafting time; the events had landed in the
+>   milestones the Related line names before the ADR was accepted.
 
 ## Context
 
 RFC-0003 and the README commit Phase 1 to "structured logging via `tracing`", and `docs/threat-model.md` §2.7 goes further: it names two fields the audit record **must** carry on every command-execution boundary — `authenticated_identity` (the key fingerprint that authenticated) and `executing_uid` (the OS UID the command actually ran under) — precisely so the §8.12 gap (Phase 1 runs commands as the service account, not a per-user UID) is visible to anyone reading the logs. §5.5.1 then states that format stability of the log schema is part of the public interface from Phase 2 onward (§6.2 restates it as a mitigation: schema-versioned, stable from Phase 2).
 
-What does not yet exist is the concrete event list: which events Phase 1 emits, what fields each carries, and how the library and binary split the `tracing` responsibility. Without that fixed before code, the mandated fields end up as ad-hoc strings scattered across call sites, impossible to monitor reliably and expensive to stabilise once Phase 2 freezes the schema. This ADR fixes the schema while it is still cheap.
+What did not yet exist at drafting time was the concrete event list: which events Phase 1 emits, what fields each carries, and how the library and binary split the `tracing` responsibility. Without that fixed before code, the mandated fields end up as ad-hoc strings scattered across call sites, impossible to monitor reliably and expensive to stabilise once Phase 2 freezes the schema. This ADR fixes the schema while it is still cheap.
 
 ## Decision
 
