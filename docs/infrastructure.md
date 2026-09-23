@@ -336,9 +336,10 @@ The `Cargo.toml` at the repo root is a workspace manifest whose
 ([ADR-0017](./adr/0017-phase-1-workspace-topology-two-crates-flat.md)).
 During Phase 0 it was `members = []` with no Rust source code; the
 workspace-level structural decisions were locked in ahead of the first
-crate so Phase 1 inherited them without retrofitting. The CI workflows guard against
-Cargo's refusal to operate on an empty manifest until the first crate
-lands; the guards self-disable on that event.
+crate so Phase 1 inherited them without retrofitting. The CI workflows
+guarded against Cargo's refusal to operate on an empty manifest until
+the first crate landed; the guards self-disabled on that event and stay
+in the workflows, inert.
 
 Decision rationale (shipping the virtual manifest in Phase 0): see
 [ADR-0009](./adr/0009-workspace-no-members-during-phase-0.md).
