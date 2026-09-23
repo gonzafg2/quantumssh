@@ -44,9 +44,14 @@ is on the PR:
 - **Claude Code Review.** After the action succeeds, a step fails the job
   when the action left no transcript (it skipped itself; the message
   names the workflow-validation case), and otherwise counts the general
-  comments, inline comments and reviews on the PR by `claude[bot]` (or
-  `anthropic-code-agent[bot]`, the action's other posting identity) and
-  fails the job when there are none. Because the plugin reviews a PR
+  comments and reviews on the PR by `claude[bot]` (or
+  `anthropic-code-agent[bot]`, the action's other posting identity)
+  whose body carries the `.github/REVIEW-FORMAT.md` heading
+  `## PR Review:`, and fails the job when there are none. The heading,
+  not the login, is the proof: `.github/workflows/claude.yml` answers
+  `@claude` mentions under the same `claude[bot]` identity, and the
+  review action posts its own error messages under it, so an
+  identity-only count could go green on a reply or a failure. Because the plugin reviews a PR
   once, the count covers the whole PR, not the current run: a green check
   means *this PR has a Claude review*, not *this push was reviewed*. That
   is what the plugin offers, and the workflow says so rather than

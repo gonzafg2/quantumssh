@@ -71,9 +71,12 @@ jobs:
       # nothing (#158). The plugin reviews a PR once — a later run finds its
       # own earlier comment and stops — so the count is over the whole PR,
       # not since this run started: green means "reviewed", not "this push
-      # reviewed". Counts general comments, inline comments and reviews by
-      # the two logins the action posts under. Only runs when the action
-      # succeeded: if it failed, the job is already red.
+      # reviewed". Counts general comments and reviews by the two logins
+      # the action posts under whose body carries the REVIEW-FORMAT report
+      # heading: claude.yml answers `@claude` mentions under the same
+      # `claude[bot]` login and the action posts its error messages under
+      # it too, so the identity alone is not proof of a report. Only runs
+      # when the action succeeded: if it failed, the job is already red.
       - name: Require proof that the review was posted
         if: always() && steps.claude-review.outcome == 'success'
         env:
@@ -96,21 +99,21 @@ jobs:
             exit 1
           fi
 
-          # --paginate emits one length per page; awk sums them.
+          # --paginate emits one length per page; awk sums them. The body
+          # test is the report contract's heading (.github/REVIEW-FORMAT.md).
           count() {
             gh api "repos/$REPO/$1" --paginate \
-              --jq "[.[] | select(.user.login == \"claude[bot]\" or .user.login == \"anthropic-code-agent[bot]\")] | length" \
+              --jq "[.[] | select(.user.login == \"claude[bot]\" or .user.login == \"anthropic-code-agent[bot]\") | select(.body | contains(\"## PR Review:\"))] | length" \
               | awk '{s += $1} END {print s + 0}'
           }
 
           GENERAL=$(count "issues/$PR/comments")
-          INLINE=$(count "pulls/$PR/comments")
           REVIEWS=$(count "pulls/$PR/reviews")
-          TOTAL=$((GENERAL + INLINE + REVIEWS))
+          TOTAL=$((GENERAL + REVIEWS))
 
-          echo "Claude comments on PR #$PR: $GENERAL general, $INLINE inline, $REVIEWS reviews."
+          echo "Claude reports on PR #$PR (comments or reviews with the '## PR Review:' heading): $GENERAL general, $REVIEWS reviews."
 
           if [ "$TOTAL" -eq 0 ]; then
-            echo "::error::Claude Code Review finished successfully but this PR has no comment or review by claude[bot]. A green check with no report is indistinguishable from a review that never happened, so the job fails on purpose. Open the claude-review-transcript artifact: if its last message says it was waiting for a subagent, the agent ended its turn early and a re-run is enough."
+            echo "::error::Claude Code Review finished successfully but this PR has no report by claude[bot] (a comment or review carrying the '## PR Review:' heading). A green check with no report is indistinguishable from a review that never happened, so the job fails on purpose. Open the claude-review-transcript artifact: if its last message says it was waiting for a subagent, the agent ended its turn early and a re-run is enough."
             exit 1
           fi
