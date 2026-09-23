@@ -1223,8 +1223,10 @@ repeating it.
   host keys per RFC 9142 §4), no password authentication, no
   compression — none of it compiled in (the permanent floor,
   [RFC-0011](rfcs/0011-zero-legacy-floor-reconciliation.md)).
-  Aligned with RFC 9142's MUST-NOT and SHOULD-NOT lists for new
-  deployments.
+  The key-exchange and signature items align with RFC 9142's
+  MUST-NOT and SHOULD-NOT lists for new deployments; password
+  authentication and compression are on the project's floor
+  independently of RFC 9142.
 
 ### 6.2 Implementation posture
 

@@ -54,11 +54,11 @@ the RFC lane. The hunk was dropped; the decision belongs here.
 
 **What goes wrong if the founding text stays as it is.** A reader of the
 manifesto can conclude that RSA-2048 host keys or a password-enabled profile are
-compatible with the project's commitments. Neither is: commitment #2
-(post-quantum by default) makes *every* RSA key size classical-only and
-Shor-breakable, not just 1024 bits; and the code has no password path at all
-(see below). The founding text should not promise less than the project already
-delivers and reviews against.
+compatible with the project's commitments. Neither is: RSA is on the floor as a
+family — the review rule and the code have never admitted any key size, and a
+size-qualified ban ages the way `RSA-1024` already has; and the code has no
+password path at all (see below). The founding text should not promise less
+than the project already delivers and reviews against.
 
 ## Guide-level explanation
 
@@ -72,10 +72,14 @@ RFC-0009.
 Three items change meaning, not just wording:
 
 - **`RSA-1024` → RSA.** The founding text named the key size that was already
-  broken classically. Under commitment #2 the whole family is legacy in the KEX
-  and signature roles, regardless of size; the code accepts only `ssh-ed25519`
-  user keys (`crates/quantumssh-core/src/auth.rs`, `AuthError::UnsupportedKeyType`)
-  and offers only `mlkem768x25519-sha256` ([ADR-0021](../adr/0021-phase-1-negotiation-profile.md)).
+  broken classically. The floor bans the family regardless of size. In the KEX
+  role that follows from commitment #2, which admits only the hybrid
+  `mlkem768x25519-sha256` ([ADR-0021](../adr/0021-phase-1-negotiation-profile.md));
+  in the signature role it is commitment #3's floor that bans RSA, not a
+  "classical is legacy" rule — `ssh-ed25519` is classical too and stays under
+  [RFC-0006](0006-post-quantum-host-key-signatures.md). The code accepts only
+  `ssh-ed25519` user keys (`crates/quantumssh-core/src/auth.rs`,
+  `AuthError::UnsupportedKeyType`).
 - **Password authentication: "en el perfil por defecto" → never.** The
   qualifier implied a second profile could exist. None does and none is
   planned: the server answers any non-`publickey` method with failure
