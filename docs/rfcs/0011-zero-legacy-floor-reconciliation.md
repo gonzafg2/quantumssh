@@ -173,7 +173,8 @@ now says so.
   was flagged by all three reviewers and dropped.
 - **Narrow `README.md` / `CLAUDE.md` / `AGENTS.md` back to the founding
   wording.** Rejected: it would re-admit RSA-2048+ and a password profile on
-  paper, against commitment #2 and against code that has never had them.
+  paper — against commitment #3's floor (and, for RSA in the KEX role,
+  commitment #2) and against code that has never had them.
 - **Make `CLAUDE.md` the authority for the list.** Rejected: the same
   governance inversion RFC-0009 §Motivation records from PR #93 — the manifesto
   is the commitment; guidance files restate it.
