@@ -1,5 +1,5 @@
 <!--
-  Governance status (2026-07-20):
+  Governance status (2026-10-08):
   Non-authoritative design note (ADR-0027). Scopes the Phase-2 ("Usable",
   0.1.0) milestone; tracked in #109. It sequences the workstreams and
   records the one-way release-freeze constraint so each eventual RFC/ADR
@@ -7,7 +7,8 @@
   Authoritative decisions live in ADRs/RFCs. For Phase 2 so far:
   RFC-0008 (SSH certificate authentication, Accepted — impl TBD),
   RFC-0010 + ADR-0029 (TOML config, Accepted; implemented in #128),
-  ADR-0028 (runtime/concurrency, Accepted; implemented in #129).
+  ADR-0028 (runtime/concurrency, Accepted; implemented in #129),
+  RFC-0012 (host-key cut-over to ssh-mldsa44-ed25519 before 0.1.0).
   This file is retained for rationale and is not a source of truth.
 -->
 # Phase-2 ("Usable") — scoping note (non-normative)
@@ -121,6 +122,10 @@ ADR/RFC (the config-file schema is scoped above as an RFC) — not in this note:
       names it a freeze-checklist item).
 - [ ] **Negotiation profile** (KEXINIT name-lists) reviewed as a
       to-be-frozen contract ([ADR-0021](../adr/0021-phase-1-negotiation-profile.md)).
+- [ ] **Host-key algorithm** is the composite `ssh-mldsa44-ed25519`, not
+      `ssh-ed25519` ([RFC-0012](../rfcs/0012-composite-host-key-cutover.md)).
+      Part of the profile above, listed on its own because it needs an
+      implementation and three subsidiary ADRs before the tag.
 - [ ] **Config-file schema** stable enough to extend compatibly (it, too, is a
       public interface once shipped).
 
