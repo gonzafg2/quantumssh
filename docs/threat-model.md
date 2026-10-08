@@ -1355,11 +1355,12 @@ operators must account for. The principal items, by category, are:
   proceed as soon as the software does.
   (Rotating within a classically broken algorithm bounds nothing: a
   replacement Ed25519 key is exactly as derivable as the one it
-  replaces.) The migration trigger is a settled IETF standard
-  deployed by the reference client (the competing drafts are listed
-  in §9); the migration path is defined in
-  [RFC-0006](rfcs/0006-post-quantum-host-key-signatures.md). That
-  trigger fired in October 2026 (§6.1):
+  replaces.) The migration trigger is RFC-0006's two adoption gates:
+  SSHM working-group adoption of the draft, and a stock release of
+  the reference client shipping it (the drafts that competed before
+  adoption are listed in §9); the migration path is defined in
+  [RFC-0006](rfcs/0006-post-quantum-host-key-signatures.md). Both
+  gates fired by October 2026 (§6.1):
   [RFC-0012](rfcs/0012-composite-host-key-cutover.md) cuts host
   authentication over to `ssh-mldsa44-ed25519` before `0.1.0`,
   tracked under issue #109. Until that cut-over lands, the exposure
