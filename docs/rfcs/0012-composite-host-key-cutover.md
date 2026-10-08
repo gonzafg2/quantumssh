@@ -6,7 +6,7 @@
 - **Roadmap issue:** [`#109`](https://github.com/gonzafg2/quantumssh/issues/109) (Phase 2; the `0.1.0` freeze checklist)
 - **Implements:** [RFC-0006](0006-post-quantum-host-key-signatures.md) — the "separate implementation RFC" its §Reference-level explanation requires once both adoption gates fire.
 - **Docs updated in this PR:** `docs/threat-model.md` §5.2.3, §6.1, §7, §9 (status of the migration); `docs/plans/phase2-scoping.md` (freeze checklist item).
-- **Implementation PR:** TBD — after acceptance and the three subsidiary ADRs in [§Subsidiary decisions](#subsidiary-decisions-separate-adrs).
+- **Implementation PR:** TBD — after acceptance and the crate ADR; it carries the profile and interop ADRs and the ADR-0020 fixtures atomically ([§Ordering](#ordering)).
 
 ## Summary
 
@@ -127,6 +127,16 @@ possibilities). The key exchange is untouched.
 - Private key: the two 32-byte seeds (`mldsa_seed || ed25519_seed`), with
   ML-DSA expanded by `ML-DSA.KeyGen_internal` (FIPS 204 §6.1).
 
+**Key material (normative).** The composite key adds secret state on the
+disk-to-memory boundary of [`threat-model.md`](../threat-model.md) §4.3,
+and every rule there applies to it. The decoded `openssh-key-v1`
+private section, both seeds, the expanded ML-DSA signing key, the
+Ed25519 signing key, and any signing temporaries are held in zeroizing
+types, dropped as soon as the signing state is built, and zeroized when
+the long-lived key object drops. None of them may appear in `Debug`
+output, error values, log events, or panic messages; a load failure
+names the file and the reason, never key bytes.
+
 **The verification invariant** is inherited unchanged from RFC-0006: a
 composite signature is valid only if **both** component signatures
 verify. QuantumSSH signs host authentications and, in its own tests,
@@ -185,8 +195,8 @@ posture this project already keeps for key exchange, where
 
 ### Subsidiary decisions (separate ADRs)
 
-Each is one decision in its own ADR citing this RFC. The implementation
-PR does not merge until all three are Accepted.
+Each is one decision in its own ADR citing this RFC. How they land is
+fixed in [§Ordering](#ordering).
 
 1. **The ML-DSA primitive crate**, paralleling
    [ADR-0019](../adr/0019-phase-1-ml-kem-crate-rustcrypto.md). The
@@ -214,6 +224,22 @@ PR does not merge until all three are Accepted.
    the gate uses is that ADR's decision.
 
 ### Ordering
+
+[RFC-0007](0007-cryptographic-primitive-migration-procedure.md) §2
+("Supersession mechanics") requires the
+[ADR-0020](../adr/0020-phase-1-ci-openssh-interop-gate.md) interop
+fixtures to move atomically with the ADR that supersedes the profile.
+This RFC applies that to the whole cut-over:
+
+- **Subsidiary ADR 1 (crate)** is the dependency layer and may be
+  Accepted on its own, before the implementation.
+- **Subsidiary ADRs 2 (profile) and 3 (interop client)** are written as
+  `Proposed` and flip to `Accepted` inside the implementation PR, which
+  also carries the ADR-0020 fixture changes (the gate asserts that
+  `ssh-mldsa44-ed25519` is negotiated, and that a client limited to
+  `ssh-ed25519` fails) and the code. The profile, the gate's client, its
+  expectations and the server change in one merge; there is no state of
+  `main` where the profile says one algorithm and the gate tests another.
 
 The cut-over is a `0.1.0` freeze-checklist item: the tag does not happen
 on `ssh-ed25519`. If a subsidiary ADR blocks — for example, the crate
