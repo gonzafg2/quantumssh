@@ -810,8 +810,12 @@ host-key fingerprint in operationally usable forms so the
 operator can publish it. SSHFP records under a DNSSEC-signed
 zone are one such form; the publication itself and the DNSSEC
 operation are the operator's responsibility, not the server's.
-The default must use Ed25519, whose fingerprint is compact
-enough for out-of-band verification.
+The host key is Ed25519 until the
+[RFC-0012](rfcs/0012-composite-host-key-cutover.md) cut-over and the
+composite `ssh-mldsa44-ed25519` after it; either way its SHA-256
+fingerprint is compact enough for out-of-band verification. SSHFP
+publication of the composite key waits for an SSHFP algorithm
+number (RFC-0012 §Drawbacks).
 
 #### 5.2.4 Key-derivation flaw
 
@@ -1199,12 +1203,18 @@ repeating it.
   ships no post-quantum signature algorithm and the IETF drafts are
   still competing (pure ML-DSA vs composite Ed25519+ML-DSA; see §9
   references); adopting one prematurely would break interoperability
-  with every deployed client for no present-day security gain. The
-  residual exposure and the migration trigger are recorded in §7;
-  the migration path is defined in
+  with every deployed client for no present-day security gain. Both
+  of RFC-0006's adoption gates fired in 2026: the SSHM working group
+  adopted `draft-ietf-sshm-composite-sigs` on 2026-08-22, and
+  OpenSSH 10.6 shipped `ssh-mldsa44-ed25519` on 2026-10-06.
+  [RFC-0012](rfcs/0012-composite-host-key-cutover.md) decides the
+  cut-over to that composite, as the only host-key algorithm, before
+  `0.1.0`. The residual exposure and the migration trigger are
+  recorded in §7; the migration path is defined in
   [RFC-0006](rfcs/0006-post-quantum-host-key-signatures.md) (the
-  composite `ssh-mldsa44-ed25519@openssh.com` target), tracked under
-  issue #42.
+  composite target, drafted as `ssh-mldsa44-ed25519@openssh.com`
+  and adopted as `ssh-mldsa44-ed25519`) and RFC-0012, tracked under
+  issue #109.
 - **Forward secrecy.** Ephemeral KEM secrets are not persisted and
   are zeroised after derivation. Defends §5.5.3.
 - **Negotiation MAC binding.** The agreed algorithm list is bound
@@ -1348,8 +1358,12 @@ operators must account for. The principal items, by category, are:
   replaces.) The migration trigger is a settled IETF standard
   deployed by the reference client (the competing drafts are listed
   in §9); the migration path is defined in
-  [RFC-0006](rfcs/0006-post-quantum-host-key-signatures.md), tracked
-  under issue #42.
+  [RFC-0006](rfcs/0006-post-quantum-host-key-signatures.md). That
+  trigger fired in October 2026 (§6.1):
+  [RFC-0012](rfcs/0012-composite-host-key-cutover.md) cuts host
+  authentication over to `ssh-mldsa44-ed25519` before `0.1.0`,
+  tracked under issue #109. Until that cut-over lands, the exposure
+  described here stands.
 - **Implementation flaws not caught by review, tests, or fuzzing.**
   The Phase-3 security audit is the principal compensating control;
   the project's posture is that bugs will exist and the goal is to
@@ -1613,7 +1627,13 @@ full rationale and operational counterpart.
   client; [RFC-0006](rfcs/0006-post-quantum-host-key-signatures.md)
   fixes the migration target as the composite
   `ssh-mldsa44-ed25519@openssh.com` (`draft-miller-sshm`), gated on that
-  settlement and deployment; tracked under issue #42.
+  settlement and deployment. The SSHM working group adopted the
+  composite as `draft-ietf-sshm-composite-sigs` on 2026-08-22, with
+  the final identifier `ssh-mldsa44-ed25519`, and OpenSSH 10.6
+  shipped it on 2026-10-06;
+  [RFC-0012](rfcs/0012-composite-host-key-cutover.md) decides the
+  cut-over, tracked under issue #109.
+  <https://datatracker.ietf.org/doc/draft-ietf-sshm-composite-sigs/>
 
 ### Project-internal references
 
