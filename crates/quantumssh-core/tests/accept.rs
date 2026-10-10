@@ -859,7 +859,7 @@ async fn exec_stderr_is_extended_data() {
         .await;
 
     let (stdout, stderr, exit) = collect_session(&mut client, &mut stream, server_chan).await;
-    assert!(stdout.is_empty());
+    assert_eq!(stdout, b"");
     assert_eq!(stderr, b"oops\n");
     assert_eq!(exit, Some(0));
     client
