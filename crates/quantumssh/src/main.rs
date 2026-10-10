@@ -573,7 +573,7 @@ mod tests {
         assert_eq!(r.handshake_timeout, Duration::from_secs(30));
         assert_eq!(r.log_format, LogFormat::Json);
         assert!(r.host_key_path.is_none());
-        assert!(r.overrides.is_empty());
+        assert_eq!(r.overrides, Vec::<&str>::new());
     }
 
     #[test]
@@ -590,7 +590,7 @@ mod tests {
         assert_eq!(r.listen, "0.0.0.0:22".parse().unwrap());
         assert_eq!(r.handshake_timeout, Duration::from_secs(5));
         assert_eq!(r.log_format, LogFormat::Human);
-        assert!(r.overrides.is_empty());
+        assert_eq!(r.overrides, Vec::<&str>::new());
     }
 
     #[test]
@@ -623,6 +623,6 @@ mod tests {
             LogFormat::Json,
         );
         assert_eq!(r.authorized_keys_path.as_deref(), Some("/cfg/ak"));
-        assert!(r.overrides.is_empty());
+        assert_eq!(r.overrides, Vec::<&str>::new());
     }
 }
