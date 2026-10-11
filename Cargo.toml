@@ -51,7 +51,7 @@ ml-kem        = { version = "0.3.0", default-features = false, features = ["zero
 x25519-dalek  = { version = "2.0.1", default-features = false, features = ["static_secrets", "zeroize"] }
 ed25519-dalek = { version = "2", default-features = false, features = ["std", "rand_core", "zeroize"] }
 sha2          = { version = "0.11", default-features = false }
-zeroize       = { version = "1", default-features = false, features = ["zeroize_derive"] }
+zeroize       = { version = "1", default-features = false, features = ["alloc", "zeroize_derive"] }  # alloc: Zeroizing<Vec<u8>>/<String>, declared rather than inherited from ed25519-dalek/std
 
 # AEAD transport layer (M3). `chacha20-poly1305@openssh.com` cannot be
 # expressed through the IETF `chacha20poly1305` AEAD crate (96-bit
