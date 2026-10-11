@@ -3,7 +3,7 @@
 - **Status:** Proposed
 - **Date:** — (set on acceptance; drafted 2026-10-11)
 - **Deciders:** Project lead
-- **Related:** Subsidiary to [RFC-0003](../rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md) (the primitive stack, §"Operational dependencies of this decision"); the decision the [#109 comment of 2026-07-18](https://github.com/gonzafg2/quantumssh/issues/109) deferred ("bump x25519-dalek 3.x and ed25519-dalek 3.x together … recorded in an ADR subsidiary to RFC-0003"); interacts with the `ml-dsa` ADR proposed in [#174](https://github.com/gonzafg2/quantumssh/pull/174) (numbered ADR-0035 at drafting time; `ml-dsa` depends on `signature` 3.x); constrained by [ADR-0010](0010-toolchain-pinning-resolver-3-edition-2024-msrv-1-92.md) (MSRV 1.92) and [ADR-0018](0018-phase-1-unsafe-code-forbid-workspace.md) (`unsafe_code = "forbid"`). Format parallels [ADR-0019](0019-phase-1-ml-kem-crate-rustcrypto.md).
+- **Related:** Subsidiary to [RFC-0003](../rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md) (the primitive stack, §"Guide-level explanation"); the decision the [#109 comment of 2026-07-18](https://github.com/gonzafg2/quantumssh/issues/109) deferred ("bump x25519-dalek 3.x and ed25519-dalek 3.x together … recorded in an ADR subsidiary to RFC-0003"); interacts with the `ml-dsa` ADR proposed in [#174](https://github.com/gonzafg2/quantumssh/pull/174) (numbered ADR-0035 at drafting time; `ml-dsa` depends on `signature` 3.x); constrained by [ADR-0010](0010-toolchain-pinning-resolver-3-edition-2024-msrv-1-92.md) (MSRV 1.92) and [ADR-0018](0018-phase-1-unsafe-code-forbid-workspace.md) (`unsafe_code = "forbid"`). Format parallels [ADR-0019](0019-phase-1-ml-kem-crate-rustcrypto.md).
 
 ## Context
 
@@ -190,7 +190,7 @@ Rejected for the same reason, mirrored.
 
 ## Links
 
-- Decision source: [#109 comment of 2026-07-18](https://github.com/gonzafg2/quantumssh/issues/109); RFC-0003 §"Operational dependencies of this decision".
+- Decision source: [#109 comment of 2026-07-18](https://github.com/gonzafg2/quantumssh/issues/109); RFC-0003 §"Guide-level explanation" (the primitive stack).
 - Upstream: [`dalek-cryptography/curve25519-dalek`](https://github.com/dalek-cryptography/curve25519-dalek) (CHANGELOGs of `curve25519-dalek` 5.0.0, `ed25519-dalek` 3.0.0, `x25519-dalek` 3.0.0); [Verus coverage statement in the `curve25519-dalek` README](https://github.com/dalek-cryptography/curve25519-dalek/blob/main/curve25519-dalek/README.md).
 - Advisories: [RUSTSEC-2024-0344](https://rustsec.org/advisories/RUSTSEC-2024-0344.html), [RUSTSEC-2022-0093](https://rustsec.org/advisories/RUSTSEC-2022-0093.html).
 - Audit: [Quarkslab, "Security audit of dalek libraries" (2019)](https://blog.quarkslab.com/security-audit-of-dalek-libraries.html).
