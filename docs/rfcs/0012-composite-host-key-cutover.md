@@ -159,10 +159,13 @@ fixes that the slot holds one name.
 - `ssh-mldsa44-ed25519@openssh.com` — the experimental OpenSSH 10.4/10.5
   name. OpenSSH 10.6 requires those keys to be regenerated; QuantumSSH
   never accepted them.
-- `ssh-mldsa44-ed25519-cert` — host certificates belong to the
-  certificate-authentication lane
-  ([RFC-0008](0008-ssh-certificate-authentication.md)), which has not
-  adopted host certificates.
+- `ssh-mldsa44-ed25519-cert` — the certificate key type OpenSSH 10.6
+  defines over the composite (`ssh-mldsa-eddsa.c` and `myproposal.h`
+  at tag `V_10_6_P1`). It is an OpenSSH name, not one the WG draft
+  registers, and it does not follow the older `*-cert-v01@openssh.com`
+  pattern. Host certificates belong to the certificate-authentication
+  lane ([RFC-0008](0008-ssh-certificate-authentication.md)), which has
+  not adopted host certificates.
 
 ### Why exactly one algorithm
 
@@ -356,8 +359,8 @@ stays valid: `ssh-ed25519` remains the user-authentication algorithm.
   `0.1.0` without a manual re-trust step.
 - Composite keys for **user authentication** — a separate decision with
   its own urgency profile (RFC-0006).
-- **Host certificates** (`ssh-mldsa44-ed25519-cert`) through RFC-0008's
-  lane.
+- **Host certificates** over the composite key (OpenSSH 10.6 names the
+  type `ssh-mldsa44-ed25519-cert`) through RFC-0008's lane.
 - A post-quantum DNSSEC chain for SSHFP anchoring, once both an SSHFP
   number and ML-DSA DNSSEC (`draft-westerbaan-dnssec-mldsa`) reach the
   root.
