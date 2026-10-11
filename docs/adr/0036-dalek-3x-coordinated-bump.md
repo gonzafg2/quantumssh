@@ -3,7 +3,7 @@
 - **Status:** Proposed
 - **Date:** — (set on acceptance; drafted 2026-10-11)
 - **Deciders:** Project lead
-- **Related:** Subsidiary to [RFC-0003](../rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md) (the primitive stack, §"Operational dependencies of this decision"); the decision the [#109 comment of 2026-07-18](https://github.com/gonzafg2/quantumssh/issues/109) deferred ("bump x25519-dalek 3.x and ed25519-dalek 3.x together … recorded in an ADR subsidiary to RFC-0003"); interacts with ADR-0035 (`ml-dsa`, which depends on `signature` 3.x; Proposed in [#174](https://github.com/gonzafg2/quantumssh/pull/174), not yet on `main`); constrained by [ADR-0010](0010-toolchain-pinning-resolver-3-edition-2024-msrv-1-92.md) (MSRV 1.92) and [ADR-0018](0018-phase-1-unsafe-code-forbid-workspace.md) (`unsafe_code = "forbid"`). Format parallels [ADR-0019](0019-phase-1-ml-kem-crate-rustcrypto.md).
+- **Related:** Subsidiary to [RFC-0003](../rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md) (the primitive stack, §"Operational dependencies of this decision"); the decision the [#109 comment of 2026-07-18](https://github.com/gonzafg2/quantumssh/issues/109) deferred ("bump x25519-dalek 3.x and ed25519-dalek 3.x together … recorded in an ADR subsidiary to RFC-0003"); interacts with the `ml-dsa` ADR proposed in [#174](https://github.com/gonzafg2/quantumssh/pull/174) (numbered ADR-0035 at drafting time; `ml-dsa` depends on `signature` 3.x); constrained by [ADR-0010](0010-toolchain-pinning-resolver-3-edition-2024-msrv-1-92.md) (MSRV 1.92) and [ADR-0018](0018-phase-1-unsafe-code-forbid-workspace.md) (`unsafe_code = "forbid"`). Format parallels [ADR-0019](0019-phase-1-ml-kem-crate-rustcrypto.md).
 
 ## Context
 
@@ -33,7 +33,7 @@ Facts gathered on 2026-10-11:
 | Licence | BSD-3-Clause, all six | BSD-3-Clause, allowed by `deny.toml` |
 
 Licence note: [RFC-0003](../rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md)
-§"Operational dependencies" says the nine primitive crates "are
+§"Guide-level explanation" says the nine primitive crates "are
 Apache-2.0 or MIT". The dalek crates have always been **BSD-3-Clause**.
 `deny.toml`'s allow-list includes BSD-3-Clause, so nothing was ever out
 of policy, but the accepted RFC is inaccurate on this point. This ADR
@@ -115,13 +115,16 @@ known vulnerability. Its value is indirect:
   102 to 88 packages, and `cargo tree -d` for `quantumssh-core` goes
   from six duplicated crates (`sha2`, `digest`, `rand_core`,
   `block-buffer`, `crypto-common`, `cpufeatures`) to none. Among the
-  crates that leave the tree are `pkcs8`, `der`, `spki` and
-  `generic-array`, none of which the project uses (MANIFIESTO #4).
-- **Alignment with ADR-0035.** `ml-dsa` depends on `signature` 3.x.
-  Moving the dalek line now means the ML-DSA implementation adds no
-  second `signature` major.
-- **Staying on the maintained line.** The 4.x/2.x line has had no
-  release since mid-2024.
+  packages that leave `Cargo.lock` are `pkcs8`, `der`, `spki` and
+  `generic-array`. Only `generic-array` is compiled today; the other
+  three are unselected optional dependencies of `ed25519`, but they
+  still sit in the lockfile (MANIFIESTO #4).
+- **Alignment with the `ml-dsa` ADR proposed in #174.** `ml-dsa` depends
+  on `signature` 3.x. Moving the dalek line now means the ML-DSA
+  implementation adds no second `signature` major.
+- **Staying on the current line.** `curve25519-dalek` 4.x has had no
+  release since 2024-06-18. `ed25519-dalek` 2.x last released on
+  2025-07-09. The 5.x/3.x line is where upstream's releases now are.
 
 ## Consequences
 
@@ -129,21 +132,26 @@ known vulnerability. Its value is indirect:
 
 - One version of each hash, digest, RNG-trait and signature crate in the
   core's dependency tree, and 14 fewer packages to trust.
-- `signature` 3 matches what ADR-0035's `ml-dsa` requires.
+- `signature` 3 matches what `ml-dsa` requires (the ADR proposed in #174).
 - The `zeroize/alloc` reliance is explicit rather than inherited (#175).
-- The diff is three manifest lines plus `Cargo.lock`, with no
-  first-party code change and no change to `verify` semantics.
+- The diff is two manifest lines plus `Cargo.lock`, with no first-party
+  code change and no change to `verify` semantics. The `zeroize/alloc`
+  line belongs to #175.
 
 ### Negative
 
 - **Loses the Verus coverage.** The formal verification of 280
   functions applies to `curve25519-dalek` 4.1.3. On 5.0 that assurance
   is no longer claimed. This is the main cost, and it is accepted
-  knowingly. The project's own controls do not depend on it: ACVP and
-  RFC test vectors, the OpenSSH interop gate, and fuzzing in Phase 3.
+  knowingly. The controls in place today are the RFC 7748 §6.1 X25519
+  vectors (`kex.rs`) and the OpenSSH interop gate, which exercises
+  Ed25519 host signing and user-signature verification end to end.
+  They cover known-answer and end-to-end correctness; they do not
+  replace a formal guarantee, and nothing currently does. Fuzzing
+  (Phase 3, not yet in place) will add another layer, not the same one.
 - **Young releases with no public audit.** About three months old, with
   no known audit. The same holds for every crate in the PQ layer
-  (ADR-0019, ADR-0035).
+  (ADR-0019, and the `ml-dsa` ADR proposed in #174).
 - **x25519 secrets erase on drop only.** The project relies on drop
   already, but an explicit `.zeroize()` on those types is no longer
   available should it ever be wanted.
@@ -164,7 +172,8 @@ Keep the Verus-covered core and revisit when (a) Verus coverage extends
 to 5.x, (b) an advisory hits 4.x/2.x, or (c) the ML-DSA implementation
 needs `signature` 3. Not chosen: the project lead decided on 2026-10-11
 to move now, valuing the single-versioned, smaller tree and the
-alignment with ADR-0035 over the 4.1.3 verification coverage. That
+alignment with the `ml-dsa` ADR (#174) over the 4.1.3 verification
+coverage. That
 trade-off is recorded above.
 
 ### Alternative 2: Move only `x25519-dalek` (Dependabot #115)
@@ -184,4 +193,4 @@ Rejected for the same reason, mirrored.
 - Advisories: [RUSTSEC-2024-0344](https://rustsec.org/advisories/RUSTSEC-2024-0344.html), [RUSTSEC-2022-0093](https://rustsec.org/advisories/RUSTSEC-2022-0093.html).
 - Audit: [Quarkslab, "Security audit of dalek libraries" (2019)](https://blog.quarkslab.com/security-audit-of-dalek-libraries.html).
 - Prerequisite: [#175](https://github.com/gonzafg2/quantumssh/pull/175) (`zeroize/alloc` declared explicitly).
-- Implementation: TBD — the PR that changes the three manifest lines and flips this ADR to `Accepted`.
+- Implementation: TBD — the PR that changes the two manifest lines and flips this ADR to `Accepted`.
