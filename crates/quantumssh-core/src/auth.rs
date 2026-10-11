@@ -58,7 +58,8 @@ pub(crate) const SIGNATURE_BOUND: usize = 256;
 pub enum AuthError {
     /// File cannot be read or is completely invalid.
     Io(String),
-    /// A line does not contain a parsable `ssh-ed25519` key.
+    /// A line does not contain a parsable `ssh-ed25519` key, or the key
+    /// is small-order (weak) and would accept forged signatures.
     MalformedLine {
         /// 1-indexed line number.
         line: usize,
@@ -169,7 +170,8 @@ impl AuthorizedKeys {
     ///
     /// [`AuthError::Io`] when the file cannot be read;
     /// [`AuthError::MalformedLine`] when a line's base64 blob cannot be
-    /// decoded or its wire format is invalid;
+    /// decoded, its wire format is invalid, or its key is small-order
+    /// (weak);
     /// [`AuthError::UnsupportedKeyType`] when a non-Ed25519 key is
     /// encountered;
     /// [`AuthError::Empty`] when the file contains zero valid keys.
