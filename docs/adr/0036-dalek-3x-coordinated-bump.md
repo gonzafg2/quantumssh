@@ -30,7 +30,7 @@ Facts gathered on 2026-10-11:
 | `curve25519-dalek` | 4.1.3 (2024-06-18, MSRV 1.60). 4.2.0 was yanked: wrong `hash_to_curve` | 5.0.0 (2026-07-06, MSRV 1.85, edition 2024) |
 | `ed25519-dalek` | 2.2.0 (2025-07-09, MSRV 1.81) | 3.0.0 (2026-07-06, MSRV 1.85) |
 | `x25519-dalek` | 2.0.1 (2024-02-07, MSRV 1.60) | 3.0.0 (2026-07-06, MSRV 1.85) |
-| Licence | BSD-3-Clause, all six | BSD-3-Clause, allowed by `deny.toml` |
+| Licence | BSD-3-Clause (all three crates) | BSD-3-Clause (all three crates), allowed by `deny.toml` |
 
 Licence note: [RFC-0003](../rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md)
 §"Guide-level explanation" says the nine primitive crates "are
@@ -87,9 +87,9 @@ records the correct fact. Accepted RFCs are layered on, not edited.
      commissioned by Tari, which focused on `curve25519-dalek`. No
      public audit of 5.0 or of the 3.0 crates is known. They have been
      public for about three months.
-   - **Maintenance of the old line.** There has been no 4.x release
-     since 2024-06-18 and there is no 4.x maintenance branch. No EOL is
-     declared either.
+   - **Maintenance of the old line.** There has been no usable 4.x
+     release since 2024-06-18: 4.2.0, published 2025-07-09, was yanked.
+     There is no 4.x maintenance branch, and no EOL is declared either.
 
 ## Decision
 
@@ -125,8 +125,8 @@ known vulnerability. Its value is indirect:
   on `signature` 3.x. Moving the dalek line now means the ML-DSA
   implementation adds no second `signature` major.
 - **Staying on the current line.** `curve25519-dalek` 4.x has had no
-  release since 2024-06-18. `ed25519-dalek` 2.x last released on
-  2025-07-09. The 5.x/3.x line is where upstream's releases now are.
+  usable release since 2024-06-18 (4.2.0, 2025-07-09, was yanked).
+  `ed25519-dalek` 2.x last released on 2025-07-09. The 5.x/3.x line is where upstream's releases now are.
 
 ## Consequences
 
