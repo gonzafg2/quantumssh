@@ -111,13 +111,30 @@ composite host key.
    by the project's own tests, goes through `verify_with_context` with
    the same `ctx`.
 5. **Conformance vectors run as tests**, as ADR-0019 required for
-   ML-KEM. The implementation PR runs the NIST ACVP ML-DSA-44 `keyGen`
-   and `sigVer` vectors, plus the deterministic `sigGen` cases through
-   `sign_deterministic`, against the pinned crate. Where the LAMPS
-   composite draft publishes test vectors for
-   `COMPSIG-MLDSA44-Ed25519-SHA512`, it runs those too. A crate upgrade
-   that changes behaviour therefore fails CI instead of passing
-   silently.
+   ML-KEM. Two layers are covered:
+   - **The primitive.** The implementation PR runs the NIST ACVP
+     ML-DSA-44 vectors against the pinned crate:
+     - `keyGen` through `from_seed`;
+     - `sigGen` through `sign_internal`, in both groups: deterministic
+       with a zeroed `rnd`, and hedged with each vector's `rnd`;
+     - `sigVer` through `verify_internal`.
+
+     These are FIPS 204's *internal* interfaces, and the ACVP vectors
+     are defined against them. The upstream harness at `ml-dsa/v0.1.1`
+     uses the same calls (`tests/sig-gen.rs`, `tests/sig-ver.rs`).
+     `sign_internal` is test-only upstream (Alternative 5), so it
+     appears only in tests, never in production code. If upstream later
+     gates these methods behind a feature, that feature is enabled for
+     dev-dependencies only.
+   - **The external framing.** What production calls is
+     `sign_randomized` with `ctx = Label` and the composite `M'`. The
+     LAMPS draft's composite test vectors cover it where they are
+     published, and the ADR-0020 interop gate covers it end to end,
+     because a stock OpenSSH client verifies the server's composite
+     signature on every connection.
+
+   Together these catch a crate upgrade that changes behaviour, in the
+   primitive or in the framing, instead of letting it pass silently.
 
 ## Consequences
 
