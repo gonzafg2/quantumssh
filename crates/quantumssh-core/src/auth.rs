@@ -265,6 +265,16 @@ impl AuthorizedKeys {
                     line: line_no,
                     reason: "invalid Ed25519 key bytes".into(),
                 })?;
+            // A small-order key accepts forged signatures under the
+            // non-strict check; `verify_auth_signature` already uses
+            // `verify_strict`, and refusing the key here as well fails a
+            // bad `authorized_keys` loudly instead of keeping it loaded.
+            if verifying_key.is_weak() {
+                return Err(AuthError::MalformedLine {
+                    line: line_no,
+                    reason: "small-order (weak) Ed25519 key".into(),
+                });
+            }
 
             let digest = Sha256::digest(&blob);
             let fingerprint = format!("SHA256:{}", host_key::base64_encode_nopad(&digest));
@@ -512,6 +522,17 @@ mod tests {
         let path = temp_authorized_keys("ssh-ed25519 aGVsbG8= comment\n");
         let err = AuthorizedKeys::load(&path).unwrap_err();
         assert!(matches!(err, AuthError::MalformedLine { .. }));
+    }
+
+    #[test]
+    fn reject_small_order_key() {
+        let mut identity = [0u8; 32];
+        identity[0] = 1;
+        let weak = VerifyingKey::from_bytes(&identity).expect("the identity point decodes");
+        let b64 = host_key::base64_encode_nopad(&build_ed25519_blob(&weak));
+        let path = temp_authorized_keys(&format!("ssh-ed25519 {b64} weak@host\n"));
+        let err = AuthorizedKeys::load(&path).unwrap_err();
+        assert!(matches!(err, AuthError::MalformedLine { line: 1, .. }));
     }
 
     #[test]
