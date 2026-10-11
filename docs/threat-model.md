@@ -1368,8 +1368,11 @@ operators must account for. The principal items, by category, are:
   gates fired by October 2026 (§6.1):
   [RFC-0012](rfcs/0012-composite-host-key-cutover.md) cuts host
   authentication over to `ssh-mldsa44-ed25519` before `0.1.0`,
-  tracked under issue #109. Until that cut-over lands, the exposure
-  described here stands.
+  tracked under issue #109. Until that cut-over lands, the host-key
+  half of the exposure described here stands. The user-key half
+  persists beyond it: user authentication stays classical
+  `ssh-ed25519`, and post-quantum user keys are a separate, still
+  open decision (RFC-0006 §Future possibilities).
 - **Implementation flaws not caught by review, tests, or fuzzing.**
   The Phase-3 security audit is the principal compensating control;
   the project's posture is that bugs will exist and the goal is to
