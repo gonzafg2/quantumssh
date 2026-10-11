@@ -20,7 +20,7 @@ use zeroize::Zeroizing;
 
 use crate::host_key;
 use crate::wire::{Reader, Writer};
-use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use ed25519_dalek::{Signature, VerifyingKey};
 use sha2::{Digest, Sha256};
 
 /// `SSH_MSG_USERAUTH_REQUEST` (RFC 4252 §8).
@@ -58,7 +58,8 @@ pub(crate) const SIGNATURE_BOUND: usize = 256;
 pub enum AuthError {
     /// File cannot be read or is completely invalid.
     Io(String),
-    /// A line does not contain a parsable `ssh-ed25519` key.
+    /// A line does not contain a parsable `ssh-ed25519` key, or the key
+    /// is small-order (weak) and would accept forged signatures.
     MalformedLine {
         /// 1-indexed line number.
         line: usize,
@@ -169,7 +170,8 @@ impl AuthorizedKeys {
     ///
     /// [`AuthError::Io`] when the file cannot be read;
     /// [`AuthError::MalformedLine`] when a line's base64 blob cannot be
-    /// decoded or its wire format is invalid;
+    /// decoded, its wire format is invalid, or its key is small-order
+    /// (weak);
     /// [`AuthError::UnsupportedKeyType`] when a non-Ed25519 key is
     /// encountered;
     /// [`AuthError::Empty`] when the file contains zero valid keys.
@@ -265,6 +267,16 @@ impl AuthorizedKeys {
                     line: line_no,
                     reason: "invalid Ed25519 key bytes".into(),
                 })?;
+            // A small-order key accepts forged signatures under the
+            // non-strict check; `verify_auth_signature` already uses
+            // `verify_strict`, and refusing the key here as well fails a
+            // bad `authorized_keys` loudly instead of keeping it loaded.
+            if verifying_key.is_weak() {
+                return Err(AuthError::MalformedLine {
+                    line: line_no,
+                    reason: "small-order (weak) Ed25519 key".into(),
+                });
+            }
 
             let digest = Sha256::digest(&blob);
             let fingerprint = format!("SHA256:{}", host_key::base64_encode_nopad(&digest));
@@ -315,10 +327,16 @@ pub fn auth_signed_data(session_id: &[u8; 32], payload_without_sig: &[u8]) -> Ze
 
 /// Verifies an Ed25519 signature over the `publickey` auth request.
 ///
+/// Uses `verify_strict`, not `verify`: the non-strict check accepts
+/// signatures under a small-order ("weak") public key that anyone can
+/// forge, so a weak key in `authorized_keys` would let any peer
+/// authenticate as that user. `verify_strict` rejects weak keys and a
+/// non-canonical or small-order `R`.
+///
 /// # Errors
 ///
 /// Returns `Err(())` when the signature is invalid (forged, tampered,
-/// wrong key, or non-canonical).
+/// wrong key, non-canonical, or under a weak key).
 #[must_use]
 #[allow(clippy::double_must_use, clippy::result_unit_err)]
 pub fn verify_auth_signature(
@@ -329,7 +347,7 @@ pub fn verify_auth_signature(
 ) -> Result<(), ()> {
     let signed = auth_signed_data(session_id, payload_without_sig);
     let sig = Signature::from_slice(signature_bytes).map_err(|_| ())?;
-    verifying_key.verify(&signed, &sig).map_err(|_| ())
+    verifying_key.verify_strict(&signed, &sig).map_err(|_| ())
 }
 
 /// Builds the `SSH_MSG_USERAUTH_FAILURE` payload naming the only
@@ -364,6 +382,7 @@ mod tests {
     use super::*;
     use ed25519_dalek::Signer;
     use ed25519_dalek::SigningKey;
+    use ed25519_dalek::Verifier;
     use std::io::Write;
     use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -505,6 +524,17 @@ mod tests {
         let path = temp_authorized_keys("ssh-ed25519 aGVsbG8= comment\n");
         let err = AuthorizedKeys::load(&path).unwrap_err();
         assert!(matches!(err, AuthError::MalformedLine { .. }));
+    }
+
+    #[test]
+    fn reject_small_order_key() {
+        let mut identity = [0u8; 32];
+        identity[0] = 1;
+        let weak = VerifyingKey::from_bytes(&identity).expect("the identity point decodes");
+        let b64 = host_key::base64_encode_nopad(&build_ed25519_blob(&weak));
+        let path = temp_authorized_keys(&format!("ssh-ed25519 {b64} weak@host\n"));
+        let err = AuthorizedKeys::load(&path).unwrap_err();
+        assert!(matches!(err, AuthError::MalformedLine { line: 1, .. }));
     }
 
     #[test]
@@ -768,6 +798,36 @@ mod tests {
 
         let result = verify_auth_signature(&session_id, payload, sig.to_bytes().as_ref(), &other);
         assert!(result.is_err());
+    }
+
+    /// A small-order public key lets anyone forge a signature that the
+    /// non-strict `verify` accepts for every message. With `A` the
+    /// identity point, `R' = [S]B - [k]A = [S]B`, so `R = B` and `S = 1`
+    /// verify whatever `k` (and hence the message) is. A key like this in
+    /// `authorized_keys` must not authenticate anyone.
+    #[test]
+    fn small_order_key_forgery_is_rejected() {
+        let mut identity = [0u8; 32];
+        identity[0] = 1;
+        let weak = VerifyingKey::from_bytes(&identity).expect("the identity point decodes");
+        assert!(weak.is_weak());
+
+        // R = the compressed Ed25519 basepoint (0x58, then 0x66 x 31); S = 1.
+        let mut forged = [0x66u8; 64];
+        forged[0] = 0x58;
+        forged[32..].fill(0);
+        forged[32] = 1;
+
+        let session_id = [0x42u8; 32];
+        let payload = b"any SSH_MSG_USERAUTH_REQUEST payload";
+        let signed = auth_signed_data(&session_id, payload);
+
+        // The bug class this guards against: the non-strict check accepts it.
+        assert!(
+            weak.verify(&signed, &Signature::from_bytes(&forged))
+                .is_ok()
+        );
+        assert!(verify_auth_signature(&session_id, payload, &forged, &weak).is_err());
     }
 
     #[test]
