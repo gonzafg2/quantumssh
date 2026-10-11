@@ -61,16 +61,40 @@ composite host key.
    that release exists. It flips to `Accepted` in the PR that introduces
    the dependency, and that PR records the exact version here.
 2. **Features.** `default-features = false, features = ["zeroize",
-   "rand_core"]`: `zeroize` for private-state erasure (RFC-0012 §Key
-   material), and `rand_core` for hedged signing. The defaults `alloc`,
-   `getrandom` and `pkcs8` are not needed, because keys come from the
-   `openssh-key-v1` container, not PKCS#8. A `cargo check` of
-   `quantumssh-core` with this feature set against 0.1.1 compiles.
-3. **Signing mode: hedged.** We call `sign_randomized` with
-   `ctx = "COMPSIG-MLDSA44-Ed25519-SHA512"` and fresh OS randomness for
-   every signature (the workspace already takes its randomness from
-   `getrandom`). The hedged variant is FIPS 204's default, and it is
-   what OpenSSH 10.6 does: its
+   "rand_core"]`, following the workspace convention (ADR-0019). Each
+   feature has its own reason:
+   - `zeroize` is enabled for private-state erasure (RFC-0012 §Key
+     material).
+   - `rand_core` is enabled because it gates `sign_randomized`
+     (`#[cfg(feature = "rand_core")]` in `signing.rs`).
+   - `pkcs8` (a default) is off: keys come from the `openssh-key-v1`
+     container, not PKCS#8.
+   - `getrandom` (a default) is off: it would add a second randomness
+     path inside `ml-dsa`. The RNG is passed in by the caller instead
+     (item 3), so the workspace keeps one OS-randomness dependency.
+   - `alloc` (a default) is off: the surface the composite uses
+     (`from_seed`, `sign_randomized`, `verify_with_context`) does not
+     need it, and enabled surface is kept to what is used.
+
+   A `cargo check` of `quantumssh-core` with this feature set against
+   0.1.1 compiles.
+3. **Signing mode: hedged, with `getrandom::SysRng`.** We call
+   `sign_randomized` with `ctx = "COMPSIG-MLDSA44-Ed25519-SHA512"` and
+   `&mut getrandom::SysRng` as the RNG.
+   - `SysRng` comes from the `sys_rng` feature of the workspace's
+     existing `getrandom` 0.4 dependency. It implements `rand_core`
+     0.10's `TryCryptoRng` over the same OS source as the
+     `getrandom::fill` calls the workspace already makes (`kex.rs`,
+     `wire.rs`, `cipher.rs`). It needs no first-party adapter and adds
+     no crate: `rand_core` 0.10.1 is already in `Cargo.lock`.
+   - This was checked end to end against `ml-dsa` 0.1.1 and `getrandom`
+     0.4.3 in a scratch crate: seed → `from_seed` → two
+     `sign_randomized` calls → `verify_with_context`. Verification
+     succeeds with the right `ctx`, fails with an empty `ctx`, and the
+     two signatures differ.
+
+   The hedged variant is FIPS 204's default, and it is what OpenSSH 10.6
+   does: its
    `ssh-mldsa-eddsa.c` fills a fresh `mldsa_rnd` with `arc4random_buf`
    for every signature. Byte-for-byte parity with OpenSSH is therefore
    neither possible nor required; verifiers accept any valid signature.
@@ -106,6 +130,9 @@ composite host key.
   0.1.0, `signature` 3.0.0 and `sponge-cursor` 0.1.0. All four are
   RustCrypto crates licensed Apache-2.0 OR MIT, which `deny.toml`
   allows. The exact set is re-checked against the pinned release.
+- **One feature added to an existing dependency.** The workspace's
+  `getrandom` gains `sys_rng` (item 3). No new crate, since `rand_core`
+  0.10.1 is already resolved.
 - **Two `signature` majors.** `ml-dsa` uses `signature` 3.x while
   `ed25519-dalek` 2.x uses 2.x. `deny.toml` only warns on duplicates
   (`multiple-versions = "warn"`). The duplication ends with the
@@ -145,7 +172,23 @@ for the same reason ADR-0019 gave for `fips203`.
 
 Rejected. It is FFI, and RustSec declares it unmaintained.
 
-### Alternative 5: pin `ml-dsa` 0.1.1 now
+### Alternative 5: `ExpandedSigningKey::sign_internal` with a caller-filled `rnd`
+
+FIPS 204 `Sign_internal` with an explicit 32-byte `rnd` would mirror
+`kex.rs`'s `getrandom::fill` + `encapsulate_deterministic` pattern and
+need no RNG trait. It was rejected because upstream marks the method
+test-only (`// TODO(RLB) Only expose based on a feature. Tests need
+access, but normal code shouldn't.` in 0.1.1's `signing.rs`), so it can
+disappear in exactly the release this ADR pins. It would also move the
+`0 || len(ctx) || ctx || M` framing into first-party code.
+
+### Alternative 6: a first-party `TryCryptoRng` adapter over `getrandom::fill`
+
+It works, but it re-implements what `getrandom::SysRng` already
+provides upstream, and it would make `rand_core` a direct dependency in
+order to implement the trait. Rejected in favour of `sys_rng`.
+
+### Alternative 7: pin `ml-dsa` 0.1.1 now
 
 Rejected. It ships without the constant-time fixes, on a signing path an
 unauthenticated peer can drive and time.
