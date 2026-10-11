@@ -47,11 +47,16 @@ answered with a set-up prompt.
 We will run the Codex reviewer through the **Codex cloud GitHub App**,
 under the maintainer's ChatGPT plan, and remove the API-key workflow.
 
-- **Configuration, outside the repository.** `gonzafg2/quantumssh` is
-  connected as a Codex environment, and **Automatic review** is on for it
-  in Codex's code-review settings. `@codex review` on a PR requests a
-  review on demand. These two switches are the only configuration that
-  lives outside the repository, and this ADR is their record.
+- **Configuration, outside the repository.** Three settings, and this
+  ADR is their only record:
+  - `gonzafg2/quantumssh` is connected as a Codex environment.
+  - **Automatic review** is on for it in Codex's code-review settings.
+  - **Review trigger** is **On every push**. That keeps the cadence of
+    the workflow it replaces, which ran on `synchronize`, so every push
+    to a PR is reviewed. "On PR open" and "Smart" would review fewer
+    pushes, and are not used.
+
+  `@codex review` on a PR still requests a review on demand.
 - **Review rules, inside the repository.** A `## Code Review Rules`
   section in `AGENTS.md` points Codex at the authoritative criteria in
   `CLAUDE.md` and `docs/threat-model.md`, so they are not restated, and
