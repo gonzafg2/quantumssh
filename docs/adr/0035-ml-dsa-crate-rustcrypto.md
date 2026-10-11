@@ -110,6 +110,14 @@ composite host key.
    through `from_seed` (FIPS 204 `KeyGen_internal`). Verification, used
    by the project's own tests, goes through `verify_with_context` with
    the same `ctx`.
+5. **Conformance vectors run as tests**, as ADR-0019 required for
+   ML-KEM. The implementation PR runs the NIST ACVP ML-DSA-44 `keyGen`
+   and `sigVer` vectors, plus the deterministic `sigGen` cases through
+   `sign_deterministic`, against the pinned crate. Where the LAMPS
+   composite draft publishes test vectors for
+   `COMPSIG-MLDSA44-Ed25519-SHA512`, it runs those too. A crate upgrade
+   that changes behaviour therefore fails CI instead of passing
+   silently.
 
 ## Consequences
 
@@ -138,6 +146,14 @@ composite host key.
   0.1.0, `signature` 3.0.0 and `sponge-cursor` 0.1.0. All four are
   RustCrypto crates licensed Apache-2.0 OR MIT, which `deny.toml`
   allows. The exact set is re-checked against the pinned release.
+- **Erasure does not reach the SHAKE state.** In 0.1.1, `ml-dsa`'s
+  `zeroize` feature forwards to `hybrid-array` and `module-lattice` but
+  not to its `shake` dependency, so the sponge state that absorbs the
+  seed and `rnd` is not erased (0.1.1 declares `shake` with
+  `default-features = false` and no `zeroize`). This is within
+  threat-model §4.3's best-effort erasure. Closing it would take a
+  direct `shake` dependency only to switch on a feature. Not done here;
+  re-checked against the pinned release.
 - **One feature added to an existing dependency.** The workspace's
   `getrandom` gains `sys_rng` (item 3). No new crate, since `rand_core`
   0.10.1 is already resolved.
