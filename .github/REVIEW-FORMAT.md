@@ -1,7 +1,8 @@
 # Review format
 
-The report contract for the automated reviewers (`Claude Code Review`, `opencode` and `codex`).
-All three workflows point at this file rather than restating the format, so a review reads the
+The report contract for the workflow reviewers (`Claude Code Review` and `opencode`). Codex
+reviews through the Codex cloud GitHub App in its own native format (ADR-0037).
+Both workflows point at this file rather than restating the format, so a review reads the
 same whichever reviewer produced it. What to review lives in
 [`CLAUDE.md`](../CLAUDE.md); this file only covers how to report it.
 

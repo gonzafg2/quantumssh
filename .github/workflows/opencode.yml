@@ -55,7 +55,7 @@ jobs:
     # with opencode-go/deepseek-v4.1-flash and the fan-out prompt below:
     # eight reviews took 6m47s to 14m59s, and an earlier 15-minute ceiling
     # cut one that was still working (subagent step 83, no permission
-    # prompt in the log), which is why it is 30 now, same as codex.yml. If
+    # prompt in the log), which is why it is 30 now. If
     # a run reaches this, the model or the prompt is the problem, not the
     # ceiling.
     timeout-minutes: 30
@@ -85,7 +85,7 @@ jobs:
       # provider secret and the OIDC token are in the job. The job `if` only
       # sees the head repository on pull_request events; here the PR is read
       # from the API on both paths and a head that lives in a fork is refused
-      # before any secret is exposed — the same gate codex.yml applies.
+      # before any secret is exposed.
       - name: Refuse fork heads
         env:
           GH_TOKEN: ${{ github.token }}
