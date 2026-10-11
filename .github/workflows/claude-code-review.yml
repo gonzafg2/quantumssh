@@ -7,8 +7,8 @@ on:
 jobs:
   claude-review:
     # Author gate; same-repository head (a collaborator's fork PR is skipped,
-    # not checked out next to the OAuth token — the gate codex.yml and
-    # opencode.yml apply); and no drafts: the code-review plugin treats a
+    # not checked out next to the OAuth token — the gate opencode.yml
+    # applies); and no drafts: the code-review plugin treats a
     # draft as a stopping condition and posts nothing, so the run would
     # only fail the proof step below. ready_for_review re-triggers.
     if: |

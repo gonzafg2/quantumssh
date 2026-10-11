@@ -1,6 +1,6 @@
 # ADR 0033: A green reviewer check requires a review-shaped report on the PR
 
-- **Status:** Accepted
+- **Status:** Accepted; the Codex bullet of §Decision is superseded by [ADR-0037](0037-codex-reviews-via-chatgpt-github-app.md), which runs Codex through the GitHub App with no workflow and therefore no proof step
 - **Date:** 2026-09-23 (accepted on merge of [#160](https://github.com/gonzafg2/quantumssh/pull/160); proof-signal amendment merged in [#162](https://github.com/gonzafg2/quantumssh/pull/162) while still Proposed)
 - **Deciders:** Project lead
 - **Related:** Generalises the proof-of-review bullet of [ADR-0032](0032-opencode-reviewer-provider-model-variable-and-proof-of-review.md) §Decision (opencode) to the Claude reviewer; the Codex reviewer already satisfies it by construction ([ADR-0030](0030-codex-third-automated-reviewer.md) §Decision, "Posting"). Adds to the Claude workflow the same-repository-head gate ADR-0030 and ADR-0032 apply. Leaves [ADR-0008](0008-branch-protection-zero-required-reviews.md) and [ADR-0031](0031-required-status-checks-commit-lint-and-openssh-interop.md) unchanged: the reviewers stay advisory. Implementation: `.github/workflows/claude-code-review.yml` (lands in the same PR).
