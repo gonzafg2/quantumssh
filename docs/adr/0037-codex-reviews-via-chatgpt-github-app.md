@@ -69,11 +69,37 @@ under the maintainer's ChatGPT plan, and remove the API-key workflow.
   used on this repository, and the `AGENTS.md` rules tell Codex not to
   push. The structural guard is unchanged: branch protection on `main`
   (ADR-0008, no bypass) means nothing reaches `main` except through a PR
-  the maintainer merges. A commit the App pushed to a PR branch would also
-  lack the DCO sign-off every commit requires, so it is not merged.
+  the maintainer merges. A squash merge takes every commit on the branch,
+  so before merging the maintainer checks that the PR head carries no
+  commit by `chatgpt-codex-connector`. Such a commit would also lack the
+  DCO sign-off every commit requires.
 - **Credential removal.** `.github/workflows/codex.yml` is deleted in
   this PR. After merge, the maintainer deletes the `OPENAI_API_KEY`
   repository secret and revokes the key in its OpenAI project.
+
+**Why an ADR, not an RFC.** `CLAUDE.md` sends "a dependency that
+materially expands the trust base" to an RFC. This change is recorded as
+an ADR, the same lane ADR-0025 and ADR-0030 used for the two previous
+reviewer changes, for three reasons:
+
+1. It adds no dependency to the server, and it removes one from CI
+   (`codex-action` and its pinned CLI).
+2. It changes how an already-accepted third reviewer authenticates. It
+   does not change whether the project sends PRs to an external
+   inference provider; ADR-0025 and ADR-0030 settled that class of trust.
+3. The one new authority it grants, the App's write access to non-`main`
+   branches, is bounded by branch protection. It is also reversible
+   without a code change: narrow the App's repository selection or
+   uninstall it.
+
+The residual is stated here rather than argued away. A compromised App
+could push to an open PR's branch, and the pre-merge check above is the
+control.
+
+**Acceptance test.** On 2026-10-11 the App reviewed this PR (head
+`4d3d9bb`) after an `@codex review` comment, from the repository's
+Codex environment. Its own footer confirms that reviews also run when a
+PR is opened or marked ready.
 
 ## Consequences
 
@@ -100,8 +126,11 @@ under the maintainer's ChatGPT plan, and remove the API-key workflow.
   not as a red status.
 - Review volume is bounded by the ChatGPT plan's usage limits.
 - The App holds repository write permission, which it needs for
-  features this project does not use. Mitigated by the policy above,
-  branch protection, and the sign-off requirement.
+  features this project does not use. That is a new principal able to
+  push to PR branches, which the API-key workflow never had. It is
+  mitigated by the no-push policy, branch protection on `main`, and the
+  pre-merge check for commits by `chatgpt-codex-connector`, and it is
+  reversible by uninstalling the App.
 
 ### Neutral
 
