@@ -123,9 +123,14 @@ composite host key.
      are defined against them. The upstream harness at `ml-dsa/v0.1.1`
      uses the same calls (`tests/sig-gen.rs`, `tests/sig-ver.rs`).
      `sign_internal` is test-only upstream (Alternative 5), so it
-     appears only in tests, never in production code. If upstream later
-     gates these methods behind a feature, that feature is enabled for
-     dev-dependencies only.
+     appears only in tests, never in production code. Loading the
+     vectors' expanded keys goes through `ExpandedSigningKey::from_expanded`,
+     which upstream marks `#[deprecated]`. Its own harness wraps it in
+     `#[allow(deprecated)]`, and ours does the same, in tests only. If
+     upstream later gates these methods behind a feature, that feature
+     is enabled for dev-dependencies only. If it removes them, the
+     harness moves to the replacement API. Both are re-checked against
+     the pinned release.
    - **The external framing.** What production calls is
      `sign_randomized` with `ctx = Label` and the composite `M'`. The
      LAMPS draft's composite test vectors cover it where they are
