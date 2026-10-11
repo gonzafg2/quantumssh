@@ -57,6 +57,15 @@ under the maintainer's ChatGPT plan, and remove the API-key workflow.
     pushes, and are not used.
 
   `@codex review` on a PR still requests a review on demand.
+- **No author gate.** ADR-0030 ran Codex only on PRs from
+  OWNER/MEMBER/COLLABORATOR, from same-repository heads, and never on
+  Dependabot. Those gates protected a runner that held a secret and
+  checked out PR code. The App holds no repository secret and runs on no
+  runner of ours, so the reason for the gate does not carry over. Its
+  settings have no per-author filter either, so the gate is dropped and
+  Codex may also review Dependabot and fork PRs. What remains is
+  injection through PR content: it could steer the review text, which
+  stays advisory (ADR-0008). Pushes are covered by the control below.
 - **Review rules, inside the repository.** A `## Code Review Rules`
   section in `AGENTS.md` points Codex at the authoritative criteria in
   `CLAUDE.md` and `docs/threat-model.md`, so they are not restated, and

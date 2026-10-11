@@ -121,7 +121,7 @@ authoritative reference; the operative rules a reviewer applies:
   (e.g. from a GitHub App) must be re-signed before it can merge.
 - **Never push to `main`.** Open a pull request from a branch.
 - **Spanish and English are both first-class** in issues, PRs, and docs.
-- Automated reviewers (`opencode`, `Claude Code Review`) only trigger for human-authored PRs (`OWNER`/`MEMBER`/`COLLABORATOR`). Dependabot PRs receive CI + manual review only. Codex reviews through the Codex cloud GitHub App (`chatgpt-codex-connector`, [ADR-0037](docs/adr/0037-codex-reviews-via-chatgpt-github-app.md)), automatically or on `@codex review`, guided by the `## Code Review Rules` section of `AGENTS.md`.
+- The workflow reviewers (`opencode`, `Claude Code Review`) only trigger for human-authored PRs (`OWNER`/`MEMBER`/`COLLABORATOR`); Dependabot PRs get no workflow review, only CI and manual review. Codex reviews through the Codex cloud GitHub App (`chatgpt-codex-connector`, [ADR-0037](docs/adr/0037-codex-reviews-via-chatgpt-github-app.md)) on every push or on `@codex review`, guided by the `## Code Review Rules` section of `AGENTS.md`. The App has no author gate, so it may review Dependabot and fork PRs too.
 
 ## Repo map
 
