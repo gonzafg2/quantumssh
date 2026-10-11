@@ -42,9 +42,11 @@ records the correct fact. Accepted RFCs are layered on, not edited.
 **The four points the #109 comment asked for:**
 
 1. **API** (CHANGELOG of each 3.0.0 / 5.0.0 release):
-   - `ed25519-dalek` 3.0.0 **removes the `std` feature**. It moves to
-     `signature` 3, `ed25519` 3, `sha2` 0.11, `rand_core` 0.10 and
-     `getrandom` 0.4.
+   - `ed25519-dalek` 3.0.0 **removes the `std` feature**. Its runtime
+     dependencies move to `ed25519` 3 and `sha2` 0.11 (and
+     `curve25519-dalek` 5). `signature` 3 and `rand_core` 0.10 are
+     optional there; `signature` 3 still enters the tree through
+     `ed25519` 3. `getrandom` 0.4 is only a dev-dependency.
    - Everything the project calls is unchanged: `SigningKey::from_bytes`,
      `VerifyingKey::from_bytes`, `Signature::from_bytes` / `from_slice`,
      and `Signer` / `Verifier`.
