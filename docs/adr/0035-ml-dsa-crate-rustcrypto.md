@@ -53,7 +53,8 @@ Candidates surveyed on 2026-10-11:
 We will use **`RustCrypto/ml-dsa`** for the ML-DSA-44 half of the
 composite host key.
 
-1. **Version rule.** The pin is the first `ml-dsa` release that contains
+1. **Version rule.** The pin is the first **stable** `ml-dsa` release
+   (no `-rc`, `-pre` or other pre-release) that contains
    RustCrypto/signatures#1386, pinned exactly with an `=` requirement in
    the workspace `Cargo.toml`. **0.1.1 is not acceptable**: its signing
    path predates the constant-time fixes, and the signer is reachable
@@ -92,6 +93,13 @@ composite host key.
      `sign_randomized` calls → `verify_with_context`. Verification
      succeeds with the right `ctx`, fails with an empty `ctx`, and the
      two signatures differ.
+   - **RNG failure fails closed.** `SysRng` is fallible, so
+     `sign_randomized` can return an error. Host-key signing therefore
+     becomes fallible: today `HostKey::sign` returns `Vec<u8>`
+     (`host_key.rs:165`). An error aborts the key exchange with
+     `SSH_DISCONNECT_KEY_EXCHANGE_FAILED`, the path `kex.rs` already
+     takes for `getrandom` failures (`Rejection::kex_failed("rng-failure")`).
+     It never panics on this pre-auth path.
 
    The hedged variant is FIPS 204's default, and it is what OpenSSH 10.6
    does: its
