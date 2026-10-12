@@ -936,7 +936,8 @@ where
 {
     /// Transitions into the [`Session`] stage and runs the M5 channel
     /// layer (ADR-0023): one `session` channel carrying one `exec`, then
-    /// a clean close.
+    /// a clean close. The child is spawned into `children`, which the
+    /// connection task owns (ADR-0038 §6).
     ///
     /// # Errors
     ///
@@ -944,10 +945,11 @@ where
     /// `SSH_MSG_DISCONNECT` is already sent), or [`TransportError::Io`]
     /// if the connection fails mid-session. Returns `Ok(())` on a clean
     /// session close.
-    pub async fn serve(
+    pub(crate) async fn serve(
         self,
         host_key: Arc<HostKey>,
         thresholds: RekeyThresholds,
+        children: &crate::exec::ChildScope,
     ) -> Result<(), TransportError> {
         let mut session = Expect {
             stream: self.stream,
@@ -973,7 +975,7 @@ where
                 },
             },
         };
-        crate::channel::drive(&mut session).await
+        crate::channel::drive(&mut session, children).await
     }
 }
 
