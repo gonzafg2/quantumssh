@@ -56,11 +56,12 @@ Facts that shape the design (checked on 2026-10-12):
   commit `7e38f4b` its `toolchain` input is required (`action.yml`
   lines 9–11), and its only inputs are `toolchain`, `targets`/`target`
   and `components` (lines 8–20). Its README pairs an explicit
-  `toolchain` input with a SHA or `@master` ref (lines 43–45), and
-  requires a pinned SHA to be "within the history of the master branch"
-  (lines 102–108). The version refs (`@1.99.0`) are master plus one
-  commit, outside that history, so they cannot be SHA-pinned
-  the way this repository pins every action.
+  `toolchain` input with the `@master` revision (lines 43–45), and
+  requires a full-SHA pin to be "within the history of the master
+  branch" (lines 102–108); a SHA from master's history, as this
+  repository pins, is that revision frozen. The version refs (`@1.99.0`)
+  are master plus one commit, outside that history, so they cannot be
+  SHA-pinned the way this repository pins every action.
 - **Dependabot can bump the file, but is not configured to.** Dependabot
   has had a `rust-toolchain` package ecosystem since 2025-08-19. It
   updates `rust-toolchain.toml` versioned channels such as `1.xx.yy`,
