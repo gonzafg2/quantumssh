@@ -34,10 +34,11 @@ const DEFAULT_LISTEN: &str = "127.0.0.1:2222";
 const DEFAULT_HANDSHAKE_TIMEOUT_SECS: u64 = 30;
 /// ADR-0028: graceful-shutdown drain deadline default.
 const DEFAULT_DRAIN_TIMEOUT_SECS: u64 = 30;
-/// ADR-0028: each exec holds up to four `spawn_blocking` tasks
-/// (stdout/stderr/stdin pumps and the reap), so the blocking pool is
-/// sized from the connection cap — admission control, not thread-pool
-/// starvation, is what bounds concurrency.
+/// ADR-0028 sized the blocking pool from the connection cap for the four
+/// `spawn_blocking` tasks each exec held. ADR-0038 moved those onto
+/// `tokio::process`, so the channel layer no longer uses the pool; the
+/// bound stays as an upper limit, since tokio starts blocking threads on
+/// demand.
 const BLOCKING_THREADS_PER_CONNECTION: usize = 4;
 
 const USAGE: &str = "\
