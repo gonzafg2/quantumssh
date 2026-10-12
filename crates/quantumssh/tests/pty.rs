@@ -225,3 +225,25 @@ async fn hang_up_kills_the_group_even_when_the_leader_exits_in_the_grace() {
         std::thread::sleep(Duration::from_millis(20));
     }
 }
+
+#[tokio::test]
+async fn a_refused_second_pty_req_keeps_the_first_pty() {
+    // ADR-0038 §2: a second `pty-req` is refused and leaves the granted
+    // PTY in place for the child.
+    let (addr, host_key) = start().await;
+    let (mut stream, mut client, chan) = open_with_pty(addr, &host_key, 80, 24, &[]).await;
+    client
+        .write_sealed(&mut stream, &channel_pty_req(chan, b"xterm", 100, 40, &[]))
+        .await;
+    assert_eq!(expect_reply(&mut client, &mut stream).await, CH_FAILURE);
+    client
+        .write_sealed(&mut stream, &channel_exec(chan, b"tty"))
+        .await;
+    let (out, _err, exit) = collect_session(&mut client, &mut stream, chan).await;
+    assert!(
+        contains(&out, "/dev/"),
+        "the child runs on the first PTY: {:?}",
+        String::from_utf8_lossy(&out)
+    );
+    assert_eq!(exit, Some(0));
+}

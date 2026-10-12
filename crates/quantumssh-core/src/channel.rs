@@ -849,8 +849,11 @@ impl Driver<'_> {
                 Some(PendingPty { pair, term })
             })
             .flatten();
+        // A refusal leaves an already granted PTY in place.
         let granted = pending.is_some();
-        self.pty = pending;
+        if granted {
+            self.pty = pending;
+        }
         self.reply(session, want_reply, granted).await
     }
 

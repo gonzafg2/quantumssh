@@ -760,10 +760,19 @@ fn is_end_of_session(error: &io::Error) -> bool {
     error.raw_os_error() == Some(rustix::io::Errno::IO.raw_os_error())
 }
 
-/// Forwards what the master already holds, until the first would-block,
-/// end of session or failure (ADR-0038 §7). The master is non-blocking.
+/// Forwards what the master already holds and no more (ADR-0038 §7): the
+/// byte count is read once, with `FIONREAD`, so a process left writing to
+/// the terminal cannot extend the drain while a send waits for the client.
+/// Ends early at would-block, end of session or failure.
 async fn drain_master(master: &OwnedFd, out_tx: &mpsc::Sender<ChildChunk>, buf: &mut [u8]) {
-    while let Ok(n) = rustix::io::read(master, &mut *buf) {
+    let Ok(mut remaining) = rustix::io::ioctl_fionread(master) else {
+        return;
+    };
+    while remaining > 0 {
+        let want = usize::try_from(remaining).map_or(buf.len(), |r| r.min(buf.len()));
+        let Ok(n) = rustix::io::read(master, &mut buf[..want]) else {
+            return;
+        };
         if n == 0
             || out_tx
                 .send(ChildChunk::Stdout(buf[..n].to_vec()))
@@ -772,6 +781,7 @@ async fn drain_master(master: &OwnedFd, out_tx: &mpsc::Sender<ChildChunk>, buf: 
         {
             return;
         }
+        remaining = remaining.saturating_sub(n as u64);
     }
 }
 
@@ -1002,5 +1012,39 @@ mod tests {
             "the kill must reach the background job"
         );
         drop(io);
+    }
+
+    #[tokio::test]
+    async fn the_post_exit_drain_takes_only_what_the_master_holds() {
+        // ADR-0038 §7: a writer that keeps the terminal full while a slow
+        // client holds each send cannot extend the drain.
+        let pair = pty::allocate(&pty::Modes::parse(&[]).expect("modes"), Size::default())
+            .expect("allocate");
+        let slave = pair.slave;
+        let writer = std::thread::spawn(move || {
+            let chunk = [b'y'; 1024];
+            // Blocks while the terminal is full; ends once the master is
+            // closed and the write fails.
+            while rustix::io::write(&slave, &chunk).is_ok() {}
+        });
+        // Let the terminal fill.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let (tx, mut rx) = mpsc::channel(1);
+        let consumer = tokio::spawn(async move {
+            while rx.recv().await.is_some() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        });
+        let mut buf = vec![0u8; CHUNK];
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            drain_master(&pair.master, &tx, &mut buf),
+        )
+        .await
+        .expect("the drain ends at the snapshot taken when it started");
+        drop(tx);
+        drop(pair.master);
+        consumer.await.expect("consumer");
+        writer.join().expect("writer");
     }
 }
