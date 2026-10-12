@@ -328,10 +328,12 @@ in the tree, like ADR-0029's `fs`.
 
 ### 6. Runtime: `tokio::process` for every channel child
 
-- **Feature delta.** `quantumssh-core`'s `tokio` gains `process`. The
-  lockfile gains no crate: `process` needs `bytes`, `libc`, `mio` and
-  `signal-hook-registry`, and all four are already locked (the last one
-  through ADR-0028's `signal`). ADR-0022 anticipated this: "possibly
+- **Feature delta.** `quantumssh-core`'s `tokio` gains `process`, and
+  `signal` for the reaper's `SIGCHLD` wake-up (§6, "Reaping"). The
+  lockfile gains no crate: these features need `bytes`, `libc`, `mio`
+  and `signal-hook-registry`, and all four are already locked
+  (`signal-hook-registry` 1.4.8 through ADR-0028's `signal` in the
+  binary). ADR-0022 anticipated this: "possibly
   `tokio::process`. Each addition is a small, reviewable `Cargo.toml`
   change, not a re-decision of this ADR".
 - **Pipe sessions** (`exec`, and `shell` without a PTY) leave the
@@ -389,17 +391,39 @@ in the tree, like ADR-0029's `fs`.
       task's result (`src/runtime/task/harness.rs:500-507`), so the kill
       happens before the server's `JoinSet` can observe the connection
       as complete.
-    - A reaper removes its entry under the same lock before it reaps the
-      leader. The guard therefore only signals groups whose leader is
-      unreaped, which keeps the no-reused-PGID rule below. On this
-      last-resort path PTY sessions get no hang-up grace.
+    - **Reaping and deregistration are one critical section.** The
+      reaper does not reap inside an await.
+      1. It waits for the leader's exit *without reaping it*. On Linux it
+         waits for a pidfd to become readable
+         (`rustix::process::pidfd_open`, rustix 1.1.5
+         `src/process/pidfd.rs:29`, under `AsyncFd`). Elsewhere, or where
+         `pidfd_open` fails, tokio's `SIGCHLD` signal stream is the
+         wake-up for §7's `waitid(EXITED | NOHANG | NOWAIT)` peek.
+      2. Only then, holding the registry lock, it reaps with
+         `Child::try_wait()` and removes the entry before releasing the
+         lock. `try_wait` is non-blocking and reaps an exited child
+         (tokio 1.51.4, `src/process/mod.rs:1401-1413`).
 
-  On Linux, tokio waits on a pidfd (`pidfd_open`, kernel ≥ 5.3) and
-  falls back to a `SIGCHLD` handler where that is not available. macOS
-  always uses the `SIGCHLD` path (tokio 1.51.4,
-  `src/process/unix/mod.rs:123-137`). Nothing polls and no thread is
-  parked while a session runs. The only polling is the bounded exit
-  peek in §7's teardown grace.
+      A child is therefore registered for its whole unreaped life,
+      running or zombie. The guard either finds it, with its PID still
+      reserved and safe to signal, or does not find it because it has
+      already been reaped. No live child is ever unregistered, and no
+      reaped PID is ever registered, which keeps the no-reused-PGID rule
+      below. On this last-resort path PTY sessions get no hang-up grace.
+
+  The reaper therefore does not use `Child::wait()`, which reaps inside
+  its own poll. It follows the same split tokio uses internally: a
+  pidfd on Linux (kernel ≥ 5.3), and a `SIGCHLD` handler where that is
+  unavailable and on macOS (tokio 1.51.4,
+  `src/process/unix/mod.rs:123-137`). The difference is that the
+  readiness wait and the reap are separated by the registry lock.
+  Nothing polls and no thread is parked while a session runs. The only
+  polling is the `NOWAIT` peek after a `SIGCHLD` wake-up and in §7's
+  teardown grace.
+
+  `quantumssh-core` gains tokio's `process` feature, and its `signal`
+  feature for the `SIGCHLD` stream. Both are features of the existing
+  tokio dependency, not new crates, so `Cargo.lock` gains no package.
 - **Kill through the owned handle, always before reaping.** The kill,
   immediate for pipe sessions and after §7's grace for PTY sessions,
   sends `SIGKILL` to the process group
