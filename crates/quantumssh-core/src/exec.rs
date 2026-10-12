@@ -79,7 +79,7 @@ pub(crate) struct ChildIo {
     /// `Child` handle**, while the child is unreaped — never by a PID the
     /// OS may have reused.
     kill_tx: Option<oneshot::Sender<()>>,
-    /// The three stdio pumps.
+    /// The stdio pumps: stdout, stderr and stdin, in that order.
     pumps: [AbortHandle; 3],
 }
 
@@ -103,6 +103,17 @@ impl ChildIo {
     pub(crate) fn kill(&mut self) {
         if let Some(tx) = self.kill_tx.take() {
             let _ = tx.send(());
+        }
+    }
+
+    /// Stops forwarding the child's output after an early client close
+    /// (ADR-0023): the client has closed, so the output has no sink, and
+    /// a process the leader left behind could hold the pipes open
+    /// indefinitely (#190). With the output pumps aborted, the output
+    /// channel closes once the reap task has reported the exit.
+    pub(crate) fn discard_output(&self) {
+        for pump in &self.pumps[..2] {
+            pump.abort();
         }
     }
 
