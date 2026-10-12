@@ -673,9 +673,9 @@ dependencies = [
 
 [[package]]
 name = "tokio"
-version = "1.51.4"
+version = "1.51.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4e608df10a8a5f3c45a2ad4801f93083620b4f3a816551e5e407cdfcd6690f56"
+checksum = "54100a3b53f7142004d9d224d7a767cd3ad6b0c9d109c7b8a6871594d38675c0"
 dependencies = [
  "bytes",
  "libc",
@@ -809,9 +809,9 @@ dependencies = [
 
 [[package]]
 name = "zeroize"
-version = "1.9.0"
+version = "1.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e13c156562582aa81c60cb29407084cdb54c4164760106ab78e6c5b0858cf64e"
+checksum = "e13084392c5e4bc371903e2935a5eaeed24905a7511356b883835e18a78f6879"
 dependencies = [
  "zeroize_derive",
 ]
