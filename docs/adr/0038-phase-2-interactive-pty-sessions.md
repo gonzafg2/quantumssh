@@ -1,7 +1,7 @@
 # ADR 0038: Phase 2 interactive sessions — PTY allocation through a safe re-exec helper, and `tokio::process` for every channel child
 
-- **Status:** Proposed
-- **Date:** — (set on acceptance; drafted 2026-10-12)
+- **Status:** Accepted
+- **Date:** 2026-10-12 (accepted with the implementing PR [#193](https://github.com/gonzafg2/quantumssh/pull/193); drafted 2026-10-12)
 - **Deciders:** Project lead
 - **Related:** Extends [ADR-0023](0023-phase-1-channel-layer-scope.md)
   (channel-layer scope) for Phase 2, and answers the `tokio::process`
@@ -20,6 +20,18 @@
   in [`docs/plans/phase2-scoping.md`](../plans/phase2-scoping.md) and the
   Phase-3 constraint in [`docs/plans/phase3-privsep-scoping.md`](../plans/phase3-privsep-scoping.md)
   (both non-authoritative).
+
+> **Post-acceptance errata** (per [ADR-0015](0015-permit-annotated-errata-in-adrs.md)):
+>
+> - **2026-10-12** ([PR #193](https://github.com/gonzafg2/quantumssh/pull/193)): §3 says the
+>   `authorized_keys` options field "is skipped unread" and that `no-pty`
+>   "works" as a per-key PTY off switch. Both were already false at
+>   acceptance: [ADR-0040](0040-refuse-authorized-keys-options-until-enforced.md)
+>   ([#184](https://github.com/gonzafg2/quantumssh/pull/184)) refuses
+>   every line with options at startup, so no loaded key carries options.
+>   The §3 gate therefore has nothing to refuse, the implementation adds
+>   no options check, and the off switch is withdrawn, as ADR-0040
+>   records.
 
 ## Context
 

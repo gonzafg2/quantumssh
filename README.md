@@ -22,7 +22,7 @@ We are not forking OpenSSH. We are not adding PQ algorithms as an option. We are
 
 Phase 0 (foundation) and Phase 1 (walking skeleton) are done: the greenfield SSH-2 server in Rust accepts OpenSSH 10.x clients end-to-end (hybrid `mlkem768x25519-sha256`, Ed25519 host keys, publickey auth, single-command `exec`, structured `tracing`, CI interop gate). Crates are at `0.0.1`; there is no public `0.1.0` tag yet.
 
-Phase 2 (“Usable”) is underway — tracked in [#109](https://github.com/gonzafg2/quantumssh/issues/109). Landed so far: TOML configuration file and StrictModes checks, concurrent accept loop with admission control, and graceful shutdown. Still open before `0.1.0`: interactive PTY, SFTP, systemd integration, and the one-way freeze of the negotiation profile and audit-log schema.
+Phase 2 (“Usable”) is underway — tracked in [#109](https://github.com/gonzafg2/quantumssh/issues/109). Landed so far: TOML configuration file and StrictModes checks, concurrent accept loop with admission control, graceful shutdown, and interactive PTY sessions. Still open before `0.1.0`: SFTP, systemd integration, and the one-way freeze of the negotiation profile and audit-log schema.
 
 Supporting infrastructure (DNS, TLS, email, signing, repository hardening) is described in [`docs/infrastructure.md`](./docs/infrastructure.md); independent verification recipes live in [`docs/operations.md`](./docs/operations.md). Decision records live in [`docs/adr/`](./docs/adr/) and [`docs/rfcs/`](./docs/rfcs/).
 
@@ -54,7 +54,7 @@ QuantumSSH is built around four technical commitments and one structural one.
 
 **Zero legacy.** No SSH-1. No RSA. No DSA. No ECDSA over NIST curves. No CBC modes. No `diffie-hellman-group1/14-sha1`. No `ssh-rsa`. No password authentication. No compression. None of it is compiled in, not merely configured off, and the line moves with what NIST and the IETF disallow ([RFC-0009](./docs/rfcs/0009-zero-legacy-moving-frontier.md)). We refuse to inherit 25 years of "it's still there because someone's old router needs it."
 
-**Small attack surface.** The `0.1.0` MVP is public-key authentication, command execution, an interactive PTY shell, and SFTP. That is it. Today the server does public-key authentication and single-command `exec`; PTY and SFTP are Phase 2 work ([#109](https://github.com/gonzafg2/quantumssh/issues/109)). Port forwarding, X11 forwarding, agent forwarding, and other features are explicit opt-ins, gated behind feature flags and configuration.
+**Small attack surface.** The `0.1.0` MVP is public-key authentication, command execution, an interactive PTY shell, and SFTP. That is it. Today the server does public-key authentication, single-command `exec`, and interactive PTY sessions; SFTP is Phase 2 work ([#109](https://github.com/gonzafg2/quantumssh/issues/109)). Port forwarding, X11 forwarding, agent forwarding, and other features are explicit opt-ins, gated behind feature flags and configuration.
 
 **Open source as a permanent commitment.** This is not a marketing posture. See the next section.
 
@@ -122,7 +122,7 @@ Tracked in [#109](https://github.com/gonzafg2/quantumssh/issues/109). Scoping (n
 
 - ✅ Configuration file (TOML, not `sshd_config`) — [RFC-0010](./docs/rfcs/0010-configuration-file.md), [ADR-0029](./docs/adr/0029-phase-2-config-file-v1-schema-parser-strictmodes.md), implemented in [#128](https://github.com/gonzafg2/quantumssh/pull/128)
 - ✅ Concurrent connections, admission limits, graceful shutdown — [ADR-0028](./docs/adr/0028-phase-2-concurrent-connections-limits-graceful-shutdown.md), implemented in [#129](https://github.com/gonzafg2/quantumssh/pull/129)
-- Interactive PTY allocation
+- ✅ Interactive PTY sessions — [ADR-0038](./docs/adr/0038-phase-2-interactive-pty-sessions.md), implemented in [#189](https://github.com/gonzafg2/quantumssh/pull/189), [#192](https://github.com/gonzafg2/quantumssh/pull/192) and [#193](https://github.com/gonzafg2/quantumssh/pull/193)
 - SFTP subsystem
 - systemd integration
 - First public release: `0.1.0` (one-way freeze of negotiation profile + audit-log `schema_version`)
