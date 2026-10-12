@@ -389,6 +389,8 @@ where
             }
             chunk = recv_opt_out(out), if want_output => {
                 match chunk {
+                    // The client closed first: its output has no sink.
+                    Some(ChildChunk::Stdout(_) | ChildChunk::Stderr(_)) if d.early_close => {}
                     Some(ChildChunk::Stdout(b)) => d.pending_out = Some(PendingOut::new(Stream::Stdout, b)),
                     Some(ChildChunk::Stderr(b)) => d.pending_out = Some(PendingOut::new(Stream::Stderr, b)),
                     Some(ChildChunk::Exited(code)) => {
@@ -890,11 +892,15 @@ impl Driver<'_> {
             self.state = ChannelState::Closed;
             return Ok(());
         }
-        // Client closed first: relinquish exit-status, kill + reap the
-        // child, then reply with our CLOSE once it drains.
+        // Client closed first: relinquish exit-status, drop the output it
+        // can no longer receive, kill + reap the child, then reply with our
+        // CLOSE once the reap reports the exit — not once the pipes reach
+        // EOF, which a process the leader left behind can delay (#190).
         self.early_close = true;
+        self.pending_out = None;
         if let Some(child) = self.child.as_mut() {
             child.close_stdin();
+            child.discard_output();
             child.kill();
         } else {
             // No child running (Idle or already draining): close now.
