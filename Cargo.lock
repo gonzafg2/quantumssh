@@ -440,12 +440,16 @@ name = "quantumssh"
 version = "0.0.1"
 dependencies = [
  "basic-toml",
+ "ed25519-dalek",
+ "ml-kem",
  "quantumssh-core",
  "rustix",
  "serde",
+ "sha2",
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "x25519-dalek",
  "zeroize",
 ]
 

@@ -20,6 +20,7 @@ pub mod cipher;
 mod exec;
 pub mod host_key;
 pub mod kex;
+pub mod pty;
 pub mod server;
 pub mod transport;
 pub mod wire;

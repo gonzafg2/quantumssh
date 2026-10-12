@@ -93,4 +93,14 @@ n=$(ssh "${SSH_OPTS[@]}" -o RekeyLimit=16K tester@127.0.0.1 'head -c 262144 /dev
 [ "$n" = "262144" ] || fail "rekey: got $n bytes across re-keys, want 262144"
 echo "ok: openssh_rekey"
 
+# 6. PTY (ADR-0038): `ssh -tt` allocates a pseudo-terminal; the command
+# runs on it, with the slave as its controlling terminal.
+out="$(ssh -tt "${SSH_OPTS[@]}" tester@127.0.0.1 'tty; : < /dev/tty && echo ctty-ok' </dev/null | tr -d '\r')" \
+    || fail "pty: ssh exited $?"
+case "$out" in
+    /dev/*ctty-ok*) ;;
+    *) fail "pty: unexpected output '$out'" ;;
+esac
+echo "ok: openssh_pty"
+
 echo "INTEROP PASS"

@@ -5,7 +5,7 @@
 
 use std::io::IsTerminal;
 use std::net::SocketAddr;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Duration;
 
@@ -376,6 +376,10 @@ fn load_authorized_keys(path: &str) -> Option<Arc<AuthorizedKeys>> {
 }
 
 fn main() -> ExitCode {
+    // First, before CLI parsing, configuration, logging or the runtime:
+    // a PTY child re-executes this binary in its helper mode, which never
+    // returns (ADR-0038 §5).
+    quantumssh_core::pty::run_helper_if_requested();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let cli = match parse_cli(&args) {
         Ok(CliOutcome::Run(cli)) => cli,
@@ -436,6 +440,18 @@ fn main() -> ExitCode {
     runtime.block_on(run(resolved))
 }
 
+/// This binary, re-executed for PTY children (ADR-0038 §5). On Linux
+/// `/proc/self/exe` names the running image even if the file on disk was
+/// replaced; elsewhere the path the process was started from. `None`
+/// (no current executable) refuses `pty-req`.
+fn pty_helper() -> Option<PathBuf> {
+    if cfg!(target_os = "linux") {
+        Some(PathBuf::from("/proc/self/exe"))
+    } else {
+        std::env::current_exe().ok()
+    }
+}
+
 /// The SIGTERM/SIGINT listener (ADR-0028): the first signal broadcasts
 /// the drain deadline; a second broadcasts an immediate one, skipping
 /// what remains of the drain.
@@ -490,6 +506,7 @@ async fn run(resolved: Resolved) -> ExitCode {
         // mirrors the handshake budget.
         rekey: RekeyThresholds::bsi_defaults(resolved.handshake_timeout),
         limits: resolved.limits,
+        pty_helper: pty_helper(),
     };
     let server = match Server::bind(&config).await {
         Ok(server) => server,

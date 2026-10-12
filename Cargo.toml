@@ -34,8 +34,9 @@ getrandom          = { version = "0.4", default-features = false }  # OS randomn
 # reap the shell *and* any command it forked). The `process` feature
 # supplies both; chosen over `nix` for the smaller surface (MANIFIESTO
 # #4), and it wraps the raw syscalls so first-party code stays
-# `unsafe`-free (ADR-0018).
-rustix             = { version = "1", default-features = false, features = ["std", "process", "fs"] }
+# `unsafe`-free (ADR-0018). ADR-0038 §4 adds `pty` and `termios` for
+# PTY allocation, modes and window size.
+rustix             = { version = "1", default-features = false, features = ["std", "process", "fs", "pty", "termios"] }
 # ADR-0029 (RFC-0010): the TOML config parser. `basic-toml` over the
 # full `toml` crate: serde-only, no winnow/indexmap/toml_datetime tree.
 # `serde` itself was already in the binary's build graph via

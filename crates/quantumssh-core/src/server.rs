@@ -26,6 +26,7 @@
 use std::collections::HashMap;
 use std::io;
 use std::net::SocketAddr;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -64,6 +65,10 @@ pub struct Config {
     pub rekey: RekeyThresholds,
     /// The ADR-0028 admission caps and per-source rate limit.
     pub limits: Limits,
+    /// The executable to re-exec for PTY children: a binary whose `main`
+    /// first calls [`crate::pty::run_helper_if_requested`]. `None` refuses
+    /// every `pty-req` (ADR-0038 §5).
+    pub pty_helper: Option<PathBuf>,
 }
 
 /// A bound, not-yet-serving server.
@@ -75,6 +80,7 @@ pub struct Server {
     authorized_keys: Arc<AuthorizedKeys>,
     rekey: RekeyThresholds,
     limits: Limits,
+    pty_helper: Option<Arc<Path>>,
 }
 
 impl Server {
@@ -100,6 +106,7 @@ impl Server {
             authorized_keys: Arc::clone(&config.authorized_keys),
             rekey: config.rekey,
             limits: config.limits,
+            pty_helper: config.pty_helper.as_deref().map(Arc::from),
         })
     }
 
@@ -159,11 +166,21 @@ impl Server {
                         Ok(guard) => {
                             let host_key = Arc::clone(&self.host_key);
                             let authorized_keys = Arc::clone(&self.authorized_keys);
+                            let pty_helper = self.pty_helper.clone();
                             let conn_rx = shutdown.subscribe();
                             let connection = async move {
                                 info!("connection.accepted");
-                                handle(stream, host_key, authorized_keys, budget, rekey, guard, conn_rx)
-                                    .await;
+                                handle(
+                                    stream,
+                                    host_key,
+                                    authorized_keys,
+                                    budget,
+                                    rekey,
+                                    guard,
+                                    conn_rx,
+                                    pty_helper,
+                                )
+                                .await;
                             };
                             let handle = tasks.spawn(connection.instrument(span.clone()));
                             connection_spans.insert(handle.id(), span);
@@ -255,6 +272,9 @@ async fn next_shutdown(rx: &mut broadcast::Receiver<Instant>) -> Instant {
 /// Handles one connection: the handshake under the budget, the channel
 /// phase un-timed — until a shutdown signal bounds what remains
 /// (ADR-0028).
+// Each argument is a distinct input the accept loop hands the connection
+// task; bundling them would only move the list into a struct literal.
+#[allow(clippy::too_many_arguments)]
 async fn handle(
     mut stream: TcpStream,
     host_key: Arc<HostKey>,
@@ -263,11 +283,12 @@ async fn handle(
     rekey: RekeyThresholds,
     guard: ConnectionGuard,
     mut shutdown: broadcast::Receiver<Instant>,
+    pty_helper: Option<Arc<Path>>,
 ) {
     // Outlives the connection future: a deadline that cancels the future
     // leaves the children's teardown running, and an abort of this task
     // runs the scope's synchronous kill guard (ADR-0038 §6).
-    let children = ChildScope::default();
+    let children = ChildScope::new(pty_helper);
     // The block scopes the (possibly cancelled) connection future: at
     // its end the `&mut stream` borrow is released and the channel
     // driver's drop-side effects (child kill, owed `exec.finished`)
