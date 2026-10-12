@@ -1,6 +1,6 @@
 # ADR 0024: Fix the Phase 1 structured-log event schema
 
-- **Status:** Accepted; the field lists of the `exec.started` and `exec.finished` rows of §Decision are superseded by [ADR-0038](0038-phase-2-interactive-pty-sessions.md) §9, which adds `request_type` and `pty` to both events
+- **Status:** Accepted
 - **Date:** 2026-06-30 (accepted in the #86 Phase-1 governance sweep)
 - **Deciders:** Project lead
 - **Related:** Realises `docs/threat-model.md` §2.7 (audit record) and its mandated `authenticated_identity` / `executing_uid` fields; makes the §8.12 per-user-UID gap visible in logs; consumes [ADR-0022](0022-phase-1-async-runtime-tokio.md) (the runtime that emits) and [ADR-0023](0023-phase-1-channel-layer-scope.md) (the exec boundary that produces `exec.*` events). Implementation: subscriber init in the `quantumssh` binary (M0 [#62](https://github.com/gonzafg2/quantumssh/pull/62)), the `auth.*` and `exec.*` events in `quantumssh-core` (M4 [#78](https://github.com/gonzafg2/quantumssh/pull/78), M5 [#84](https://github.com/gonzafg2/quantumssh/pull/84)); at drafting time neither existed.

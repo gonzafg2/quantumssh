@@ -10,9 +10,9 @@
   [ADR-0018](0018-phase-1-unsafe-code-forbid-workspace.md)
   (`unsafe_code = "forbid"`), [ADR-0016](0016-phase-1-service-account-uid-model.md)
   (service-account UID, sanitised environment, `rustix`),
-  [ADR-0024](0024-phase-1-log-event-schema.md) (audit schema; this ADR
-  partially supersedes the field lists of its `exec.started` and
-  `exec.finished` rows, §9), [ADR-0028](0028-phase-2-concurrent-connections-limits-graceful-shutdown.md)
+  [ADR-0024](0024-phase-1-log-event-schema.md) (audit schema; once
+  accepted, this ADR partially supersedes the field lists of its
+  `exec.started` and `exec.finished` rows, §9), [ADR-0028](0028-phase-2-concurrent-connections-limits-graceful-shutdown.md)
   (shutdown drain, blocking-pool sizing) and
   [ADR-0029](0029-phase-2-config-file-v1-schema-parser-strictmodes.md)
   (no configuration key is added here). Part of the Phase-2 milestone
@@ -90,7 +90,9 @@ and in a Debian bookworm container. The mechanism below:
 
 On both systems:
 
-- the slave belonged to the opening UID, group `tty`, mode `0620`;
+- the new slave belonged to the opening UID, group `tty`, mode `0620`
+  (the mount's settings). A `chmod` to `0600` while the pair was still
+  locked succeeded, and the opened slave showed `0600` (§4);
 - opening `/dev/ptmx` directly set `FD_CLOEXEC` atomically (§4);
 - a `waitid(EXITED | NOHANG | NOWAIT)` peek saw a child's exit while
   tokio's `Child::id()` was still `Some`, and the child was reaped
@@ -197,7 +199,7 @@ it controls has an explicit bound:
 |---|---|
 | A field fails to parse, exceeds its byte bound, or a mode argument is truncated | `SSH_DISCONNECT_PROTOCOL_ERROR`, as every existing channel-request parser does (`channel.rs:715-731`) |
 | `pty-req` in the wrong state, a second `pty-req`, a refused `TERM`, a PTY denied by §3, or no helper executable configured (§5) | `SSH_MSG_CHANNEL_FAILURE`; no PTY state is created |
-| `openpt`, `grantpt`, `unlockpt`, the slave open, `tcsetattr` or `tcsetwinsize` fails | `SSH_MSG_CHANNEL_FAILURE`; every descriptor of the half-built pair is closed and the channel stays `Idle`. OpenSSH's client then reports the failure and continues without a PTY |
+| Opening `/dev/ptmx`, `grantpt`, the slave owner check, `chmod`, `unlockpt`, the slave open or its `fstat` check, `tcsetattr` or `tcsetwinsize` fails | `SSH_MSG_CHANNEL_FAILURE`; every descriptor of the half-built pair is closed and the channel stays `Idle`. OpenSSH's client then reports the failure and continues without a PTY |
 | The child cannot be spawned, or the helper cannot `exec` | As ADR-0023: an `exec.started`/`exec.finished` pair with exit status 127 |
 | A `window-change` ioctl fails | Failure reply only if `want_reply` is set; the session continues |
 | A master read or write fails with anything other than would-block or end-of-session | The session ends through §7's teardown |
@@ -233,16 +235,31 @@ dependency, where ADR-0018 places it. In rustix 1.1.5, `ptsname`,
    which a concurrent spawn in another connection could inherit the
    master, and that copy would block the hang-up that closing the
    master must deliver (§7). The flag is therefore set at open on every
-   platform. Then `grantpt` (a no-op on Linux) and `unlockpt`.
-2. **Slave.** On Linux, `rustix::pty::ioctl_tiocgptpeer(master, RDWR |
-   NOCTTY | CLOEXEC)`, which opens the peer without a path lookup
-   (kernel ≥ 4.13). Elsewhere, `ptsname`, then `rustix::fs::open` with
+   platform. Then `grantpt`, which is a no-op on Linux.
+2. **Slave owner and mode, while the pair is still locked.** `devpts`
+   takes the owner, group and mode of a new slave from its mount options
+   (`uid=`, `gid=`, `mode=`). The kernel default mode is `0600`;
+   distributions commonly mount with `gid=5,mode=620`. A permissive
+   mount, such as `mode=0666`, would let other local users read or inject
+   terminal input. The server therefore does not rely on the mount, and
+   it acts before `unlockpt`, while nobody can open the slave yet:
+   - `ptsname`, then `rustix::fs::stat`: the slave's owner must be the
+     process UID, or the `pty-req` is refused (a `uid=` mount option
+     could assign another owner);
+   - `rustix::fs::chmod(…, 0600)` (rustix 1.1.5, `src/fs/abs.rs:60` and
+     `:78`);
+   - then `unlockpt`.
+3. **Slave.** On Linux, `rustix::pty::ioctl_tiocgptpeer(master, RDWR |
+   NOCTTY | CLOEXEC)` opens the peer without a path lookup (kernel ≥
+   4.13). Elsewhere, `rustix::fs::open` on the `ptsname` path with
    `RDWR | NOCTTY | CLOEXEC`. `NOCTTY` keeps the server from ever
-   acquiring a controlling terminal.
-3. The master is made non-blocking (`rustix::io::ioctl_fionbio`). The
+   acquiring a controlling terminal. A `rustix::fs::fstat` on the opened
+   descriptor (`src/fs/fd.rs:156`) confirms the owner and the `0600`
+   mode before anything else uses it.
+4. The master is made non-blocking (`rustix::io::ioctl_fionbio`). The
    slave is a separate open file description and stays blocking for
    the child.
-4. Modes go to the slave (`tcsetattr`) and the size to the master
+5. Modes go to the slave (`tcsetattr`) and the size to the master
    (`tcsetwinsize`). Later `window-change` requests also go to the
    master, and the kernel signals `SIGWINCH` to the foreground job.
 
@@ -468,20 +485,23 @@ in the tree, like ADR-0029's `fs`.
   (threat model §5.4.3).
 - This is an additive change before the freeze, like ADR-0028's
   `connection.refused`, and it joins the `0.1.0` freeze checklist.
-  Because it changes the field lists that ADR-0024 recorded for the two
-  `exec.*` rows, ADR-0024's Status field now points here: a partial
-  supersession, as ADR-0020's and ADR-0033's Status fields record theirs.
+  It changes the field lists that ADR-0024 recorded for the two `exec.*`
+  rows, so ADR-0024's Status field gains a partial-supersession pointer
+  here, as ADR-0020's and ADR-0033's Status fields record theirs.
   ADR-0015 lets an accepted ADR change only its Status field and
-  annotated errata.
+  annotated errata. The pointer lands in the PR that flips this ADR to
+  `Accepted` (§11), when the code starts emitting the fields. Until
+  then, ADR-0024 keeps describing the schema the code actually emits.
 
 ### 10. Ownership and permissions, and what Phase 3 changes
 
-- **Phase 2.** The server allocates the pair as the service account.
-  `devpts` gives the slave to the service UID, with the group set by its
-  `gid=` mount option (typically `tty`) and mode `0620`. That matches what
-  OpenSSH's `pty_setowner` sets (`sshpty.c`: group `tty`, `0620`). The
-  server therefore does no `chown` or `chmod`; as a non-root account it
-  could not `chown` to another user anyway.
+- **Phase 2.** The server allocates the pair as the service account,
+  checks that the slave belongs to that UID, and sets its mode to `0600`
+  (§4). That is stricter than OpenSSH's `pty_setowner`, which sets group
+  `tty` and mode `0620` (`sshpty.c`). With no group write bit, `write`,
+  `wall` and `mesg y` cannot reach a QuantumSSH session. The server does
+  no `chown`: as a non-root account it could not give the slave to
+  another user, and the `tty` group cannot be relied on.
 - **No isolation between sessions.** Any process of the service account
   can open any session's slave. Under §8.12 that is already true of
   everything else in the account.
@@ -501,7 +521,8 @@ in the tree, like ADR-0029's `fs`.
 Implementation lands in later PRs; no code changes in this one. The
 `exec` migration to `tokio::process`, which brings `exit-signal`, may
 land first on its own. This ADR stays `Proposed` until the PTY path
-lands and flips to `Accepted` in that PR. The implementation adds:
+lands. It flips to `Accepted` in that PR, which also adds ADR-0024's
+Status pointer (§9). The implementation adds:
 
 - unit tests for the mode parser and the `TERM` rule;
 - PTY integration tests on both CI runners: ADR-0031 requires the
@@ -569,7 +590,7 @@ the process-spawning path.
   group can outlive the channel (§7). This is inherent to granting a
   shell, and the same escape already exists for `exec`.
 - **No session isolation and no login records.** Sessions are not
-  isolated from each other (same UID, slave mode `0620`, §8.12), and
+  isolated from each other (the same UID owns every slave, §8.12), and
   `who`, `w` and `last` do not show QuantumSSH sessions.
 - **Keys with options get no PTY** until per-key restrictions land (§3).
 - **Behaviour change for `exec`.** Moving `exec` onto `tokio::process`
@@ -684,7 +705,8 @@ PTY work, which is this ADR. Scripts such as `ssh host <<EOF … EOF` send
   [ADR-0022](0022-phase-1-async-runtime-tokio.md) (`process` feature
   question answered), [ADR-0016](0016-phase-1-service-account-uid-model.md),
   [ADR-0018](0018-phase-1-unsafe-code-forbid-workspace.md),
-  [ADR-0024](0024-phase-1-log-event-schema.md) (partially superseded: the `exec.*` field lists),
+  [ADR-0024](0024-phase-1-log-event-schema.md) (`exec.*` field lists
+  partially superseded on acceptance),
   [ADR-0028](0028-phase-2-concurrent-connections-limits-graceful-shutdown.md),
   [ADR-0029](0029-phase-2-config-file-v1-schema-parser-strictmodes.md),
   [ADR-0020](0020-phase-1-ci-openssh-interop-gate.md),
