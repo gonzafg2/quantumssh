@@ -196,7 +196,7 @@ it controls has an explicit bound:
 | Failure | Response |
 |---|---|
 | A field fails to parse, exceeds its byte bound, or a mode argument is truncated | `SSH_DISCONNECT_PROTOCOL_ERROR`, as every existing channel-request parser does (`channel.rs:715-731`) |
-| `pty-req` in the wrong state, a second `pty-req`, a refused `TERM`, or a PTY denied by §3 | `SSH_MSG_CHANNEL_FAILURE`; no PTY state is created |
+| `pty-req` in the wrong state, a second `pty-req`, a refused `TERM`, a PTY denied by §3, or no helper executable configured (§5) | `SSH_MSG_CHANNEL_FAILURE`; no PTY state is created |
 | `openpt`, `grantpt`, `unlockpt`, the slave open, `tcsetattr` or `tcsetwinsize` fails | `SSH_MSG_CHANNEL_FAILURE`; every descriptor of the half-built pair is closed and the channel stays `Idle`. OpenSSH's client then reports the failure and continues without a PTY |
 | The child cannot be spawned, or the helper cannot `exec` | As ADR-0023: an `exec.started`/`exec.finished` pair with exit status 127 |
 | A `window-change` ioctl fails | Failure reply only if `want_reply` is set; the session continues |
@@ -284,9 +284,18 @@ in the tree, like ADR-0029's `fs`.
   the caller's fd 0. The binary must not be writable by the service
   account, which is the standard install posture; it now also runs at
   the start of every PTY session.
-- **Library boundary.** `quantumssh-core` receives the helper executable
-  from the binary as a parameter. The library therefore never assumes it
-  runs inside `quantumssh`; its own tests run under the test harness.
+- **Library boundary.** The helper's entry point lives in
+  `quantumssh-core`. Any binary that hosts PTY sessions calls it first in
+  `main`, as `quantumssh` does. The executable to re-exec is an optional
+  field of `quantumssh-core::server::Config`, which the binary sets. When
+  it is unset, `pty-req` is refused (§2's failure table): the library
+  never spawns an executable that might not implement the helper and
+  would exit with 127. `quantumssh-core` is not published (ADR-0017), and
+  `Config` is the workspace-internal handoff that ADR-0026 (`rekey`) and
+  ADR-0028 (`limits`) already extended in the ADR lane. PTY integration
+  tests live in the binary crate and re-exec the real binary through
+  Cargo's `CARGO_BIN_EXE_quantumssh`. The library's unit tests do not
+  re-exec anything.
 
 ### 6. Runtime: `tokio::process` for every channel child
 
@@ -311,15 +320,29 @@ in the tree, like ADR-0029's `fs`.
 - **Reaping.** An async task owns the unreaped `tokio::process::Child`
   and waits for either its exit or a kill request. Dropping the
   driver-side handle counts as a kill request; this is ADR-0023's
-  no-orphan guard. The reap task outlives the connection task and
-  carries out the request, whatever ended the channel (client close,
-  connection loss, shutdown deadline):
+  no-orphan guard. The reap task outlives the cancellable connection
+  future and carries out the request, whatever ended the channel (client
+  close, connection loss, shutdown deadline):
   - pipe sessions get the immediate group `SIGKILL`;
   - PTY sessions get §7's hang-up sequence;
-  - only the runtime-teardown guard below kills both kinds immediately.
+  - only the drop guard below kills both kinds immediately.
+- **The reap task never outlives its connection task.** ADR-0028 allows
+  no detached tasks: every connection lives in the server's `JoinSet`,
+  and cooperative shutdown kills the child before the connection
+  returns. So:
+  - Each reap task is spawned into a `JoinSet` that the connection task
+    owns (`handle` in `crates/quantumssh-core/src/server.rs:257`),
+    outside the connection future that a shutdown deadline cancels.
+  - The connection task awaits that set before it logs
+    `connection.closed` and returns. A connection therefore leaves the
+    server's `JoinSet` only after its child's teardown has finished.
+  - If the connection task is itself aborted (ADR-0028's last resort),
+    dropping its `JoinSet` aborts the reap tasks (tokio 1.51.4,
+    `src/task/join_set.rs:591-595`), and their drop guards kill at once.
 
   On Linux, tokio waits on a pidfd (`pidfd_open`, kernel ≥ 5.3) and
-  falls back to a `SIGCHLD` handler where that is not available. macOS always uses the `SIGCHLD` path (tokio 1.51.4,
+  falls back to a `SIGCHLD` handler where that is not available. macOS
+  always uses the `SIGCHLD` path (tokio 1.51.4,
   `src/process/unix/mod.rs:123-137`). Nothing polls and no thread is
   parked while a session runs. The only polling is the bounded exit
   peek in §7's teardown grace.
@@ -333,9 +356,9 @@ in the tree, like ADR-0029's `fs`.
   `src/process/mod.rs:1222`). While the leader is unreaped, its pid,
   which is also its process-group id, cannot have been reused. This is
   ADR-0016's argument, kept on every path, including §7's grace. If the
-  task itself is dropped at runtime teardown, a guard does the same
-  thing synchronously. `kill_on_drop` alone would signal only the
-  leader.
+  reap task itself is dropped (its connection task aborted, or the
+  runtime torn down), a guard does the same thing synchronously.
+  `kill_on_drop` alone would signal only the leader.
 - **Blocking pool.** ADR-0028's bound (`main.rs:41`, `main.rs:420-426`)
   loses its consumer. It stays as an upper bound, since tokio starts
   blocking threads on demand. This ADR does not change it.
@@ -367,6 +390,13 @@ in the tree, like ADR-0029's `fs`.
   closes the master. It does not wait for other processes that still
   hold the slave. Then come `exit-status` or `exit-signal`, `EOF` and
   `CLOSE`, in ADR-0023's order.
+  - No signal is sent to the leader's process group on a normal exit.
+    What the leader deliberately left running is not killed. This
+    matches `exec` today, whose reap kills only on a kill request
+    (`exec.rs:232-251`), and sshd. It keeps `ssh host 'nohup job &'`
+    working.
+  - Processes that still hold the slave get the hang-up when the master
+    closes.
 - **The leader is still running when the channel ends** (client
   `CHANNEL_CLOSE`, connection loss, or ADR-0028's shutdown deadline). The
   server sends `SIGHUP` to the leader and closes the master. This is a
@@ -388,11 +418,16 @@ in the tree, like ADR-0029's `fs`.
   ADR-0023's immediate group `SIGKILL`. The 1 s figure is an initial
   value, not a measurement; changing it is an implementation constant,
   not a re-decision.
-- **What "no orphan" covers.** The guarantee is the one `exec` has today:
-  the session leader and its process group are killed. A process that
-  leaves that group can outlive the channel, as it can under OpenSSH.
-  Examples: a `nohup`'d job, a job-control group that ignores `SIGHUP`,
-  or a command that calls `setsid`, which `exec` commands can already do.
+- **What "no orphan" covers.** The guarantee is the one `exec` has today.
+  When the channel ends while the leader is still running, the leader
+  and its process group are killed. Some processes can outlive the
+  channel, as they can under OpenSSH:
+  - processes the leader leaves behind when it exits normally (a
+    `nohup`'d job, for example);
+  - processes that left the group: a job-control group that ignores
+    `SIGHUP`, or a command that calls `setsid`, which `exec` commands can
+    already do.
+
   Containment beyond that (cgroups) belongs to the systemd ADR or to
   Phase 3.
 - Every `exec.started` still produces exactly one `exec.finished`, on
@@ -485,9 +520,11 @@ to an RFC. This is recorded as an ADR for four reasons:
    ADR-0028 used for `tokio`'s `signal`. ADR-0022 pre-cleared `process`
    as "a small, reviewable `Cargo.toml` change".
 2. **No public interface.** The requests are RFC 4254 core, not
-   extensions. The helper argument is internal to the binary. The
-   operator-visible additions are two audit fields, and ADR-0028 set the
-   precedent for adding one in an ADR.
+   extensions. The helper argument is internal to the binary. The new
+   `Config` field belongs to the unpublished, workspace-internal
+   `quantumssh-core` (ADR-0017), whose `Config` ADR-0026 and ADR-0028
+   already extended. The operator-visible additions are two audit
+   fields, and ADR-0028 set the precedent for adding one in an ADR.
 3. **It refines no commitment.** The PTY shell is already in the
    README's `0.1.0` scope.
 4. **It was routed here.** #109 and the Phase-2 scoping note route PTY
@@ -544,8 +581,10 @@ the process-spawning path.
   surface.
 - **Shutdown and idle.** At shutdown, interactive sessions rarely exit
   before ADR-0028's drain deadline. They are ended by §7's hang-up
-  sequence, or by the guard's immediate `SIGKILL` if the runtime
-  finishes tearing down first. Idle sessions have no timeout and each
+  sequence. When the server aborts their connection task at that same
+  deadline, the reap task's drop guard ends them with an immediate
+  `SIGKILL` instead, so the grace can be cut short at shutdown. Idle
+  sessions have no timeout and each
   holds one connection slot. The channel phase stays un-timed
   (ADR-0023).
 
