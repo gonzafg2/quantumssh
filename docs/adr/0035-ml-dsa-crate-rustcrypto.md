@@ -168,14 +168,26 @@ composite host key.
   0.1.0, `signature` 3.0.0 and `sponge-cursor` 0.1.0. All four are
   RustCrypto crates licensed Apache-2.0 OR MIT, which `deny.toml`
   allows. The exact set is re-checked against the pinned release.
-- **Erasure does not reach the SHAKE state.** In 0.1.1, `ml-dsa`'s
-  `zeroize` feature forwards to `hybrid-array` and `module-lattice` but
-  not to its `shake` dependency, so the sponge state that absorbs the
-  seed and `rnd` is not erased (0.1.1 declares `shake` with
-  `default-features = false` and no `zeroize`). This is within
-  threat-model §4.3's best-effort erasure. Closing it would take a
-  direct `shake` dependency only to switch on a feature. Not done here;
-  re-checked against the pinned release.
+- **Crate-internal secret state is not erased.** This ADR records it as
+  the residual RFC-0012 §Key material asks for. Two sources:
+  - **Signing temporaries.** The `zeroize` feature erases only the key
+    structures (`signing.rs:646-655` on upstream `master`, after #1386).
+    The per-signature temporaries `sign_randomized` creates are plain
+    buffers: `rnd` (`signing.rs:397-401`), and `rhopp` and the mask `y`
+    inside `raw_sign_mu` (`signing.rs:316-329`). They live inside the
+    crate, out of the caller's reach. QuantumSSH's own state follows
+    the RFC-0012 rule in full; these temporaries do not.
+  - **SHAKE state.** In 0.1.1 the `zeroize` feature forwards to
+    `hybrid-array` and `module-lattice` but not to the `shake`
+    dependency, which 0.1.1 declares with `default-features = false`
+    and no `zeroize`. The sponge state that absorbs the seed and `rnd`
+    is therefore not erased either.
+
+  Both residuals fall within threat-model §4.3's best-effort erasure.
+  Closing the first needs upstream zeroization of signing temporaries.
+  Closing the second needs a direct `shake` dependency added only to
+  switch on a feature. Neither is done here; both are re-checked
+  against the pinned release.
 - **One feature added to an existing dependency.** The workspace's
   `getrandom` gains `sys_rng` (item 3). No new crate, since `rand_core`
   0.10.1 is already resolved.
