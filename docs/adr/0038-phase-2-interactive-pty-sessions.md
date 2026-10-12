@@ -29,9 +29,9 @@
 >   acceptance: [ADR-0040](0040-refuse-authorized-keys-options-until-enforced.md)
 >   ([#184](https://github.com/gonzafg2/quantumssh/pull/184)) refuses
 >   every line with options at startup, so no loaded key carries options.
->   The §3 gate therefore has nothing to refuse, the implementation adds
->   no options check, and the off switch is withdrawn, as ADR-0040
->   records.
+>   §3 is corrected in place: the gate has nothing to refuse, the
+>   implementation adds no options check, and the off switch is
+>   withdrawn, as ADR-0040 records. The rule itself is unchanged.
 
 ## Context
 
@@ -232,14 +232,14 @@ it controls has an explicit bound:
 
 One gate decides whether a `pty-req` may proceed. In this ADR it refuses
 a PTY when the authorizing `authorized_keys` line carries an options
-field. Today the options field is skipped unread
-(`crates/quantumssh-core/src/auth.rs:14`, `auth.rs:166-167`,
-`auth.rs:198-203`). Skipping `no-pty` or `restrict` was harmless while no
-PTY could be allocated. Once PTYs exist, skipping them would silently
-grant what the operator denied. Refusing every key with options is too
-broad on purpose (a `from=`-only key loses its PTY), but it never
-grants a denied PTY. It also gives operators a per-key off switch
-today: `no-pty` works, as any option would. The per-key restriction work
+field. [ADR-0040](0040-refuse-authorized-keys-options-until-enforced.md)
+refuses every line with an options field at startup, so no loaded key
+carries options and the gate has nothing to refuse until the inputs below
+feed it. Skipping `no-pty` or `restrict` would silently grant what the
+operator denied. Refusing every key with options is too broad on purpose
+(a `from=`-only key loses its PTY), but it never grants a denied PTY.
+There is no per-key PTY off switch today: a `no-pty` line stops startup
+(ADR-0040). The per-key restriction work
 (threat model §6.3) and the certificate implementation of RFC-0008
 (where OpenSSH's input is the `permit-pty` extension) feed this same
 gate. Their mappings are their own decisions.
