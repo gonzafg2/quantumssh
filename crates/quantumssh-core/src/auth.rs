@@ -11,7 +11,8 @@
 //! - **One key type**: `ssh-ed25519`. A different key algorithm is
 //!   refused with `SSH_MSG_USERAUTH_FAILURE`.
 //! - **`authorized_keys`** is read once at startup (`std::fs`, per
-//!   ADR-0022). Options are ignored (Phase 1 — ADR-0023 scope cut).
+//!   ADR-0022). A line carrying an options field is refused (ADR-0040):
+//!   no option is enforced, so loading it would drop the restriction.
 
 use std::fmt;
 use std::path::Path;
@@ -73,6 +74,11 @@ pub enum AuthError {
         /// The algorithm name found.
         found: String,
     },
+    /// The line carries an options field, which is not enforced (ADR-0040).
+    KeyOptions {
+        /// 1-indexed line number.
+        line: usize,
+    },
     /// No valid key entries were found.
     Empty,
 }
@@ -90,6 +96,10 @@ impl fmt::Display for AuthError {
                     "authorized_keys line {line}: unsupported key type '{found}' (need ssh-ed25519)"
                 )
             }
+            Self::KeyOptions { line } => write!(
+                f,
+                "authorized_keys line {line}: key options are not enforced, so the line is refused (ADR-0040)"
+            ),
             Self::Empty => write!(f, "authorized_keys file contains no keys"),
         }
     }
@@ -137,34 +147,12 @@ fn looks_like_key_type(field: &str) -> bool {
     field.starts_with("ssh-") || field.starts_with("ecdsa-") || field.starts_with("sk-")
 }
 
-/// Skips the leading options field of an `authorized_keys` line:
-/// comma-separated, where double-quoted values may hold whitespace and
-/// `\"` escapes a quote inside them (sshd(8) `AUTHORIZED_KEYS FILE
-/// FORMAT`). Returns the remainder after the field's trailing
-/// whitespace — empty if the line holds nothing but options.
-fn skip_options(line: &str) -> &str {
-    let mut in_quotes = false;
-    let mut escaped = false;
-    for (i, c) in line.char_indices() {
-        if escaped {
-            escaped = false;
-        } else if c == '\\' && in_quotes {
-            escaped = true;
-        } else if c == '"' {
-            in_quotes = !in_quotes;
-        } else if c.is_whitespace() && !in_quotes {
-            return line[i..].trim_start();
-        }
-    }
-    ""
-}
-
 impl AuthorizedKeys {
     /// Loads and parses the `authorized_keys` file at `path`.
     ///
     /// Only `ssh-ed25519` keys are accepted. Lines starting with `#`
-    /// and empty lines are ignored. Options preceding the key type are
-    /// skipped (Phase 1 ignores options).
+    /// and empty lines are ignored. A line with an options field before
+    /// the key type fails the whole load (ADR-0040).
     ///
     /// # Errors
     ///
@@ -174,6 +162,7 @@ impl AuthorizedKeys {
     /// (weak);
     /// [`AuthError::UnsupportedKeyType`] when a non-Ed25519 key is
     /// encountered;
+    /// [`AuthError::KeyOptions`] when a line carries an options field;
     /// [`AuthError::Empty`] when the file contains zero valid keys.
     #[must_use]
     #[allow(clippy::double_must_use)]
@@ -189,19 +178,14 @@ impl AuthorizedKeys {
             }
 
             // sshd(8) line format: `[options] keytype base64 [comment]`.
-            // The options field may hold double-quoted values with
-            // embedded whitespace (`command="echo hi"`), so the key
-            // type is either the first field or the field right after
-            // a quote-aware options skip — never found by scanning
-            // arbitrary tokens, which would match key-type-shaped
-            // words inside a quoted option value.
+            // A first field not shaped like a key type is an options
+            // field. No option is enforced, so the line is refused
+            // rather than loaded without its restriction (ADR-0040).
             let first = trimmed.split_whitespace().next().unwrap_or("");
-            let rest = if looks_like_key_type(first) {
-                trimmed
-            } else {
-                skip_options(trimmed)
-            };
-            let mut tokens = rest.split_whitespace();
+            if !looks_like_key_type(first) {
+                return Err(AuthError::KeyOptions { line: line_no });
+            }
+            let mut tokens = trimmed.split_whitespace();
             let algo = tokens.next().ok_or_else(|| AuthError::MalformedLine {
                 line: line_no,
                 reason: "no key type found".into(),
@@ -427,52 +411,30 @@ mod tests {
     }
 
     #[test]
-    fn ignore_options_before_key() {
+    fn reject_restricted_key_line() {
+        // #183: the restriction was dropped and the key loaded unrestricted.
         let signing = SigningKey::from_bytes(&[44u8; 32]);
-        let verifying = signing.verifying_key();
-        let blob = build_ed25519_blob(&verifying);
-        let b64 = host_key::base64_encode_nopad(&blob);
-        let content = format!("command=\"dump\",no-agent-forwarding ssh-ed25519 {b64} test\n");
+        let b64 = host_key::base64_encode_nopad(&build_ed25519_blob(&signing.verifying_key()));
+        let content = format!(
+            "restrict,from=\"10.0.0.0/8\",command=\"/usr/local/bin/backup\" ssh-ed25519 {b64} backup@host\n"
+        );
         let path = temp_authorized_keys(&content);
-        let keys = AuthorizedKeys::load(&path).expect("load");
-        assert_eq!(keys.keys.len(), 1);
-        assert_eq!(keys.keys[0].blob, blob);
+        let err = AuthorizedKeys::load(&path).unwrap_err();
+        assert!(matches!(err, AuthError::KeyOptions { line: 1 }));
     }
 
     #[test]
-    fn ignore_option_value_containing_ssh_prefix() {
-        let signing = SigningKey::from_bytes(&[50u8; 32]);
-        let blob = build_ed25519_blob(&signing.verifying_key());
-        let b64 = host_key::base64_encode_nopad(&blob);
-        let content = format!("command=\"/usr/bin/ssh-agent\" ssh-ed25519 {b64} test\n");
-        let path = temp_authorized_keys(&content);
-        let keys = AuthorizedKeys::load(&path).expect("load");
-        assert_eq!(keys.keys.len(), 1);
-    }
-
-    #[test]
-    fn quoted_option_with_spaces_and_key_type_lookalike() {
-        // The sshd(8) case that broke whitespace tokenisation: a quoted
-        // option value containing whitespace and a key-type-shaped word.
-        let signing = SigningKey::from_bytes(&[51u8; 32]);
-        let blob = build_ed25519_blob(&signing.verifying_key());
-        let b64 = host_key::base64_encode_nopad(&blob);
-        let content = format!("command=\"echo ssh-rsa x\",no-pty ssh-ed25519 {b64} test\n");
-        let path = temp_authorized_keys(&content);
-        let keys = AuthorizedKeys::load(&path).expect("load");
-        assert_eq!(keys.keys.len(), 1);
-        assert_eq!(keys.keys[0].blob, blob);
-    }
-
-    #[test]
-    fn quoted_option_with_escaped_quotes() {
-        let signing = SigningKey::from_bytes(&[52u8; 32]);
-        let blob = build_ed25519_blob(&signing.verifying_key());
-        let b64 = host_key::base64_encode_nopad(&blob);
-        let content = format!("command=\"say \\\"ssh-rsa\\\" now\" ssh-ed25519 {b64} test\n");
-        let path = temp_authorized_keys(&content);
-        let keys = AuthorizedKeys::load(&path).expect("load");
-        assert_eq!(keys.keys.len(), 1);
+    fn options_line_fails_the_whole_file() {
+        // Refused at load, not skipped: valid lines do not carry the file.
+        let s1 = SigningKey::from_bytes(&[50u8; 32]);
+        let s2 = SigningKey::from_bytes(&[51u8; 32]);
+        let b64_1 = host_key::base64_encode_nopad(&build_ed25519_blob(&s1.verifying_key()));
+        let b64_2 = host_key::base64_encode_nopad(&build_ed25519_blob(&s2.verifying_key()));
+        let path = temp_authorized_keys(&format!(
+            "ssh-ed25519 {b64_1} user1\nno-pty ssh-ed25519 {b64_2} user2\n"
+        ));
+        let err = AuthorizedKeys::load(&path).unwrap_err();
+        assert!(matches!(err, AuthError::KeyOptions { line: 2 }));
     }
 
     #[test]
