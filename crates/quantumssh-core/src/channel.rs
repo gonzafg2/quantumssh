@@ -2,7 +2,7 @@
 //! `session` channel carrying one `exec` request**, then a clean close.
 //!
 //! The [`drive`] loop is the single owner of all wire I/O for the
-//! post-auth phase. The child process runs on the blocking pool
+//! post-auth phase. The child process runs under `tokio::process`
 //! ([`crate::exec`]); the driver multiplexes inbound packets against the
 //! child's stdout/stderr/exit and stdin-consumption acks with a
 //! `tokio::select!`, never holding two `&mut` borrows of the wire at
@@ -28,7 +28,7 @@ use tokio::sync::mpsc;
 use tokio::time::Instant;
 use tracing::info;
 
-use crate::exec::{self, ChildChunk, ChildIo};
+use crate::exec::{self, ChildChunk, ChildIo, ChildScope};
 use crate::transport::{Expect, RekeyStep, Session, TransportError};
 use crate::wire::{Reader, Writer};
 
@@ -154,7 +154,9 @@ impl ChannelState {
 /// enum without losing orthogonal state; the `ChannelState` enum carries
 /// the primary phase.
 #[allow(clippy::struct_excessive_bools)]
-struct Driver {
+struct Driver<'a> {
+    /// The connection's children (ADR-0038 §6); `exec` spawns into it.
+    children: &'a ChildScope,
     identity: String,
     uid: u32,
     state: ChannelState,
@@ -206,15 +208,16 @@ struct Driver {
 /// — so the audit trail cannot lose its terminal record. Runs before the
 /// fields drop, so the event precedes the child teardown that
 /// [`ChildIo`]'s own `Drop` triggers. No-op when already emitted.
-impl Drop for Driver {
+impl Drop for Driver<'_> {
     fn drop(&mut self) {
         self.emit_finished();
     }
 }
 
-impl Driver {
-    fn new(identity: String) -> Self {
+impl<'a> Driver<'a> {
+    fn new(identity: String, children: &'a ChildScope) -> Self {
         Self {
+            children,
             identity,
             uid: exec::executing_uid(),
             state: ChannelState::BeforeOpen,
@@ -293,11 +296,14 @@ impl Driver {
 /// [`TransportError::Rejected`] on a protocol violation (the
 /// `SSH_MSG_DISCONNECT` is already sent), or [`TransportError::Io`] on a
 /// connection failure.
-pub(crate) async fn drive<S>(session: &mut Expect<S, Session>) -> Result<(), TransportError>
+pub(crate) async fn drive<S>(
+    session: &mut Expect<S, Session>,
+    children: &ChildScope,
+) -> Result<(), TransportError>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
-    let mut d = Driver::new(session.identity().to_string());
+    let mut d = Driver::new(session.identity().to_string(), children);
 
     loop {
         // Outbound channel work is suppressed during a re-key (RFC 4253 §9
@@ -383,6 +389,8 @@ where
             }
             chunk = recv_opt_out(out), if want_output => {
                 match chunk {
+                    // The client closed first: its output has no sink.
+                    Some(ChildChunk::Stdout(_) | ChildChunk::Stderr(_)) if d.early_close => {}
                     Some(ChildChunk::Stdout(b)) => d.pending_out = Some(PendingOut::new(Stream::Stdout, b)),
                     Some(ChildChunk::Stderr(b)) => d.pending_out = Some(PendingOut::new(Stream::Stderr, b)),
                     Some(ChildChunk::Exited(code)) => {
@@ -436,7 +444,7 @@ async fn recv_opt_consumed(rx: Option<&mut mpsc::UnboundedReceiver<u32>>) -> Opt
     }
 }
 
-impl Driver {
+impl Driver<'_> {
     /// (A) Sends as much pending output as the client window and max
     /// packet allow, splitting one chunk across packets as needed.
     async fn flush_output<S>(
@@ -764,7 +772,7 @@ impl Driver {
                 .write_packet(&build_channel_msg(SSH_MSG_CHANNEL_SUCCESS, self.peer_chan))
                 .await?;
         }
-        if let Ok(child) = exec::spawn(command) {
+        if let Ok(child) = exec::spawn(command, self.children) {
             self.child = Some(child);
             self.state = ChannelState::Running;
             // Any stdin buffered before the exec stays in `pre_exec_stdin`
@@ -884,11 +892,15 @@ impl Driver {
             self.state = ChannelState::Closed;
             return Ok(());
         }
-        // Client closed first: relinquish exit-status, kill + reap the
-        // child, then reply with our CLOSE once it drains.
+        // Client closed first: relinquish exit-status, drop the output it
+        // can no longer receive, kill + reap the child, then reply with our
+        // CLOSE once the reap reports the exit — not once the pipes reach
+        // EOF, which a process the leader left behind can delay (#190).
         self.early_close = true;
+        self.pending_out = None;
         if let Some(child) = self.child.as_mut() {
             child.close_stdin();
+            child.discard_output();
             child.kill();
         } else {
             // No child running (Idle or already draining): close now.
@@ -1111,13 +1123,14 @@ mod tests {
 
     #[test]
     fn drop_emits_owed_exec_finished_on_unwind() {
+        let scope = ChildScope::default();
         let capture = Capture::default();
         let seen = capture.0.clone();
         tracing::subscriber::with_default(capture, || {
             // AssertUnwindSafe: the Driver is owned by the closure and fully
             // dropped by the unwind; no state observable after the panic.
             let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                let mut d = Driver::new("SHA256:test".to_string());
+                let mut d = Driver::new("SHA256:test".to_string(), &scope);
                 d.command = Some("true".to_string());
                 panic!("mid-exec panic");
             }));
@@ -1128,10 +1141,11 @@ mod tests {
 
     #[test]
     fn drop_after_normal_emission_does_not_duplicate() {
+        let scope = ChildScope::default();
         let capture = Capture::default();
         let seen = capture.0.clone();
         tracing::subscriber::with_default(capture, || {
-            let mut d = Driver::new("SHA256:test".to_string());
+            let mut d = Driver::new("SHA256:test".to_string(), &scope);
             d.command = Some("true".to_string());
             d.exit_status = Some(0);
             d.emit_finished();
@@ -1142,10 +1156,11 @@ mod tests {
 
     #[test]
     fn drop_without_exec_emits_nothing() {
+        let scope = ChildScope::default();
         let capture = Capture::default();
         let seen = capture.0.clone();
         tracing::subscriber::with_default(capture, || {
-            drop(Driver::new("SHA256:test".to_string()));
+            drop(Driver::new("SHA256:test".to_string(), &scope));
         });
         assert_eq!(finished_count(&seen), 0);
     }

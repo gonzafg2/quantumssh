@@ -38,6 +38,7 @@ use tracing::{Instrument, Span, debug, info, info_span, warn};
 
 use crate::admission::{Admission, ConnectionGuard, Limits};
 use crate::auth::AuthorizedKeys;
+use crate::exec::ChildScope;
 use crate::host_key::HostKey;
 use crate::transport::{self, RekeyThresholds, TransportError};
 
@@ -263,6 +264,10 @@ async fn handle(
     guard: ConnectionGuard,
     mut shutdown: broadcast::Receiver<Instant>,
 ) {
+    // Outlives the connection future: a deadline that cancels the future
+    // leaves the children's teardown running, and an abort of this task
+    // runs the scope's synchronous kill guard (ADR-0038 §6).
+    let children = ChildScope::default();
     // The block scopes the (possibly cancelled) connection future: at
     // its end the `&mut stream` borrow is released and the channel
     // driver's drop-side effects (child kill, owed `exec.finished`)
@@ -275,6 +280,7 @@ async fn handle(
             budget,
             rekey,
             &guard,
+            &children,
         );
         tokio::pin!(conn);
         tokio::select! {
@@ -306,6 +312,9 @@ async fn handle(
     if let Err(e) = stream.shutdown().await {
         debug!(error = %e, "tcp shutdown failed");
     }
+    // The connection leaves the server's `JoinSet` only once its child is
+    // reaped (ADR-0038 §6).
+    children.join().await;
     info!(reason = %reason, "connection.closed");
 }
 
@@ -323,6 +332,7 @@ async fn run_connection(
     budget: Duration,
     rekey: RekeyThresholds,
     guard: &ConnectionGuard,
+    children: &ChildScope,
 ) -> Result<(), TransportError> {
     let auth_phase = async {
         let t = transport::version_exchange(stream).await?;
@@ -360,7 +370,7 @@ async fn run_connection(
         // the channel layer un-timed.
         Some(t) => {
             guard.mark_authenticated();
-            t.serve(host_key, rekey).await
+            t.serve(host_key, rekey, children).await
         }
         // `responder.deny()` already returned `Err`, so this arm is
         // unreachable; kept total for the type.

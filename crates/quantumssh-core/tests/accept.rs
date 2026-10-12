@@ -960,6 +960,49 @@ async fn client_early_close_kills_child() {
 }
 
 #[tokio::test]
+async fn early_close_after_exit_does_not_wait_on_a_left_behind_pipe_holder() {
+    // #190: the leader exits normally, but its background job keeps the
+    // output pipes open. A client close must still be answered promptly
+    // (ADR-0023), not after the job ends.
+    let (addr, host_key) = start_server(Duration::from_secs(30)).await;
+    let (mut stream, mut client) = authenticate(addr, &host_key).await;
+
+    client.write_sealed(&mut stream, &channel_open(0)).await;
+    let server_chan = expect_open_confirmation(&mut client, &mut stream).await;
+    client
+        .write_sealed(
+            &mut stream,
+            &channel_exec(server_chan, b"sleep 30 & echo ready"),
+        )
+        .await;
+    // `ready` is the leader's last act; give it a moment to exit.
+    loop {
+        let pkt = client.read_sealed(&mut stream).await;
+        if pkt.first() == Some(&CH_DATA) {
+            break;
+        }
+    }
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    client
+        .write_sealed(&mut stream, &channel_one_field(CH_CLOSE, server_chan))
+        .await;
+
+    // Shorter than the read budget, so a hang fails this assertion.
+    let closed = timeout(Duration::from_secs(3), async {
+        loop {
+            if client.read_sealed(&mut stream).await.first() == Some(&CH_CLOSE) {
+                break;
+            }
+        }
+    })
+    .await;
+    assert!(
+        closed.is_ok(),
+        "server must answer the client's close without waiting for the job"
+    );
+}
+
+#[tokio::test]
 async fn cancel_safety_under_load() {
     // 3 MiB of output exceeds the 2 MiB window, forcing many
     // WINDOW_ADJUST round-trips and repeated select! cancellation of the
