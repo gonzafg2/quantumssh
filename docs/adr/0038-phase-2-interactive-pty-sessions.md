@@ -311,13 +311,20 @@ in the tree, like ADR-0029's `fs`.
 - **Reaping.** An async task owns the unreaped `tokio::process::Child`
   and waits for either its exit or a kill request. Dropping the
   driver-side handle counts as a kill request; this is ADR-0023's
-  no-orphan guard. On Linux, tokio waits on a pidfd (`pidfd_open`,
-  kernel ≥ 5.3) and falls back to a `SIGCHLD` handler where that is not
-  available. macOS always uses the `SIGCHLD` path (tokio 1.51.4,
+  no-orphan guard. The reap task outlives the connection task and
+  carries out the request, whatever ended the channel (client close,
+  connection loss, shutdown deadline):
+  - pipe sessions get the immediate group `SIGKILL`;
+  - PTY sessions get §7's hang-up sequence;
+  - only the runtime-teardown guard below kills both kinds immediately.
+
+  On Linux, tokio waits on a pidfd (`pidfd_open`, kernel ≥ 5.3) and
+  falls back to a `SIGCHLD` handler where that is not available. macOS always uses the `SIGCHLD` path (tokio 1.51.4,
   `src/process/unix/mod.rs:123-137`). Nothing polls and no thread is
   parked while a session runs. The only polling is the bounded exit
   peek in §7's teardown grace.
-- **Kill through the owned handle, always before reaping.** The kill
+- **Kill through the owned handle, always before reaping.** The kill,
+  immediate for pipe sessions and after §7's grace for PTY sessions,
   sends `SIGKILL` to the process group
   (`rustix::process::kill_process_group`) and calls `start_kill()` on
   the leader. It is issued only while the leader is unreaped, running or
