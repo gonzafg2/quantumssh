@@ -31,7 +31,13 @@
 >   every line with options at startup, so no loaded key carries options.
 >   §3 is corrected in place: the gate has nothing to refuse, the
 >   implementation adds no options check, and the off switch is
->   withdrawn, as ADR-0040 records. The rule itself is unchanged.
+>   withdrawn, as ADR-0040 records. The rule itself is unchanged. The
+>   same PR corrects three more statements that the implementation made
+>   false: Consequences said `Cargo.lock` is unchanged (it gains no
+>   package, but the `quantumssh` package's dependency list changes for
+>   the PTY tests), and that keys with options get no PTY (under
+>   ADR-0040 they get no session at all); Links said the PTY module
+>   does not exist yet.
 
 ## Context
 
@@ -633,7 +639,9 @@ the process-spawning path.
 
 - Interactive sessions with zero first-party `unsafe`. The mechanism was
   exercised on Linux and macOS by a `forbid(unsafe_code)` probe.
-- No new crate, and `Cargo.lock` is unchanged.
+- No new crate: `Cargo.lock` gains no package. Only the `quantumssh`
+  package's dependency list changes, for the PTY tests'
+  dev-dependencies (§11).
 - The channel layer leaves the blocking pool. Nothing polls during a
   session (only the ≤ 1 s teardown grace peeks), and no thread is parked
   per child. A session's master closes when the session decides, not
@@ -665,7 +673,8 @@ the process-spawning path.
 - **No session isolation and no login records.** Sessions are not
   isolated from each other (the same UID owns every slave, §8.12), and
   `who`, `w` and `last` do not show QuantumSSH sessions.
-- **Keys with options get no PTY** until per-key restrictions land (§3).
+- **Keys with options get no session at all** until per-key restrictions
+  land: ADR-0040 refuses them at startup (§3).
 - **Behaviour change for `exec`.** Moving `exec` onto `tokio::process`
   touches tested Phase-1 code. The existing tests and the interop gate
   must stay green through the migration.
@@ -772,8 +781,9 @@ PTY work, which is this ADR. Scripts such as `ssh host <<EOF … EOF` send
   `crates/quantumssh-core/src/auth.rs` (§3 gate input),
   `crates/quantumssh/src/main.rs` (helper dispatch),
   `Cargo.toml` and `crates/quantumssh-core/Cargo.toml` (features),
-  `tests/interop/run_openssh_client.sh` (PTY case). A new PTY module in
-  `quantumssh-core` does not exist yet.
+  `tests/interop/run_openssh_client.sh` (PTY case). The PTY module is
+  `crates/quantumssh-core/src/pty.rs`, and the PTY integration tests are
+  `crates/quantumssh/tests/pty.rs`.
 - Related ADRs: [ADR-0023](0023-phase-1-channel-layer-scope.md) (extended),
   [ADR-0022](0022-phase-1-async-runtime-tokio.md) (`process` feature
   question answered), [ADR-0016](0016-phase-1-service-account-uid-model.md),
