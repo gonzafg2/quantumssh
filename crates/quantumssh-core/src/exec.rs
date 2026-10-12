@@ -209,19 +209,24 @@ impl Reaper {
         tokio::pin!(exit);
         let mut kill_pending = true;
         loop {
+            // Biased towards the kill: when the request and the exit are
+            // both ready, the group is signalled while the leader is still
+            // unreaped. Reaping first would free its PID and leave the rest
+            // of the group beyond any later kill (ADR-0038 §6).
             tokio::select! {
-                () = &mut exit => {
-                    if let Some(code) = self.try_reap() {
-                        return code;
-                    }
-                    exit.set(wait_exit(self.pid));
-                }
+                biased;
                 // A sent request and a dropped sender both mean kill.
                 _ = &mut kill_rx, if kill_pending => {
                     kill_pending = false;
                     if let Some(child) = self.child.as_mut() {
                         kill_group(child, self.pid);
                     }
+                }
+                () = &mut exit => {
+                    if let Some(code) = self.try_reap() {
+                        return code;
+                    }
+                    exit.set(wait_exit(self.pid));
                 }
             }
         }
@@ -542,6 +547,37 @@ mod tests {
         assert!(
             wait_blocking(|| has_exited(pid)),
             "the scope's guard must kill the child without awaiting"
+        );
+        drop(io);
+    }
+
+    #[test]
+    fn a_pending_kill_is_applied_before_a_simultaneous_exit_is_reaped() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+        // The background job keeps the group, and the output pipes, alive
+        // after the leader exits.
+        let (scope, mut io, pid) = runtime.block_on(async {
+            let scope = ChildScope::default();
+            let io = spawn("sleep 30 & exit 0", &scope).expect("spawn");
+            let pid = lock(&scope.live)[0];
+            (scope, io, pid)
+        });
+        // No task has run yet: the leader's exit and the kill request are
+        // both ready when the reap task first runs.
+        assert!(wait_blocking(|| has_exited(pid)), "the leader exits");
+        io.kill();
+        io.close_stdin();
+        runtime.block_on(async {
+            tokio::time::timeout(Duration::from_secs(10), scope.join())
+                .await
+                .expect("the group kill closes the job's pipes");
+        });
+        assert!(
+            wait_blocking(|| rustix::process::test_kill_process_group(pid).is_err()),
+            "the kill must reach the background job"
         );
         drop(io);
     }
