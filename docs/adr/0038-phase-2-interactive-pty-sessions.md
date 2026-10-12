@@ -374,8 +374,17 @@ in the tree, like ADR-0029's `fs`.
   - The connection task therefore also owns a **synchronous kill
     guard**: a registry of its live children, behind a `std::sync::Mutex`.
     - When the aborted connection future is dropped, the guard's `Drop`
-      sends `SIGKILL` to every group still registered. It is a syscall,
-      with no await.
+      sends `SIGKILL` to each registered child **by PID**
+      (`rustix::process::kill_process`) and then to its **process group**
+      (`kill_process_group`). Both are safe fns in rustix 1.1.5
+      (`src/process/kill.rs:16`, `:35`). These are syscalls, with no
+      await.
+    - The PID kill closes the PTY helper's pre-`setsid` window. Between
+      spawn and its own `setsid()`, the helper is still in the server's
+      group, so no group with its PID exists yet and the group kill
+      returns `ESRCH`. Once `setsid` has run, the group kill reaches the
+      rest of the session. `ESRCH` is expected in either order and is
+      ignored.
     - tokio drops an aborted task's future *before* it stores the
       task's result (`src/runtime/task/harness.rs:500-507`), so the kill
       happens before the server's `JoinSet` can observe the connection
