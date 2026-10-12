@@ -129,13 +129,24 @@ possibilities). The key exchange is untouched.
 
 **Key material (normative).** The composite key adds secret state on the
 disk-to-memory boundary of [`threat-model.md`](../threat-model.md) §4.3,
-and every rule there applies to it. The decoded `openssh-key-v1`
-private section, both seeds, the expanded ML-DSA signing key, the
-Ed25519 signing key, and any signing temporaries are held in zeroizing
+and every rule there applies to it. The following are held in zeroizing
 types, dropped as soon as the signing state is built, and zeroized when
-the long-lived key object drops. None of them may appear in `Debug`
-output, error values, log events, or panic messages; a load failure
-names the file and the reason, never key bytes.
+the long-lived key object drops:
+- the decoded `openssh-key-v1` private section;
+- both seeds;
+- the expanded ML-DSA signing key and the Ed25519 signing key;
+- every signing temporary that QuantumSSH's own code creates or holds.
+
+None of them may appear in `Debug` output, error values, log events, or
+panic messages; a load failure names the file and the reason, never key
+bytes.
+
+Temporaries created *inside* a primitive crate (an ML-DSA signer's
+per-signature randomness and mask, an XOF's sponge state) are beyond
+the caller's reach. They fall under threat-model §4.3's best-effort
+erasure. Subsidiary ADR 1 (the crate selection) records which of them
+the chosen crate leaves un-erased, as a residual and not as a waiver of
+this rule.
 
 **The verification invariant** is inherited unchanged from RFC-0006: a
 composite signature is valid only if **both** component signatures
