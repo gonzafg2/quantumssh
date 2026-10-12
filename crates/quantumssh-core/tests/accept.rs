@@ -848,6 +848,48 @@ async fn exec_cat_echoes_stdin() {
 }
 
 #[tokio::test]
+async fn signal_death_sends_exit_signal_instead_of_exit_status() {
+    // ADR-0038 §8: a death by a listed signal is reported by name.
+    let (addr, host_key) = start_server(Duration::from_secs(30)).await;
+    let (mut stream, mut client) = authenticate(addr, &host_key).await;
+
+    client.write_sealed(&mut stream, &channel_open(0)).await;
+    let server_chan = expect_open_confirmation(&mut client, &mut stream).await;
+    client
+        .write_sealed(&mut stream, &channel_exec(server_chan, b"kill -TERM $$"))
+        .await;
+
+    let mut requests = Vec::new();
+    loop {
+        let pkt = client.read_sealed(&mut stream).await;
+        let mut r = Reader::new(&pkt);
+        match r.byte().unwrap() {
+            CH_REQUEST => {
+                let _ = r.uint32().unwrap();
+                let req = r.string(64).unwrap().to_vec();
+                assert!(!r.boolean().unwrap(), "want_reply must be false");
+                if req == b"exit-signal" {
+                    let name = r.string(64).unwrap().to_vec();
+                    let core_dumped = r.boolean().unwrap();
+                    assert_eq!(r.string(64).unwrap(), b"", "empty message");
+                    assert_eq!(r.string(64).unwrap(), b"", "empty language tag");
+                    requests.push((req, Some((name, core_dumped))));
+                } else {
+                    requests.push((req, None));
+                }
+            }
+            CH_CLOSE => break,
+            _ => {}
+        }
+    }
+    assert_eq!(
+        requests,
+        vec![(b"exit-signal".to_vec(), Some((b"TERM".to_vec(), false)))],
+        "exactly one exit-signal, and no exit-status"
+    );
+}
+
+#[tokio::test]
 async fn exec_stderr_is_extended_data() {
     let (addr, host_key) = start_server(Duration::from_secs(30)).await;
     let (mut stream, mut client) = authenticate(addr, &host_key).await;

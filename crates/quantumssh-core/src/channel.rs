@@ -184,6 +184,9 @@ struct Driver<'a> {
     early_close: bool,
     /// The child's exit status, once known.
     exit_status: Option<i32>,
+    /// The listed signal that killed the child, with its core-dumped flag:
+    /// sent as `exit-signal` instead of `exit-status` (ADR-0038 §8).
+    exit_signal: Option<(&'static str, bool)>,
     /// Both child output pumps have hit EOF (and the reap reported exit).
     child_out_closed: bool,
     /// The consumed-acks channel has closed (stdin pump finished).
@@ -232,6 +235,7 @@ impl<'a> Driver<'a> {
             client_eof: false,
             early_close: false,
             exit_status: None,
+            exit_signal: None,
             child_out_closed: false,
             consumed_closed: false,
             command: None,
@@ -393,8 +397,11 @@ where
                     Some(ChildChunk::Stdout(_) | ChildChunk::Stderr(_)) if d.early_close => {}
                     Some(ChildChunk::Stdout(b)) => d.pending_out = Some(PendingOut::new(Stream::Stdout, b)),
                     Some(ChildChunk::Stderr(b)) => d.pending_out = Some(PendingOut::new(Stream::Stderr, b)),
-                    Some(ChildChunk::Exited(code)) => {
-                        d.exit_status.get_or_insert(code);
+                    Some(ChildChunk::Exited(exit)) => {
+                        if d.exit_status.is_none() {
+                            d.exit_status = Some(exit.code);
+                            d.exit_signal = exit.signal;
+                        }
                         if d.state == ChannelState::Running {
                             d.state = ChannelState::Draining;
                         }
@@ -539,9 +546,10 @@ impl Driver<'_> {
         self.state == ChannelState::Draining && self.child_out_closed && self.pending_out.is_none()
     }
 
-    /// (D) Sends the terminal sequence. On a normal exit: `exit-status`,
-    /// `CHANNEL_EOF`, `CHANNEL_CLOSE`, then awaits the client's close. On
-    /// an early client close: just our `CHANNEL_CLOSE`, and we are done.
+    /// (D) Sends the terminal sequence. On a normal exit: `exit-status`
+    /// (or `exit-signal` for a death by a listed signal), `CHANNEL_EOF`,
+    /// `CHANNEL_CLOSE`, then awaits the client's close. On an early client
+    /// close: just our `CHANNEL_CLOSE`, and we are done.
     async fn send_terminal<S>(
         &mut self,
         session: &mut Expect<S, Session>,
@@ -554,7 +562,11 @@ impl Driver<'_> {
             self.state = ChannelState::Closed;
             return Ok(());
         }
-        if let Some(code) = self.exit_status {
+        if let Some((name, core_dumped)) = self.exit_signal {
+            session
+                .write_packet(&build_exit_signal(self.peer_chan, name, core_dumped))
+                .await?;
+        } else if let Some(code) = self.exit_status {
             let status = u32::from_ne_bytes(code.to_ne_bytes());
             session
                 .write_packet(&build_exit_status(self.peer_chan, status))
@@ -969,6 +981,21 @@ fn build_exit_status(peer_chan: u32, status: u32) -> Vec<u8> {
     w.into_bytes()
 }
 
+/// RFC 4254 §6.10 `exit-signal`: the name without `SIG`, the core-dumped
+/// flag, and an empty message and language tag, as sshd sends.
+fn build_exit_signal(peer_chan: u32, name: &str, core_dumped: bool) -> Vec<u8> {
+    let mut w = Writer::new();
+    w.put_byte(SSH_MSG_CHANNEL_REQUEST);
+    w.put_uint32(peer_chan);
+    w.put_string(b"exit-signal");
+    w.put_boolean(false);
+    w.put_string(name.as_bytes());
+    w.put_boolean(core_dumped);
+    w.put_string(b"");
+    w.put_string(b"");
+    w.into_bytes()
+}
+
 fn build_eof(peer_chan: u32) -> Vec<u8> {
     build_channel_msg(SSH_MSG_CHANNEL_EOF, peer_chan)
 }
@@ -1034,6 +1061,21 @@ mod tests {
         assert_eq!(r.string(32).unwrap(), b"exit-status");
         assert!(!r.boolean().unwrap());
         assert_eq!(r.uint32().unwrap(), 0);
+    }
+
+    #[test]
+    fn exit_signal_request_carries_name_core_flag_and_empty_strings() {
+        let frame = build_exit_signal(7, "SEGV", true);
+        let (msg, mut r) = read_msg(&frame);
+        assert_eq!(msg, SSH_MSG_CHANNEL_REQUEST);
+        assert_eq!(r.uint32().unwrap(), 7);
+        assert_eq!(r.string(32).unwrap(), b"exit-signal");
+        assert!(!r.boolean().unwrap());
+        assert_eq!(r.string(32).unwrap(), b"SEGV");
+        assert!(r.boolean().unwrap());
+        assert_eq!(r.string(32).unwrap(), b"");
+        assert_eq!(r.string(32).unwrap(), b"");
+        r.finish().unwrap();
     }
 
     #[test]
