@@ -183,6 +183,18 @@ it controls has an explicit bound:
     ignored), input flags 30–42 (including `IUTF8`, RFC 8160), local
     flags 50–62, output flags 70–75 and control flags 90–93. For flags,
     0 clears and nonzero sets.
+  - **The exception is `CS7` (90) and `CS8` (91).** They are not
+    independent flags but values of the multi-bit `CSIZE` field (POSIX
+    `<termios.h>`). Setting or clearing them bit by bit can leave `CS8`
+    when `CS7` was requested, or fall through to `CS5`. So after
+    parsing:
+    - if `CS8` is nonzero, `CSIZE` is cleared and set to `CS8`;
+    - otherwise, if `CS7` is nonzero, it is set to `CS7`;
+    - otherwise `CSIZE` keeps the pair's default.
+
+    A zero value never selects a size, so no client can drive `CSIZE`
+    to `CS5` or `CS6`. `PARENB` (92) and `PARODD` (93) use the
+    flag rule above.
   - **Ignored:**
     - platform gaps (for example `IUCLC`/`XCASE` exist only on Linux,
       `VDSUSP`/`VSTATUS` only on BSD and macOS, and `OLCUC` not on macOS);
@@ -353,9 +365,25 @@ in the tree, like ADR-0029's `fs`.
   - The connection task awaits that set before it logs
     `connection.closed` and returns. A connection therefore leaves the
     server's `JoinSet` only after its child's teardown has finished.
-  - If the connection task is itself aborted (ADR-0028's last resort),
-    dropping its `JoinSet` aborts the reap tasks (tokio 1.51.4,
-    `src/task/join_set.rs:591-595`), and their drop guards kill at once.
+  - The connection task can itself be aborted (ADR-0028's last resort).
+    Dropping its `JoinSet` then only *requests* that the reap tasks abort
+    (tokio 1.51.4, `src/task/join_set.rs:590-594`), and their drop
+    guards run whenever the runtime gets to them. That can be after the
+    server's `JoinSet` has already counted the connection as finished,
+    so the reapers' guards alone cannot be relied on in this path.
+  - The connection task therefore also owns a **synchronous kill
+    guard**: a registry of its live children, behind a `std::sync::Mutex`.
+    - When the aborted connection future is dropped, the guard's `Drop`
+      sends `SIGKILL` to every group still registered. It is a syscall,
+      with no await.
+    - tokio drops an aborted task's future *before* it stores the
+      task's result (`src/runtime/task/harness.rs:500-507`), so the kill
+      happens before the server's `JoinSet` can observe the connection
+      as complete.
+    - A reaper removes its entry under the same lock before it reaps the
+      leader. The guard therefore only signals groups whose leader is
+      unreaped, which keeps the no-reused-PGID rule below. On this
+      last-resort path PTY sessions get no hang-up grace.
 
   On Linux, tokio waits on a pidfd (`pidfd_open`, kernel ≥ 5.3) and
   falls back to a `SIGCHLD` handler where that is not available. macOS
