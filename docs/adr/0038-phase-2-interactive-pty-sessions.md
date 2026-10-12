@@ -10,8 +10,9 @@
   [ADR-0018](0018-phase-1-unsafe-code-forbid-workspace.md)
   (`unsafe_code = "forbid"`), [ADR-0016](0016-phase-1-service-account-uid-model.md)
   (service-account UID, sanitised environment, `rustix`),
-  [ADR-0024](0024-phase-1-log-event-schema.md) (audit schema: two fields
-  added below), [ADR-0028](0028-phase-2-concurrent-connections-limits-graceful-shutdown.md)
+  [ADR-0024](0024-phase-1-log-event-schema.md) (audit schema; this ADR
+  partially supersedes the field lists of its `exec.started` and
+  `exec.finished` rows, §9), [ADR-0028](0028-phase-2-concurrent-connections-limits-graceful-shutdown.md)
   (shutdown drain, blocking-pool sizing) and
   [ADR-0029](0029-phase-2-config-file-v1-schema-parser-strictmodes.md)
   (no configuration key is added here). Part of the Phase-2 milestone
@@ -65,9 +66,12 @@ Three forces shape the decision:
    the identity change must happen in an isolated, single-threaded
    context, never inside the Tokio process.
 
-These are one decision, not several. The runtime change is forced by
-force 2. The audit fields below are how a PTY session appears in the
-log. Splitting them would leave each half unimplementable alone.
+These are recorded as one decision. Force 2 makes `tokio::process` the
+runtime of the PTY child. Keeping pipe children on the old model would
+then duplicate the same invariants in a second lifecycle (Alternative
+6). The audit fields are how the new sessions appear in the log.
+Implementation can still land in more than one PR (§11). That is a
+matter of sequencing, not a second decision.
 
 **Verification (2026-10-11).** A throwaway probe, not committed, was
 built with `#![forbid(unsafe_code)]` against the pinned versions
@@ -84,8 +88,15 @@ and in a Debian bookworm container. The mechanism below:
 - saw end-of-session on the master as `EIO` on Linux and as a 0-byte
   read on macOS.
 
-On both systems the slave belonged to the opening UID, group `tty`,
-mode `0620`. With the features below enabled on the workspace,
+On both systems:
+
+- the slave belonged to the opening UID, group `tty`, mode `0620`;
+- opening `/dev/ptmx` directly set `FD_CLOEXEC` atomically (§4);
+- a `waitid(EXITED | NOHANG | NOWAIT)` peek saw a child's exit while
+  tokio's `Child::id()` was still `Some`, and the child was reaped
+  afterwards (§7).
+
+With the features below enabled on the workspace,
 `cargo check --locked --workspace` passed and `Cargo.lock` did not
 change.
 
@@ -210,15 +221,19 @@ gate. Their mappings are their own decisions.
 ### 4. Allocation (`rustix` 1.1.5, features `pty` and `termios`)
 
 All of the following are safe `pub fn`s; their `unsafe` stays inside the
-dependency, where ADR-0018 places it. In rustix 1.1.5, `openpt`,
-`ptsname`, `unlockpt`, `grantpt` and `ioctl_tiocgptpeer` are at
-`src/pty.rs:91`, `:135`, `:150`, `:171` and `:196`.
+dependency, where ADR-0018 places it. In rustix 1.1.5, `ptsname`,
+`unlockpt`, `grantpt` and `ioctl_tiocgptpeer` are at `src/pty.rs:135`,
+`:150`, `:171` and `:196`.
 
-1. **Master.** On Linux, `rustix::pty::openpt(RDWR | NOCTTY | CLOEXEC)`
-   opens `/dev/ptmx`. On macOS, `openpt(RDWR | NOCTTY)` and then
-   `rustix::io::fcntl_setfd(…, CLOEXEC)`: `OpenptFlags::CLOEXEC` exists
-   only on Linux, FreeBSD and NetBSD. Then `grantpt` (a no-op on Linux)
-   and `unlockpt`.
+1. **Master.** `rustix::fs::open("/dev/ptmx", RDWR | NOCTTY | CLOEXEC)`
+   on both CI platforms, Linux and macOS. On Linux this is exactly what
+   `rustix::pty::openpt` does (`src/pty.rs:91-101`). On macOS `openpt`
+   cannot take `CLOEXEC`: `OpenptFlags::CLOEXEC` exists only on Linux,
+   FreeBSD and NetBSD. A separate `fcntl_setfd` would leave a window in
+   which a concurrent spawn in another connection could inherit the
+   master, and that copy would block the hang-up that closing the
+   master must deliver (§7). The flag is therefore set at open on every
+   platform. Then `grantpt` (a no-op on Linux) and `unlockpt`.
 2. **Slave.** On Linux, `rustix::pty::ioctl_tiocgptpeer(master, RDWR |
    NOCTTY | CLOEXEC)`, which opens the peer without a path lookup
    (kernel ≥ 4.13). Elsewhere, `ptsname`, then `rustix::fs::open` with
@@ -299,16 +314,21 @@ in the tree, like ADR-0029's `fs`.
   no-orphan guard. On Linux, tokio waits on a pidfd (`pidfd_open`,
   kernel ≥ 5.3) and falls back to a `SIGCHLD` handler where that is not
   available. macOS always uses the `SIGCHLD` path (tokio 1.51.4,
-  `src/process/unix/mod.rs:123-137`). There is no polling and no parked
-  thread.
-- **Kill through the owned handle.** The kill sends `SIGKILL` to the
-  process group (`rustix::process::kill_process_group`) while
-  `Child::id()` is still `Some`; it becomes `None` once the child is
-  reaped (tokio 1.51.4, `src/process/mod.rs:1222`). It also calls
-  `start_kill()` on the leader. As in ADR-0016's note, the pid cannot
-  have been reused, because the child has not been reaped. If the task
-  itself is dropped at runtime teardown, a guard does the same thing
-  synchronously. `kill_on_drop` alone would signal only the leader.
+  `src/process/unix/mod.rs:123-137`). Nothing polls and no thread is
+  parked while a session runs. The only polling is the bounded exit
+  peek in §7's teardown grace.
+- **Kill through the owned handle, always before reaping.** The kill
+  sends `SIGKILL` to the process group
+  (`rustix::process::kill_process_group`) and calls `start_kill()` on
+  the leader. It is issued only while the leader is unreaped, running or
+  a zombie, which shows as `Child::id()` still being `Some`; that
+  becomes `None` once the child is reaped (tokio 1.51.4,
+  `src/process/mod.rs:1222`). While the leader is unreaped, its pid,
+  which is also its process-group id, cannot have been reused. This is
+  ADR-0016's argument, kept on every path, including §7's grace. If the
+  task itself is dropped at runtime teardown, a guard does the same
+  thing synchronously. `kill_on_drop` alone would signal only the
+  leader.
 - **Blocking pool.** ADR-0028's bound (`main.rs:41`, `main.rs:420-426`)
   loses its consumer. It stays as an upper bound, since tokio starts
   blocking threads on demand. This ADR does not change it.
@@ -344,11 +364,23 @@ in the tree, like ADR-0029's `fs`.
   `CHANNEL_CLOSE`, connection loss, or ADR-0028's shutdown deadline). The
   server sends `SIGHUP` to the leader and closes the master. This is a
   terminal hang-up: shells forward it to their jobs and editors save
-  recovery files. The server then waits up to 1 s for the leader to
-  exit, and sends `SIGKILL` to the leader's process group. Pipe sessions
-  keep ADR-0023's immediate group `SIGKILL`. The 1 s figure is an
-  initial value, not a measurement; changing it is an implementation
-  constant, not a re-decision.
+  recovery files. The server then waits up to 1 s for the leader to exit,
+  **without reaping it**:
+  - The reap task stops awaiting `Child::wait()`, which would reap.
+  - Instead it peeks with
+    `rustix::process::waitid(WaitId::Pid(pid), EXITED | NOHANG | NOWAIT)`
+    (rustix 1.1.5, `src/process/wait.rs:488`, flags at `:56-67`) every
+    20 ms, the current reap interval. The peek leaves the leader a
+    zombie.
+  - When the leader has exited or the second has passed, the server
+    sends `SIGKILL` to the leader's process group, which is still safe
+    (§6), and only then reaps.
+
+  A shell that honours `SIGHUP` still exits early, and the group kill
+  still reaches anything left in its group. Pipe sessions keep
+  ADR-0023's immediate group `SIGKILL`. The 1 s figure is an initial
+  value, not a measurement; changing it is an implementation constant,
+  not a re-decision.
 - **What "no orphan" covers.** The guarantee is the one `exec` has today:
   the session leader and its process group are killed. A process that
   leaves that group can outlive the channel, as it can under OpenSSH.
@@ -394,6 +426,11 @@ in the tree, like ADR-0029's `fs`.
   (threat model §5.4.3).
 - This is an additive change before the freeze, like ADR-0028's
   `connection.refused`, and it joins the `0.1.0` freeze checklist.
+  Because it changes the field lists that ADR-0024 recorded for the two
+  `exec.*` rows, ADR-0024's Status field now points here: a partial
+  supersession, as ADR-0020's and ADR-0033's Status fields record theirs.
+  ADR-0015 lets an accepted ADR change only its Status field and
+  annotated errata.
 
 ### 10. Ownership and permissions, and what Phase 3 changes
 
@@ -459,9 +496,10 @@ the process-spawning path.
 - Interactive sessions with zero first-party `unsafe`. The mechanism was
   exercised on Linux and macOS by a `forbid(unsafe_code)` probe.
 - No new crate, and `Cargo.lock` is unchanged.
-- The channel layer leaves the blocking pool: no 20 ms polling, and no
-  thread parked per child. A session's master closes when the session
-  decides, not when every slave holder has exited.
+- The channel layer leaves the blocking pool. Nothing polls during a
+  session (only the ≤ 1 s teardown grace peeks), and no thread is parked
+  per child. A session's master closes when the session decides, not
+  when every slave holder has exited.
 - One child lifecycle (spawn, owned-handle kill, reap, exit mapping)
   serves `exec`, `shell` and PTY sessions.
 - `exit-signal` gives RFC-conformant clients the signal name and the
@@ -489,11 +527,6 @@ the process-spawning path.
 - **No session isolation and no login records.** Sessions are not
   isolated from each other (same UID, slave mode `0620`, §8.12), and
   `who`, `w` and `last` do not show QuantumSSH sessions.
-- **Non-atomic `CLOEXEC` on macOS.** A spawn running concurrently in
-  another connection could inherit a master between `openpt` and
-  `fcntl_setfd`. Under the single service UID that grants nothing a
-  session could not already do, but it must be closed before Phase 3
-  introduces per-user UIDs. On Linux the flag is atomic.
 - **Keys with options get no PTY** until per-key restrictions land (§3).
 - **Behaviour change for `exec`.** Moving `exec` onto `tokio::process`
   touches tested Phase-1 code. The existing tests and the interop gate
@@ -605,7 +638,7 @@ PTY work, which is this ADR. Scripts such as `ssh host <<EOF … EOF` send
   [ADR-0022](0022-phase-1-async-runtime-tokio.md) (`process` feature
   question answered), [ADR-0016](0016-phase-1-service-account-uid-model.md),
   [ADR-0018](0018-phase-1-unsafe-code-forbid-workspace.md),
-  [ADR-0024](0024-phase-1-log-event-schema.md) (fields added),
+  [ADR-0024](0024-phase-1-log-event-schema.md) (partially superseded: the `exec.*` field lists),
   [ADR-0028](0028-phase-2-concurrent-connections-limits-graceful-shutdown.md),
   [ADR-0029](0029-phase-2-config-file-v1-schema-parser-strictmodes.md),
   [ADR-0020](0020-phase-1-ci-openssh-interop-gate.md),
