@@ -27,7 +27,7 @@ publickey Ed25519 authentication → one `session` channel running one
 `exec` → clean close, with mid-session re-keying (1 GiB / 1 h, [ADR-0026](docs/adr/0026-phase-1-rekeying-policy.md))
 — and interoperate with a stock OpenSSH 10.x client
 (the `interop` CI gate, [ADR-0020](docs/adr/0020-phase-1-ci-openssh-interop-gate.md)).
-It is **not** hardened for production: no PTY, no SFTP, no config file, no
+It is **not** hardened for production: no SFTP, no config file, no
 per-user privilege separation (Phase 2+).
 
 The Phase-1 ADRs (0016–0024, 0026) are **Accepted** — flipped from `Proposed`
@@ -134,7 +134,7 @@ authoritative reference; the operative rules a reviewer applies:
 | [`docs/plans/`](docs/plans/) | Mutable, non-authoritative milestone design notes ([ADR-0027](docs/adr/0027-docs-plans-governance-category.md)) |
 | [`docs/infrastructure.md`](docs/infrastructure.md), [`docs/operations.md`](docs/operations.md) | Ops topology and verification recipes |
 | `deny.toml`, `clippy.toml`, `rust-toolchain.toml`, `Cargo.toml` | Tooling and workspace config |
-| `crates/quantumssh-core/` | The library — modules `wire`, `kex`, `cipher`, `host_key`, `transport` (type-state machine), `auth`, `channel`, `exec`, `server` |
+| `crates/quantumssh-core/` | The library — modules `wire`, `kex`, `cipher`, `host_key`, `transport` (type-state machine), `auth`, `channel`, `exec`, `pty`, `server` |
 | `crates/quantumssh/` | The thin binary entrypoint over the library (two crates, flat — [ADR-0017](docs/adr/0017-phase-1-workspace-topology-two-crates-flat.md)) |
 | `tests/interop/` | `run_openssh_client.sh` — the OpenSSH interop gate driver (ADR-0020) |
 | `.github/workflows/` | CI: `ci`, `audit`, `deny`, `interop` (OpenSSH gate), and the two workflow reviewers (`claude-code-review`, `opencode`); Codex runs as a GitHub App, not a workflow ([ADR-0037](docs/adr/0037-codex-reviews-via-chatgpt-github-app.md)) |

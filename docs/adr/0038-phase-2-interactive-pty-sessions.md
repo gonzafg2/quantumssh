@@ -1,7 +1,7 @@
 # ADR 0038: Phase 2 interactive sessions — PTY allocation through a safe re-exec helper, and `tokio::process` for every channel child
 
-- **Status:** Proposed
-- **Date:** — (set on acceptance; drafted 2026-10-12)
+- **Status:** Accepted
+- **Date:** 2026-10-12 (accepted with the implementing PR [#193](https://github.com/gonzafg2/quantumssh/pull/193); drafted 2026-10-12)
 - **Deciders:** Project lead
 - **Related:** Extends [ADR-0023](0023-phase-1-channel-layer-scope.md)
   (channel-layer scope) for Phase 2, and answers the `tokio::process`
@@ -20,6 +20,24 @@
   in [`docs/plans/phase2-scoping.md`](../plans/phase2-scoping.md) and the
   Phase-3 constraint in [`docs/plans/phase3-privsep-scoping.md`](../plans/phase3-privsep-scoping.md)
   (both non-authoritative).
+
+> **Post-acceptance errata** (per [ADR-0015](0015-permit-annotated-errata-in-adrs.md)):
+>
+> - **2026-10-12** ([PR #193](https://github.com/gonzafg2/quantumssh/pull/193)): §3 says the
+>   `authorized_keys` options field "is skipped unread" and that `no-pty`
+>   "works" as a per-key PTY off switch. Both were already false at
+>   acceptance: [ADR-0040](0040-refuse-authorized-keys-options-until-enforced.md)
+>   ([#184](https://github.com/gonzafg2/quantumssh/pull/184)) refuses
+>   every line with options at startup, so no loaded key carries options.
+>   §3 is corrected in place: the gate has nothing to refuse, the
+>   implementation adds no options check, and the off switch is
+>   withdrawn, as ADR-0040 records. The rule itself is unchanged. The
+>   same PR corrects three more statements that the implementation made
+>   false: Consequences said `Cargo.lock` is unchanged (it gains no
+>   package, but the `quantumssh` package's dependency list changes for
+>   the PTY tests), and that keys with options get no PTY (under
+>   ADR-0040 they get no session at all); Links said the PTY module
+>   does not exist yet.
 
 ## Context
 
@@ -220,14 +238,14 @@ it controls has an explicit bound:
 
 One gate decides whether a `pty-req` may proceed. In this ADR it refuses
 a PTY when the authorizing `authorized_keys` line carries an options
-field. Today the options field is skipped unread
-(`crates/quantumssh-core/src/auth.rs:14`, `auth.rs:166-167`,
-`auth.rs:198-203`). Skipping `no-pty` or `restrict` was harmless while no
-PTY could be allocated. Once PTYs exist, skipping them would silently
-grant what the operator denied. Refusing every key with options is too
-broad on purpose (a `from=`-only key loses its PTY), but it never
-grants a denied PTY. It also gives operators a per-key off switch
-today: `no-pty` works, as any option would. The per-key restriction work
+field. [ADR-0040](0040-refuse-authorized-keys-options-until-enforced.md)
+refuses every line with an options field at startup, so no loaded key
+carries options and the gate has nothing to refuse until the inputs below
+feed it. Skipping `no-pty` or `restrict` would silently grant what the
+operator denied. Refusing every key with options is too broad on purpose
+(a `from=`-only key loses its PTY), but it never grants a denied PTY.
+There is no per-key PTY off switch today: a `no-pty` line stops startup
+(ADR-0040). The per-key restriction work
 (threat model §6.3) and the certificate implementation of RFC-0008
 (where OpenSSH's input is the `permit-pty` extension) feed this same
 gate. Their mappings are their own decisions.
@@ -621,7 +639,9 @@ the process-spawning path.
 
 - Interactive sessions with zero first-party `unsafe`. The mechanism was
   exercised on Linux and macOS by a `forbid(unsafe_code)` probe.
-- No new crate, and `Cargo.lock` is unchanged.
+- No new crate: `Cargo.lock` gains no package. Only the `quantumssh`
+  package's dependency list changes, for the PTY tests'
+  dev-dependencies (§11).
 - The channel layer leaves the blocking pool. Nothing polls during a
   session (only the ≤ 1 s teardown grace peeks), and no thread is parked
   per child. A session's master closes when the session decides, not
@@ -653,7 +673,8 @@ the process-spawning path.
 - **No session isolation and no login records.** Sessions are not
   isolated from each other (the same UID owns every slave, §8.12), and
   `who`, `w` and `last` do not show QuantumSSH sessions.
-- **Keys with options get no PTY** until per-key restrictions land (§3).
+- **Keys with options get no session at all** until per-key restrictions
+  land: ADR-0040 refuses them at startup (§3).
 - **Behaviour change for `exec`.** Moving `exec` onto `tokio::process`
   touches tested Phase-1 code. The existing tests and the interop gate
   must stay green through the migration.
@@ -760,8 +781,9 @@ PTY work, which is this ADR. Scripts such as `ssh host <<EOF … EOF` send
   `crates/quantumssh-core/src/auth.rs` (§3 gate input),
   `crates/quantumssh/src/main.rs` (helper dispatch),
   `Cargo.toml` and `crates/quantumssh-core/Cargo.toml` (features),
-  `tests/interop/run_openssh_client.sh` (PTY case). A new PTY module in
-  `quantumssh-core` does not exist yet.
+  `tests/interop/run_openssh_client.sh` (PTY case). The PTY module is
+  `crates/quantumssh-core/src/pty.rs`, and the PTY integration tests are
+  `crates/quantumssh/tests/pty.rs`.
 - Related ADRs: [ADR-0023](0023-phase-1-channel-layer-scope.md) (extended),
   [ADR-0022](0022-phase-1-async-runtime-tokio.md) (`process` feature
   question answered), [ADR-0016](0016-phase-1-service-account-uid-model.md),

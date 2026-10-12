@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Interactive sessions: `pty-req`, `shell` and `window-change` on the
+  session channel. The shell runs on a pseudo-terminal whose slave is
+  owned by the service account with mode `0600`, as a session leader
+  with the slave as its controlling terminal, through a re-exec helper
+  mode of the `quantumssh` binary (no first-party `unsafe`). `shell`
+  without a PTY runs on pipes
+  ([ADR-0038](docs/adr/0038-phase-2-interactive-pty-sessions.md)).
+- The `exec.started` and `exec.finished` audit events carry two new
+  fields, `request_type` (`"exec"` or `"shell"`) and `pty` (a boolean).
+  A shell session is an `exec` event whose `command` is empty
+  (ADR-0038 §9).
+
 ### Changed
 
 - A remote command killed by a signal on RFC 4254 §6.10's list (`ABRT`,

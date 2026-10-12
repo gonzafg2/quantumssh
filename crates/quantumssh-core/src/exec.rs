@@ -1,14 +1,19 @@
-//! Single-command execution for the M5 channel layer (ADR-0023).
+//! Channel children (ADR-0023, ADR-0038): `exec` and `shell`, on pipes
+//! or on a pseudo-terminal.
 //!
-//! The command runs through a fixed shell — `/bin/sh -c "<command>"` —
-//! because SSH `exec` delivers one opaque string and the service
+//! Every child runs through a fixed shell — `/bin/sh -c "<command>"` for
+//! `exec`, `/bin/sh` as a login shell for `shell` — because the service
 //! account's login shell is `/usr/sbin/nologin` (ADR-0016). The child
 //! runs under the service-account UID with a **sanitised** environment
-//! (ADR-0016 Decision: allowlist `PATH HOME USER SHELL LANG LC_*`); no
-//! per-user resolution (threat model §8.12).
+//! (ADR-0016 Decision: allowlist `PATH HOME USER SHELL LANG LC_*`, plus
+//! `TERM` on a PTY); no per-user resolution (threat model §8.12). A PTY
+//! child is started through the binary's re-exec helper
+//! ([`crate::pty`]), which makes it a session leader with the slave as
+//! its controlling terminal.
 //!
-//! Concurrency (ADR-0038 §6): `tokio::process`. Each child gets three
-//! stdio pump tasks and one reap task, all spawned into the connection's
+//! Concurrency (ADR-0038 §6): `tokio::process`. Each child gets its pump
+//! tasks — three stdio pumps on pipes, one master pump on a PTY — and one
+//! reap task, all spawned into the connection's
 //! [`ChildScope`] — outside the connection future that a shutdown
 //! deadline cancels — and talking to the async channel driver only
 //! through Tokio channels. The reap task waits for the child's exit
@@ -21,15 +26,22 @@
 // the intent — nothing here is public API.
 #![allow(clippy::redundant_pub_crate)]
 
+use std::io;
+use std::os::fd::OwnedFd;
+use std::path::Path;
 use std::process::{ExitStatus, Stdio};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use rustix::process::{Pid, Signal};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
+use tokio::io::unix::AsyncFd;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt, Interest};
 use tokio::process::{Child, ChildStdin, Command};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::{AbortHandle, JoinSet};
+use tokio::time::Instant;
+
+use crate::pty::{self, PtyPair, Size};
 
 /// Outbound chunk size — matches the channel `MAX_PACKET` (ADR-0023) so
 /// a single chunk never exceeds one SSH packet's payload.
@@ -44,6 +56,11 @@ const STDIN_QUEUE: usize = 8;
 const REAP_POLL: Duration = Duration::from_millis(20);
 /// Conventional exit status when the wait itself fails.
 const EXIT_WAIT_FAILED: i32 = 127;
+/// The fixed shell every channel child runs through.
+const SHELL: &str = "/bin/sh";
+/// How long a PTY session's leader has to exit after the hang-up before
+/// its group is killed (ADR-0038 §7). An initial value, not a measurement.
+const PTY_HANGUP_GRACE: Duration = Duration::from_secs(1);
 /// RFC 4254 §6.10's signal names, without the `SIG` prefix. A death by
 /// any other signal is reported as `exit-status` 128 + n (ADR-0038 §8).
 const EXIT_SIGNALS: [(Signal, &str); 13] = [
@@ -79,13 +96,39 @@ impl ChildExit {
     }
 }
 
+/// What a channel starts (ADR-0038 §1).
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum Program<'a> {
+    /// `exec`: `/bin/sh -c <command>`.
+    Exec(&'a str),
+    /// `shell`: `/bin/sh` as a login shell, `argv[0]` `-sh`, so
+    /// `/etc/profile` and `~/.profile` run.
+    Shell,
+}
+
+impl Program<'_> {
+    const fn argv0(self) -> &'static str {
+        match self {
+            Self::Exec(_) => SHELL,
+            Self::Shell => "-sh",
+        }
+    }
+
+    fn push_args(self, cmd: &mut Command) {
+        if let Self::Exec(command) = self {
+            cmd.arg("-c").arg(command);
+        }
+    }
+}
+
 /// A message from the child's tasks to the async driver. The reap task
 /// sends [`ChildChunk::Exited`] **before** dropping its sender, so it
 /// always arrives before `out_rx` closes (`recv` returns `None`) — the
 /// driver can drain all output and still observe the exit, in any
 /// scheduling order.
 pub(crate) enum ChildChunk {
-    /// Bytes from the child's stdout (frame as `CHANNEL_DATA`).
+    /// Bytes from the child's stdout, or from a PTY's single merged
+    /// stream (frame as `CHANNEL_DATA`).
     Stdout(Vec<u8>),
     /// Bytes from the child's stderr (frame as `CHANNEL_EXTENDED_DATA`).
     Stderr(Vec<u8>),
@@ -103,17 +146,25 @@ pub(crate) struct ChildIo {
     /// Bytes the child has actually read from stdin — drives inbound
     /// window replenishment (ADR-0023).
     pub consumed_rx: mpsc::UnboundedReceiver<u32>,
-    /// Hands stdin chunks to the stdin pump; `None` once stdin is closed
-    /// (client `CHANNEL_EOF` or early `CHANNEL_CLOSE`), which sends the
-    /// child EOF on its stdin.
+    /// Hands stdin chunks to the stdin pump, or to a PTY's master pump;
+    /// `None` once input is closed (client `CHANNEL_EOF` or early
+    /// `CHANNEL_CLOSE`). On pipes that sends the child EOF; a terminal has
+    /// no half-close, so a PTY's master stays open for output.
     stdin_tx: Option<mpsc::Sender<Vec<u8>>>,
     /// The kill request to the reap task: sending it or dropping it
     /// requests the kill. The reap task kills through its **owned
     /// `Child` handle**, while the child is unreaped — never by a PID the
     /// OS may have reused.
     kill_tx: Option<oneshot::Sender<()>>,
-    /// The stdio pumps: stdout, stderr and stdin, in that order.
-    pumps: [AbortHandle; 3],
+    /// The tasks that forward the child's output: the stdout and stderr
+    /// pumps, or a PTY's master pump, which also writes its input.
+    output_pumps: Vec<AbortHandle>,
+    /// A pipe session's stdin pump.
+    stdin_pump: Option<AbortHandle>,
+    /// A PTY session's master, shared with its pump, for `window-change`.
+    /// Once both copies are gone the master is closed, which hangs up the
+    /// session (ADR-0038 §7).
+    master: Option<Arc<AsyncFd<OwnedFd>>>,
 }
 
 impl Drop for ChildIo {
@@ -124,7 +175,7 @@ impl Drop for ChildIo {
     /// a process outside the child's group could keep a pipe open and a
     /// pump blocked on it.
     fn drop(&mut self) {
-        for pump in &self.pumps {
+        for pump in self.output_pumps.iter().chain(&self.stdin_pump) {
             pump.abort();
         }
     }
@@ -143,11 +194,26 @@ impl ChildIo {
     /// (ADR-0023): the client has closed, so the output has no sink, and
     /// a process the leader left behind could hold the pipes open
     /// indefinitely (#190). With the output pumps aborted, the output
-    /// channel closes once the reap task has reported the exit.
-    pub(crate) fn discard_output(&self) {
-        for pump in &self.pumps[..2] {
+    /// channel closes once the reap task has reported the exit. A PTY's
+    /// master is released here too, which hangs up the session.
+    pub(crate) fn discard_output(&mut self) {
+        for pump in &self.output_pumps {
             pump.abort();
         }
+        self.master = None;
+    }
+
+    /// Applies a `window-change` to a PTY session's master.
+    ///
+    /// # Errors
+    ///
+    /// The ioctl's error, or an error if the session has no PTY.
+    pub(crate) fn resize(&self, size: Size) -> io::Result<()> {
+        let master = self
+            .master
+            .as_ref()
+            .ok_or_else(|| io::Error::other("no pty"))?;
+        pty::resize(master.get_ref(), size)
     }
 
     /// Closes the child's stdin (drops the sender → the stdin pump
@@ -185,9 +251,24 @@ pub(crate) struct ChildScope {
     tasks: Mutex<JoinSet<()>>,
     /// PIDs of the connection's unreaped children, running or zombie.
     live: Arc<Mutex<Vec<Pid>>>,
+    /// The executable whose re-exec helper starts PTY children
+    /// (ADR-0038 §5); `None` refuses `pty-req`.
+    pty_helper: Option<Arc<Path>>,
 }
 
 impl ChildScope {
+    pub(crate) fn new(pty_helper: Option<Arc<Path>>) -> Self {
+        Self {
+            tasks: Mutex::default(),
+            live: Arc::default(),
+            pty_helper,
+        }
+    }
+
+    pub(crate) fn pty_helper(&self) -> Option<&Path> {
+        self.pty_helper.as_deref()
+    }
+
     fn spawn<F>(&self, task: F) -> AbortHandle
     where
         F: Future<Output = ()> + Send + 'static,
@@ -234,24 +315,61 @@ struct Reaper {
     pid: Pid,
     /// The scope's registry.
     live: Arc<Mutex<Vec<Pid>>>,
+    /// `Some` for a PTY session: a kill request first hangs the session
+    /// up and gives the leader this long to exit (ADR-0038 §7).
+    hangup_grace: Option<Duration>,
+    /// Told when the leader has been reaped: a PTY's master pump then
+    /// forwards what the master holds and closes it.
+    on_exit: Option<oneshot::Sender<()>>,
 }
 
 impl Reaper {
-    fn register(child: Child, pid: Pid, live: Arc<Mutex<Vec<Pid>>>) -> Self {
-        lock(&live).push(pid);
-        Self {
+    /// Registers a just-spawned child in the scope.
+    ///
+    /// # Errors
+    ///
+    /// An error if the child has no PID, which a child spawned just now
+    /// and not yet reaped always has; it is then killed.
+    fn register(
+        mut child: Child,
+        scope: &ChildScope,
+        hangup_grace: Option<Duration>,
+    ) -> io::Result<Self> {
+        let Some(pid) = child
+            .id()
+            .and_then(|id| i32::try_from(id).ok())
+            .and_then(Pid::from_raw)
+        else {
+            let _ = child.start_kill();
+            return Err(io::Error::other("spawned child has no pid"));
+        };
+        lock(&scope.live).push(pid);
+        Ok(Self {
             child: Some(child),
             pid,
-            live,
-        }
+            live: Arc::clone(&scope.live),
+            hangup_grace,
+            on_exit: None,
+        })
     }
 
     /// Waits for the child's exit, applying a kill request on the way,
     /// then reaps it.
-    async fn run(mut self, mut kill_rx: oneshot::Receiver<()>) -> ChildExit {
+    ///
+    /// `session_failed` is the PTY master pump's report of a master read
+    /// or write failure, which tears the session down like a kill request
+    /// (ADR-0038 §2); a pump that ends without sending it reports nothing.
+    async fn run(
+        mut self,
+        mut kill_rx: oneshot::Receiver<()>,
+        mut session_failed: oneshot::Receiver<()>,
+    ) -> ChildExit {
         let exit = wait_exit(self.pid);
         tokio::pin!(exit);
         let mut kill_pending = true;
+        let mut failure_pending = true;
+        // The end of a PTY session's hang-up grace, once one has started.
+        let mut grace_end: Option<Instant> = None;
         loop {
             // Biased towards the kill: when the request and the exit are
             // both ready, the group is signalled while the leader is still
@@ -262,17 +380,59 @@ impl Reaper {
                 // A sent request and a dropped sender both mean kill.
                 _ = &mut kill_rx, if kill_pending => {
                     kill_pending = false;
+                    self.begin_kill(&mut grace_end);
+                }
+                failed = &mut session_failed, if failure_pending => {
+                    failure_pending = false;
+                    if failed.is_ok() {
+                        self.begin_kill(&mut grace_end);
+                    }
+                }
+                () = tokio::time::sleep_until(grace_end.unwrap_or_else(Instant::now)),
+                    if grace_end.is_some() =>
+                {
+                    grace_end = None;
                     if let Some(child) = self.child.as_mut() {
                         kill_group(child, self.pid);
                     }
                 }
                 () = &mut exit => {
+                    // A hang-up in progress ends with the group kill even
+                    // when the leader exits within the grace (ADR-0038 §7);
+                    // the leader is still unreaped, so the group ID is safe.
+                    if grace_end.take().is_some()
+                        && let Some(child) = self.child.as_mut()
+                    {
+                        kill_group(child, self.pid);
+                    }
                     if let Some(code) = self.try_reap() {
+                        if let Some(tx) = self.on_exit.take() {
+                            let _ = tx.send(());
+                        }
                         return code;
                     }
                     exit.set(wait_exit(self.pid));
                 }
             }
+        }
+    }
+
+    /// Starts the kill of an unreaped child: the group's `SIGKILL` on pipes;
+    /// on a PTY, a terminal hang-up — shells forward it to their jobs and
+    /// editors save recovery files — and the grace before the group kill
+    /// (ADR-0038 §7). Only the first request starts anything.
+    fn begin_kill(&mut self, grace_end: &mut Option<Instant>) {
+        let Some(child) = self.child.as_mut() else {
+            return;
+        };
+        match self.hangup_grace {
+            Some(grace) if grace_end.is_none() => {
+                // The PID is still reserved, as the leader is unreaped.
+                let _ = rustix::process::kill_process(self.pid, Signal::HUP);
+                *grace_end = Some(Instant::now() + grace);
+            }
+            Some(_) => {}
+            None => kill_group(child, self.pid),
         }
     }
 
@@ -362,16 +522,17 @@ pub(crate) fn executing_uid() -> u32 {
     rustix::process::getuid().as_raw()
 }
 
-/// Spawns `/bin/sh -c "<command>"` with a sanitised environment and
-/// wires its stdio to the returned channels. The pumps and the reap task
-/// run in `scope` (ADR-0038 §6).
+/// Spawns the program on pipes with a sanitised environment and wires its
+/// stdio to the returned channels. The pumps and the reap task run in
+/// `scope` (ADR-0038 §6).
 ///
 /// # Errors
 ///
 /// [`std::io::Error`] if the child cannot be spawned.
-pub(crate) fn spawn(command: &str, scope: &ChildScope) -> std::io::Result<ChildIo> {
-    let mut cmd = Command::new("/bin/sh");
-    cmd.arg("-c").arg(command);
+pub(crate) fn spawn(program: Program<'_>, scope: &ChildScope) -> io::Result<ChildIo> {
+    let mut cmd = Command::new(SHELL);
+    cmd.arg0(program.argv0());
+    program.push_args(&mut cmd);
     sanitise_env(&mut cmd);
     cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -387,23 +548,14 @@ pub(crate) fn spawn(command: &str, scope: &ChildScope) -> std::io::Result<ChildI
     let child_stdin = child.stdin.take().expect("stdin piped");
     let child_stdout = child.stdout.take().expect("stdout piped");
     let child_stderr = child.stderr.take().expect("stderr piped");
-    // A child spawned just now is unreaped, so it has a PID.
-    let Some(pid) = child
-        .id()
-        .and_then(|id| i32::try_from(id).ok())
-        .and_then(Pid::from_raw)
-    else {
-        let _ = child.start_kill();
-        return Err(std::io::Error::other("spawned child has no pid"));
-    };
-    let reaper = Reaper::register(child, pid, Arc::clone(&scope.live));
+    let reaper = Reaper::register(child, scope, None)?;
 
     let (out_tx, out_rx) = mpsc::channel::<ChildChunk>(OUT_QUEUE);
     let (consumed_tx, consumed_rx) = mpsc::unbounded_channel::<u32>();
     let (stdin_tx, stdin_rx) = mpsc::channel::<Vec<u8>>(STDIN_QUEUE);
     let (kill_tx, kill_rx) = oneshot::channel();
 
-    let pumps = [
+    let output_pumps = vec![
         scope.spawn(pump_output(
             child_stdout,
             out_tx.clone(),
@@ -414,22 +566,223 @@ pub(crate) fn spawn(command: &str, scope: &ChildScope) -> std::io::Result<ChildI
             out_tx.clone(),
             ChildChunk::Stderr,
         )),
-        scope.spawn(pump_stdin(child_stdin, stdin_rx, consumed_tx)),
     ];
-    // The status goes out on the output channel before the sender drops,
-    // so it precedes the channel's close.
-    scope.spawn(async move {
-        let exit = reaper.run(kill_rx).await;
-        let _ = out_tx.send(ChildChunk::Exited(exit)).await;
-    });
+    let stdin_pump = scope.spawn(pump_stdin(child_stdin, stdin_rx, consumed_tx));
+    // Pipes have no master to fail: the sender is dropped unsent.
+    let (_, failed_rx) = oneshot::channel();
+    spawn_reap(scope, reaper, kill_rx, failed_rx, out_tx);
 
     Ok(ChildIo {
         out_rx,
         consumed_rx,
         stdin_tx: Some(stdin_tx),
         kill_tx: Some(kill_tx),
-        pumps,
+        output_pumps,
+        stdin_pump: Some(stdin_pump),
+        master: None,
     })
+}
+
+/// Spawns the program on the PTY through the binary's re-exec helper
+/// (ADR-0038 §5), with the sanitised environment plus `TERM` when the
+/// client set one. The master pump and the reap task run in `scope`.
+///
+/// # Errors
+///
+/// [`std::io::Error`] if the master cannot be registered or the helper
+/// cannot be spawned.
+pub(crate) fn spawn_pty(
+    program: Program<'_>,
+    pair: PtyPair,
+    term: &str,
+    scope: &ChildScope,
+) -> io::Result<ChildIo> {
+    let helper = scope
+        .pty_helper()
+        .ok_or_else(|| io::Error::other("no pty helper"))?;
+    let PtyPair { master, slave } = pair;
+    let master = Arc::new(AsyncFd::with_interest(
+        master,
+        Interest::READABLE | Interest::WRITABLE,
+    )?);
+    let mut cmd = Command::new(helper);
+    cmd.arg(pty::HELPER_ARG).arg(SHELL).arg(program.argv0());
+    program.push_args(&mut cmd);
+    sanitise_env(&mut cmd);
+    if !term.is_empty() {
+        cmd.env("TERM", term);
+    }
+    // The helper's stdio are copies of the slave. No `process_group`: a
+    // process-group leader cannot `setsid`.
+    cmd.stdin(Stdio::from(slave.try_clone()?))
+        .stdout(Stdio::from(slave.try_clone()?))
+        .stderr(Stdio::from(slave));
+    let spawned = cmd.spawn();
+    // Close the server's copies of the slave, the builder's included, or
+    // the master never sees end-of-session (ADR-0038 §5).
+    drop(cmd);
+    let mut reaper = Reaper::register(spawned?, scope, Some(PTY_HANGUP_GRACE))?;
+    let (exited_tx, exited_rx) = oneshot::channel();
+    reaper.on_exit = Some(exited_tx);
+
+    let (out_tx, out_rx) = mpsc::channel::<ChildChunk>(OUT_QUEUE);
+    let (consumed_tx, consumed_rx) = mpsc::unbounded_channel::<u32>();
+    let (stdin_tx, stdin_rx) = mpsc::channel::<Vec<u8>>(STDIN_QUEUE);
+    let (kill_tx, kill_rx) = oneshot::channel();
+    let (failed_tx, failed_rx) = oneshot::channel();
+    let output_pumps = vec![scope.spawn(pump_pty(
+        Arc::clone(&master),
+        out_tx.clone(),
+        stdin_rx,
+        consumed_tx,
+        exited_rx,
+        failed_tx,
+    ))];
+    spawn_reap(scope, reaper, kill_rx, failed_rx, out_tx);
+
+    Ok(ChildIo {
+        out_rx,
+        consumed_rx,
+        stdin_tx: Some(stdin_tx),
+        kill_tx: Some(kill_tx),
+        output_pumps,
+        stdin_pump: None,
+        master: Some(master),
+    })
+}
+
+/// Runs the reap task in `scope`. The status goes out on the output
+/// channel before the sender drops, so it precedes the channel's close.
+fn spawn_reap(
+    scope: &ChildScope,
+    reaper: Reaper,
+    kill_rx: oneshot::Receiver<()>,
+    failed_rx: oneshot::Receiver<()>,
+    out_tx: mpsc::Sender<ChildChunk>,
+) {
+    scope.spawn(async move {
+        let exit = reaper.run(kill_rx, failed_rx).await;
+        let _ = out_tx.send(ChildChunk::Exited(exit)).await;
+    });
+}
+
+/// Drives a PTY session's master (ADR-0038 §6, §7). Output is read only
+/// while the queue has room, so a closed client window backpressures the
+/// session's writers. Input is written as the master accepts it, and each
+/// accepted byte is reported for window credit. Once the leader has been
+/// reaped, the pump forwards what the master already holds and ends,
+/// without waiting for other processes that still hold the slave. A master
+/// read or write that fails other than by would-block or end of session is
+/// reported on `failed`, which tears the session down (ADR-0038 §2).
+async fn pump_pty(
+    master: Arc<AsyncFd<OwnedFd>>,
+    out_tx: mpsc::Sender<ChildChunk>,
+    mut stdin_rx: mpsc::Receiver<Vec<u8>>,
+    consumed: mpsc::UnboundedSender<u32>,
+    mut leader_exited: oneshot::Receiver<()>,
+    failed: oneshot::Sender<()>,
+) {
+    let mut buf = vec![0u8; CHUNK];
+    let mut permit = None;
+    // The input chunk being written, and how much of it the master took.
+    let mut input: Option<(Vec<u8>, usize)> = None;
+    let mut input_open = true;
+    let mut exit_pending = true;
+    loop {
+        tokio::select! {
+            exited = &mut leader_exited, if exit_pending => {
+                exit_pending = false;
+                if exited.is_ok() {
+                    drop(permit.take());
+                    drain_master(master.get_ref(), &out_tx, &mut buf).await;
+                    return;
+                }
+            }
+            reserved = out_tx.reserve(), if permit.is_none() => match reserved {
+                Ok(slot) => permit = Some(slot),
+                Err(_) => return,
+            },
+            ready = master.readable(), if permit.is_some() => {
+                let Ok(mut guard) = ready else { return };
+                match guard.try_io(|fd| rustix::io::read(fd.get_ref(), &mut buf).map_err(io::Error::from)) {
+                    Ok(Ok(n)) if n > 0 => {
+                        if let Some(slot) = permit.take() {
+                            slot.send(ChildChunk::Stdout(buf[..n].to_vec()));
+                        }
+                    }
+                    // End of session: a 0-byte read on macOS.
+                    Ok(Ok(_)) => return,
+                    Ok(Err(e)) => {
+                        if !is_end_of_session(&e) {
+                            let _ = failed.send(());
+                        }
+                        return;
+                    }
+                    Err(_would_block) => {}
+                }
+            }
+            chunk = stdin_rx.recv(), if input_open && input.is_none() => match chunk {
+                Some(chunk) => input = Some((chunk, 0)),
+                None => input_open = false,
+            },
+            ready = master.writable(), if input.is_some() => {
+                let Ok(mut guard) = ready else { return };
+                if let Some((chunk, written)) = input.as_mut() {
+                    match guard.try_io(|fd| {
+                        rustix::io::write(fd.get_ref(), &chunk[*written..]).map_err(io::Error::from)
+                    }) {
+                        Ok(Ok(n)) => {
+                            *written += n;
+                            if u32::try_from(n).map_or(true, |n| consumed.send(n).is_err()) {
+                                return;
+                            }
+                            if *written == chunk.len() {
+                                input = None;
+                            }
+                        }
+                        Ok(Err(e)) => {
+                            if !is_end_of_session(&e) {
+                                let _ = failed.send(());
+                            }
+                            return;
+                        }
+                        Err(_would_block) => {}
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// `EIO` on the master: no process holds the slave any more (Linux's end
+/// of session).
+fn is_end_of_session(error: &io::Error) -> bool {
+    error.raw_os_error() == Some(rustix::io::Errno::IO.raw_os_error())
+}
+
+/// Forwards what the master already holds and no more (ADR-0038 §7): the
+/// byte count is read once, with `FIONREAD`, so a process left writing to
+/// the terminal cannot extend the drain while a send waits for the client.
+/// Ends early at would-block, end of session or failure.
+async fn drain_master(master: &OwnedFd, out_tx: &mpsc::Sender<ChildChunk>, buf: &mut [u8]) {
+    let Ok(mut remaining) = rustix::io::ioctl_fionread(master) else {
+        return;
+    };
+    while remaining > 0 {
+        let want = usize::try_from(remaining).map_or(buf.len(), |r| r.min(buf.len()));
+        let Ok(n) = rustix::io::read(master, &mut buf[..want]) else {
+            return;
+        };
+        if n == 0
+            || out_tx
+                .send(ChildChunk::Stdout(buf[..n].to_vec()))
+                .await
+                .is_err()
+        {
+            return;
+        }
+        remaining = remaining.saturating_sub(n as u64);
+    }
 }
 
 /// Forwards one output pipe in chunks of at most [`CHUNK`]. `send` waits
@@ -540,7 +893,7 @@ mod tests {
     #[tokio::test]
     async fn reaped_child_leaves_the_registry() {
         let scope = ChildScope::default();
-        let mut io = spawn("exit 3", &scope).expect("spawn");
+        let mut io = spawn(Program::Exec("exit 3"), &scope).expect("spawn");
         assert_eq!(lock(&scope.live).len(), 1);
         assert_eq!(exit_of_child(&mut io).await, ChildExit::code(3));
         // Deregistered in the reap's critical section, before the status
@@ -553,7 +906,7 @@ mod tests {
     #[tokio::test]
     async fn a_listed_signal_is_named_and_keeps_128_plus_n() {
         let scope = ChildScope::default();
-        let mut io = spawn("kill -TERM $$", &scope).expect("spawn");
+        let mut io = spawn(Program::Exec("kill -TERM $$"), &scope).expect("spawn");
         assert_eq!(
             exit_of_child(&mut io).await,
             ChildExit {
@@ -570,7 +923,7 @@ mod tests {
         // SIGVTALRM terminates without a core dump and is not on
         // RFC 4254 §6.10's list.
         let scope = ChildScope::default();
-        let mut io = spawn("kill -VTALRM $$", &scope).expect("spawn");
+        let mut io = spawn(Program::Exec("kill -VTALRM $$"), &scope).expect("spawn");
         assert_eq!(
             exit_of_child(&mut io).await,
             ChildExit::code(128 + Signal::VTALARM.as_raw())
@@ -583,7 +936,7 @@ mod tests {
     async fn dropping_the_handle_kills_the_whole_group() {
         let scope = ChildScope::default();
         // The background job is a second member of the child's group.
-        let mut io = spawn("sleep 30 & echo $!; wait", &scope).expect("spawn");
+        let mut io = spawn(Program::Exec("sleep 30 & echo $!; wait"), &scope).expect("spawn");
         let job = loop {
             match io.out_rx.recv().await {
                 Some(ChildChunk::Stdout(b)) => {
@@ -616,7 +969,7 @@ mod tests {
             .expect("runtime");
         let (scope, io, pid) = runtime.block_on(async {
             let scope = ChildScope::default();
-            let io = spawn("sleep 30", &scope).expect("spawn");
+            let io = spawn(Program::Exec("sleep 30"), &scope).expect("spawn");
             let pid = lock(&scope.live)[0];
             (scope, io, pid)
         });
@@ -640,7 +993,7 @@ mod tests {
         // after the leader exits.
         let (scope, mut io, pid) = runtime.block_on(async {
             let scope = ChildScope::default();
-            let io = spawn("sleep 30 & exit 0", &scope).expect("spawn");
+            let io = spawn(Program::Exec("sleep 30 & exit 0"), &scope).expect("spawn");
             let pid = lock(&scope.live)[0];
             (scope, io, pid)
         });
@@ -659,5 +1012,39 @@ mod tests {
             "the kill must reach the background job"
         );
         drop(io);
+    }
+
+    #[tokio::test]
+    async fn the_post_exit_drain_takes_only_what_the_master_holds() {
+        // ADR-0038 §7: a writer that keeps the terminal full while a slow
+        // client holds each send cannot extend the drain.
+        let pair = pty::allocate(&pty::Modes::parse(&[]).expect("modes"), Size::default())
+            .expect("allocate");
+        let slave = pair.slave;
+        let writer = std::thread::spawn(move || {
+            let chunk = [b'y'; 1024];
+            // Blocks while the terminal is full; ends once the master is
+            // closed and the write fails.
+            while rustix::io::write(&slave, &chunk).is_ok() {}
+        });
+        // Let the terminal fill.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let (tx, mut rx) = mpsc::channel(1);
+        let consumer = tokio::spawn(async move {
+            while rx.recv().await.is_some() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        });
+        let mut buf = vec![0u8; CHUNK];
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            drain_master(&pair.master, &tx, &mut buf),
+        )
+        .await
+        .expect("the drain ends at the snapshot taken when it started");
+        drop(tx);
+        drop(pair.master);
+        consumer.await.expect("consumer");
+        writer.join().expect("writer");
     }
 }
