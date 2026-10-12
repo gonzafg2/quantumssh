@@ -1,9 +1,9 @@
 # ADR 0039: Pin the Rust toolchain to an exact release, named only in `rust-toolchain.toml`
 
-- **Status:** Proposed
-- **Date:** — (set on acceptance; drafted 2026-10-12)
+- **Status:** Accepted
+- **Date:** 2026-10-12 (accepted with the implementing PR [#181](https://github.com/gonzafg2/quantumssh/pull/181); drafted 2026-10-12)
 - **Deciders:** Project lead
-- **Related:** Supersedes the `channel = "stable"` part of the fourth bullet of [ADR-0010](0010-toolchain-pinning-resolver-3-edition-2024-msrv-1-92.md) §Decision; the `components` list in that bullet and every other bullet of ADR-0010 (resolver 3, edition 2024, MSRV 1.92, `clippy.toml` `msrv`) stand. Applies the pinning discipline of [ADR-0020](0020-phase-1-ci-openssh-interop-gate.md) and [ADR-0034](0034-openssh-interop-client-pinned-to-image-build-snapshot.md) (a floating input that can turn an unrelated PR red is pinned and moved by a reviewed bump). The `build (…)` jobs it stabilises are required checks under [ADR-0031](0031-required-status-checks-commit-lint-and-openssh-interop.md). Implementation: `rust-toolchain.toml`, `.github/workflows/{ci,interop,audit}.yml` and `.github/dependabot.yml`, in the implementing PR stacked on this one.
+- **Related:** Supersedes the `channel = "stable"` part of the fourth bullet of [ADR-0010](0010-toolchain-pinning-resolver-3-edition-2024-msrv-1-92.md) §Decision; the `components` list in that bullet and every other bullet of ADR-0010 (resolver 3, edition 2024, MSRV 1.92, `clippy.toml` `msrv`) stand. Applies the pinning discipline of [ADR-0020](0020-phase-1-ci-openssh-interop-gate.md) and [ADR-0034](0034-openssh-interop-client-pinned-to-image-build-snapshot.md) (a floating input that can turn an unrelated PR red is pinned and moved by a reviewed bump). The `build (…)` jobs it stabilises are required checks under [ADR-0031](0031-required-status-checks-commit-lint-and-openssh-interop.md). Implementation: `rust-toolchain.toml`, `.github/workflows/{ci,interop,audit}.yml` and `.github/dependabot.yml`, in [#181](https://github.com/gonzafg2/quantumssh/pull/181).
 
 ## Context
 
@@ -56,11 +56,12 @@ Facts that shape the design (checked on 2026-10-12):
   commit `7e38f4b` its `toolchain` input is required (`action.yml`
   lines 9–11), and its only inputs are `toolchain`, `targets`/`target`
   and `components` (lines 8–20). Its README pairs an explicit
-  `toolchain` input with a SHA or `@master` ref (lines 43–45), and
-  requires a pinned SHA to be "within the history of the master branch"
-  (lines 102–108). The version refs (`@1.99.0`) are master plus one
-  commit, outside that history, so they cannot be SHA-pinned
-  the way this repository pins every action.
+  `toolchain` input with the `@master` revision (lines 43–45), and
+  requires a full-SHA pin to be "within the history of the master
+  branch" (lines 102–108); a SHA from master's history, as this
+  repository pins, is that revision frozen. The version refs (`@1.99.0`)
+  are master plus one commit, outside that history, so they cannot be
+  SHA-pinned the way this repository pins every action.
 - **Dependabot can bump the file, but is not configured to.** Dependabot
   has had a `rust-toolchain` package ecosystem since 2025-08-19. It
   updates `rust-toolchain.toml` versioned channels such as `1.xx.yy`,
@@ -189,8 +190,8 @@ The Dependabot PR is the reminder; merging it stays a reviewed decision.
 - Implementation: `rust-toolchain.toml`; the "Read pinned toolchain"
   step and the `dtolnay/rust-toolchain` input in
   `.github/workflows/ci.yml`, `interop.yml` and `audit.yml`; the
-  `rust-toolchain` entry in `.github/dependabot.yml` (implementing PR
-  stacked on this one).
+  `rust-toolchain` entry in `.github/dependabot.yml`
+  ([#181](https://github.com/gonzafg2/quantumssh/pull/181)).
 - Incident: CI runs 37271047382 (first failure, 2026-10-05) and
   38111812201 (last, 2026-10-11); fix [#173](https://github.com/gonzafg2/quantumssh/pull/173).
 - Upstream: [`dtolnay/rust-toolchain`](https://github.com/dtolnay/rust-toolchain/tree/7e38f4b43b4db5c8dd498af069a4f6196df1d067)
