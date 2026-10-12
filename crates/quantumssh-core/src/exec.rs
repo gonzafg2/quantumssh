@@ -42,9 +42,42 @@ const STDIN_QUEUE: usize = 8;
 /// Exit-wait interval when no `SIGCHLD` stream can be registered — the
 /// fallback's upper bound on exit-detection latency.
 const REAP_POLL: Duration = Duration::from_millis(20);
-/// Conventional exit status when the wait itself fails or the child is
-/// signalled (`exit-signal` detail is deferred to Phase 2 — ADR-0023).
+/// Conventional exit status when the wait itself fails.
 const EXIT_WAIT_FAILED: i32 = 127;
+/// RFC 4254 §6.10's signal names, without the `SIG` prefix. A death by
+/// any other signal is reported as `exit-status` 128 + n (ADR-0038 §8).
+const EXIT_SIGNALS: [(Signal, &str); 13] = [
+    (Signal::ABORT, "ABRT"),
+    (Signal::ALARM, "ALRM"),
+    (Signal::FPE, "FPE"),
+    (Signal::HUP, "HUP"),
+    (Signal::ILL, "ILL"),
+    (Signal::INT, "INT"),
+    (Signal::KILL, "KILL"),
+    (Signal::PIPE, "PIPE"),
+    (Signal::QUIT, "QUIT"),
+    (Signal::SEGV, "SEGV"),
+    (Signal::TERM, "TERM"),
+    (Signal::USR1, "USR1"),
+    (Signal::USR2, "USR2"),
+];
+
+/// How the child ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ChildExit {
+    /// The exit code, or `128 + signo` for a death by a signal: the
+    /// `exit-status` value and the audit `exit_status` (ADR-0024).
+    pub code: i32,
+    /// For a death by a signal on RFC 4254 §6.10's list: its name and
+    /// whether a core was dumped, sent as `exit-signal` (ADR-0038 §8).
+    pub signal: Option<(&'static str, bool)>,
+}
+
+impl ChildExit {
+    const fn code(code: i32) -> Self {
+        Self { code, signal: None }
+    }
+}
 
 /// A message from the child's tasks to the async driver. The reap task
 /// sends [`ChildChunk::Exited`] **before** dropping its sender, so it
@@ -56,8 +89,8 @@ pub(crate) enum ChildChunk {
     Stdout(Vec<u8>),
     /// Bytes from the child's stderr (frame as `CHANNEL_EXTENDED_DATA`).
     Stderr(Vec<u8>),
-    /// The child exited with this status code.
-    Exited(i32),
+    /// The child exited.
+    Exited(ChildExit),
 }
 
 /// The async-side handles to a spawned child. The driver `select!`s over
@@ -214,8 +247,8 @@ impl Reaper {
     }
 
     /// Waits for the child's exit, applying a kill request on the way,
-    /// then reaps it. Returns the exit code.
-    async fn run(mut self, mut kill_rx: oneshot::Receiver<()>) -> i32 {
+    /// then reaps it.
+    async fn run(mut self, mut kill_rx: oneshot::Receiver<()>) -> ChildExit {
         let exit = wait_exit(self.pid);
         tokio::pin!(exit);
         let mut kill_pending = true;
@@ -246,12 +279,12 @@ impl Reaper {
     /// Reaps the child and deregisters it in one critical section, so the
     /// scope's kill guard never signals a reaped PID. `None` if the child
     /// has not exited yet.
-    fn try_reap(&mut self) -> Option<i32> {
+    fn try_reap(&mut self) -> Option<ChildExit> {
         let mut live = lock(&self.live);
         let code = match self.child.as_mut()?.try_wait() {
             Ok(None) => return None,
-            Ok(Some(status)) => code_of(status),
-            Err(_) => EXIT_WAIT_FAILED,
+            Ok(Some(status)) => exit_of(status),
+            Err(_) => ChildExit::code(EXIT_WAIT_FAILED),
         };
         self.child = None;
         live.retain(|&p| p != self.pid);
@@ -386,8 +419,8 @@ pub(crate) fn spawn(command: &str, scope: &ChildScope) -> std::io::Result<ChildI
     // The status goes out on the output channel before the sender drops,
     // so it precedes the channel's close.
     scope.spawn(async move {
-        let code = reaper.run(kill_rx).await;
-        let _ = out_tx.send(ChildChunk::Exited(code)).await;
+        let exit = reaper.run(kill_rx).await;
+        let _ = out_tx.send(ChildChunk::Exited(exit)).await;
     });
 
     Ok(ChildIo {
@@ -453,22 +486,28 @@ fn sanitise_env(cmd: &mut Command) {
     }
 }
 
-/// Maps an exit status to a conventional code: the code if the child
-/// exited normally, or `128 + signo` if a signal killed it (`exit-signal`
-/// detail is deferred to Phase 2 — ADR-0023).
-fn code_of(status: ExitStatus) -> i32 {
+/// Maps an exit status: the code if the child exited normally;
+/// `128 + signo` if a signal killed it, with the signal's name when it is
+/// on RFC 4254 §6.10's list (ADR-0038 §8).
+fn exit_of(status: ExitStatus) -> ChildExit {
+    use std::os::unix::process::ExitStatusExt;
     if let Some(code) = status.code() {
-        return code;
+        return ChildExit::code(code);
     }
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::ExitStatusExt;
-        status.signal().map_or(EXIT_WAIT_FAILED, |sig| 128 + sig)
-    }
-    #[cfg(not(unix))]
-    {
-        EXIT_WAIT_FAILED
-    }
+    status
+        .signal()
+        .map_or(ChildExit::code(EXIT_WAIT_FAILED), |signo| ChildExit {
+            code: 128 + signo,
+            signal: signal_name(signo).map(|name| (name, status.core_dumped())),
+        })
+}
+
+/// The RFC 4254 §6.10 name of `signo`, if it is on the list.
+fn signal_name(signo: i32) -> Option<&'static str> {
+    EXIT_SIGNALS
+        .iter()
+        .find(|(signal, _)| signal.as_raw() == signo)
+        .map(|&(_, name)| name)
 }
 
 #[cfg(test)]
@@ -476,11 +515,11 @@ mod tests {
     use super::*;
     use std::time::Instant;
 
-    /// Reads the child's output until its exit status.
-    async fn exit_code(io: &mut ChildIo) -> i32 {
+    /// Reads the child's output until its exit.
+    async fn exit_of_child(io: &mut ChildIo) -> ChildExit {
         while let Some(chunk) = io.out_rx.recv().await {
-            if let ChildChunk::Exited(code) = chunk {
-                return code;
+            if let ChildChunk::Exited(exit) = chunk {
+                return exit;
             }
         }
         panic!("output closed without an exit status");
@@ -503,10 +542,39 @@ mod tests {
         let scope = ChildScope::default();
         let mut io = spawn("exit 3", &scope).expect("spawn");
         assert_eq!(lock(&scope.live).len(), 1);
-        assert_eq!(exit_code(&mut io).await, 3);
+        assert_eq!(exit_of_child(&mut io).await, ChildExit::code(3));
         // Deregistered in the reap's critical section, before the status
         // was sent.
         assert!(lock(&scope.live).is_empty());
+        drop(io);
+        scope.join().await;
+    }
+
+    #[tokio::test]
+    async fn a_listed_signal_is_named_and_keeps_128_plus_n() {
+        let scope = ChildScope::default();
+        let mut io = spawn("kill -TERM $$", &scope).expect("spawn");
+        assert_eq!(
+            exit_of_child(&mut io).await,
+            ChildExit {
+                code: 128 + Signal::TERM.as_raw(),
+                signal: Some(("TERM", false)),
+            }
+        );
+        drop(io);
+        scope.join().await;
+    }
+
+    #[tokio::test]
+    async fn an_unlisted_signal_has_no_name() {
+        // SIGVTALRM terminates without a core dump and is not on
+        // RFC 4254 §6.10's list.
+        let scope = ChildScope::default();
+        let mut io = spawn("kill -VTALRM $$", &scope).expect("spawn");
+        assert_eq!(
+            exit_of_child(&mut io).await,
+            ChildExit::code(128 + Signal::VTALARM.as_raw())
+        );
         drop(io);
         scope.join().await;
     }
