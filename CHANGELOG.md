@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- An `authorized_keys` line that carries options (`from=`, `command=`,
+  `restrict`, …) now stops the server at startup with
+  `server.config_error`. Before, the options were ignored and the key
+  loaded unrestricted. No option is enforced yet: remove the line, or
+  remove its options to grant the key unrestricted access on purpose
+  ([ADR-0040](docs/adr/0040-refuse-authorized-keys-options-until-enforced.md),
+  [#183](https://github.com/gonzafg2/quantumssh/issues/183)).
+
 ## [0.0.1] - 2026-07-20
 
 ### Added
