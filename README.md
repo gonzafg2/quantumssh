@@ -124,7 +124,7 @@ Tracked in [#109](https://github.com/gonzafg2/quantumssh/issues/109). Scoping (n
 - ✅ Concurrent connections, admission limits, graceful shutdown — [ADR-0028](./docs/adr/0028-phase-2-concurrent-connections-limits-graceful-shutdown.md), implemented in [#129](https://github.com/gonzafg2/quantumssh/pull/129)
 - ✅ Interactive PTY sessions — [ADR-0038](./docs/adr/0038-phase-2-interactive-pty-sessions.md), implemented in [#189](https://github.com/gonzafg2/quantumssh/pull/189), [#192](https://github.com/gonzafg2/quantumssh/pull/192) and [#193](https://github.com/gonzafg2/quantumssh/pull/193)
 - SFTP subsystem
-- systemd integration
+- ✅ systemd integration — [ADR-0043](./docs/adr/0043-systemd-notify-service-and-reference-unit.md), implemented in [#198](https://github.com/gonzafg2/quantumssh/pull/198); operator guide in [`docs/deployment.md`](./docs/deployment.md)
 - First public release: `0.1.0` (one-way freeze of negotiation profile + audit-log `schema_version`)
 
 ### Phase 3 — Hardening
