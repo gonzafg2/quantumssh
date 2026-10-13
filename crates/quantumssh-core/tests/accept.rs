@@ -240,6 +240,33 @@ async fn channel_open_session_then_exec_echo() {
         .await;
 }
 
+/// RFC-0002: the command runs in the service account's `$HOME`, not in
+/// the directory the server was started from (the test's crate
+/// directory here, `/` under systemd).
+#[tokio::test]
+async fn exec_runs_in_the_home_directory() {
+    let home = std::env::var_os("HOME").expect("HOME is set for the test");
+    let expected = std::fs::canonicalize(&home).expect("HOME exists");
+    assert_ne!(
+        std::env::current_dir().expect("cwd"),
+        expected,
+        "the test needs a working directory other than HOME"
+    );
+    let (addr, host_key) = start_server(Duration::from_secs(30)).await;
+    let (mut stream, mut client) = authenticate(addr, &host_key).await;
+
+    client.write_sealed(&mut stream, &channel_open(0)).await;
+    let server_chan = expect_open_confirmation(&mut client, &mut stream).await;
+    client
+        .write_sealed(&mut stream, &channel_exec(server_chan, b"pwd -P"))
+        .await;
+
+    let (stdout, _stderr, exit) = collect_session(&mut client, &mut stream, server_chan).await;
+    assert_eq!(exit, Some(0));
+    let pwd = String::from_utf8(stdout).expect("utf-8");
+    assert_eq!(std::path::Path::new(pwd.trim_end()), expected);
+}
+
 #[tokio::test]
 async fn exec_cat_echoes_stdin() {
     let (addr, host_key) = start_server(Duration::from_secs(30)).await;
