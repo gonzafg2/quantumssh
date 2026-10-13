@@ -31,6 +31,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   128 + n, and the audit `exit_status` keeps 128 + n for every signal
   ([ADR-0038](docs/adr/0038-phase-2-interactive-pty-sessions.md) §8).
 
+### Fixed
+
+- `exec` and `shell` commands, on pipes or on a PTY, now start in the
+  service account's `$HOME`, as RFC-0002's execution contract states.
+  Before, they inherited the directory the server was started from,
+  which is `/` under systemd. They fall back to `/` when `HOME` is
+  unset or not a directory
+  ([RFC-0002](docs/rfcs/0002-threat-model-phase1-uid-model-and-non-goal.md)).
+- An `accept()` error no longer ends the server. At the default limits
+  this happened around 200 concurrent `exec` sessions under a
+  1024-descriptor limit. Errors are now handled by kind:
+  - A pending connection that failed (reset, aborted, or a network
+    error) is skipped at once.
+  - Any other error pauses accepting for one second while live
+    sessions keep running. This covers running out of file descriptors
+    or buffers, and a security-module denial.
+  - Only a broken listening socket (`EBADF`, `ENOTSOCK`, `EINVAL`)
+    still ends the server, so that a service manager can restart it.
+
+  ([#200](https://github.com/gonzafg2/quantumssh/issues/200)).
+
 ### Security
 
 - An `authorized_keys` line that carries options (`from=`, `command=`,

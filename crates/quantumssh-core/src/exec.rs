@@ -6,7 +6,8 @@
 //! account's login shell is `/usr/sbin/nologin` (ADR-0016). The child
 //! runs under the service-account UID with a **sanitised** environment
 //! (ADR-0016 Decision: allowlist `PATH HOME USER SHELL LANG LC_*`, plus
-//! `TERM` on a PTY); no per-user resolution (threat model §8.12). A PTY
+//! `TERM` on a PTY), in the account's `$HOME` (RFC-0002); no per-user
+//! resolution (threat model §8.12). A PTY
 //! child is started through the binary's re-exec helper
 //! ([`crate::pty`]), which makes it a session leader with the slave as
 //! its controlling terminal.
@@ -28,7 +29,7 @@
 
 use std::io;
 use std::os::fd::OwnedFd;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{ExitStatus, Stdio};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
@@ -534,6 +535,7 @@ pub(crate) fn spawn(program: Program<'_>, scope: &ChildScope) -> io::Result<Chil
     cmd.arg0(program.argv0());
     program.push_args(&mut cmd);
     sanitise_env(&mut cmd);
+    cmd.current_dir(home_dir());
     cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -609,6 +611,7 @@ pub(crate) fn spawn_pty(
     cmd.arg(pty::HELPER_ARG).arg(SHELL).arg(program.argv0());
     program.push_args(&mut cmd);
     sanitise_env(&mut cmd);
+    cmd.current_dir(home_dir());
     if !term.is_empty() {
         cmd.env("TERM", term);
     }
@@ -822,6 +825,18 @@ async fn pump_stdin(
             _ => break,
         }
     }
+}
+
+/// RFC-0002's execution contract: the child starts in the service
+/// account's `$HOME`, the server's own `HOME` that the sanitised
+/// environment passes on, never in whatever directory the server was
+/// started from (`/` under systemd). `/` when `HOME` is unset, relative,
+/// or not a directory.
+fn home_dir() -> PathBuf {
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .filter(|home| home.is_absolute() && home.is_dir())
+        .unwrap_or_else(|| PathBuf::from("/"))
 }
 
 /// ADR-0016: clear the inherited environment and re-add only the
