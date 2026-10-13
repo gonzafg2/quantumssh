@@ -33,6 +33,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `exec` and `shell` commands, on pipes or on a PTY, now start in the
+  service account's `$HOME`, as RFC-0002's execution contract states.
+  Before, they inherited the directory the server was started from,
+  which is `/` under systemd. They fall back to `/` when `HOME` is
+  unset or not a directory
+  ([RFC-0002](docs/rfcs/0002-threat-model-phase1-uid-model-and-non-goal.md)).
 - An `accept()` error no longer ends the server. At the default limits
   this happened around 200 concurrent `exec` sessions under a
   1024-descriptor limit. Errors are now handled by kind:
