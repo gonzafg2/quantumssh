@@ -68,11 +68,13 @@ SSH=(ssh -i "$WORK/client" -p "$PORT"
     -o LogLevel=ERROR)
 
 # 1. Type=notify: `systemctl start` returns once READY=1 arrives, and the
-# port accepts at that moment.
+# port accepts at that moment. The session runs as the account, in its
+# home (RFC-0002), although systemd starts the server in `/`.
 systemctl start quantumssh || fail "start"
 [ "$(systemctl is-active quantumssh)" = active ] || fail "not active after start"
-out="$("${SSH[@]}" tester@127.0.0.1 'id -un')" || fail "ssh exited $?"
-[ "$out" = quantumssh ] || fail "session ran as '$out', want quantumssh"
+out="$("${SSH[@]}" tester@127.0.0.1 'id -un; pwd -P')" || fail "ssh exited $?"
+[ "$out" = "quantumssh
+/var/lib/quantumssh" ] || fail "session ran as/in '$out', want quantumssh in /var/lib/quantumssh"
 echo "ok: systemd_notify_ready"
 
 # 2. NoNewPrivileges= reaches every session.
