@@ -217,7 +217,48 @@ implemented by OpenSSH ("Newer versions … will not be supported",
   freeze (Phase-2 scoping note, freeze checklist). The implementing PR
   records it in ADR-0024's Status field, as ADR-0038 did.
 
-### 6. Tests
+### 6. Threat model changes
+
+A new in-scope attack vector goes through the RFC process (threat model,
+"Maintenance"). This RFC therefore carries the entry, and the
+implementation PR adds it verbatim after §5.4.4:
+
+> #### 5.4.5 SFTP request handling
+>
+> **Mechanism.** An authenticated peer sends crafted SFTP packets to the
+> server's SFTP helper. It chooses lengths, counts and handles to exhaust
+> memory or file descriptors or to reach a parser or handler defect, or
+> paths (`..`, symlinks, `~`) to reach files outside the directory the
+> operator expected.
+>
+> **Assets at risk.** Service availability (§2.8), the integrity of the
+> SFTP helper process, and the files the service account can reach.
+>
+> **Actors.** Authenticated peer upward.
+>
+> **ATT&CK reference.** `T1210` (Exploitation of Remote Services) for a
+> parser or handler defect. Path tricks map to no technique, because
+> Phase 2 grants no confinement to escape.
+>
+> **Test handle.**
+>
+> - The helper is first-party Rust with no `unsafe`. It runs in its own
+>   single-threaded process, outside the server process that holds the
+>   host key ([RFC-0013](rfcs/0013-sftp-subsystem.md)).
+> - Every attacker-controlled length is bounded (a packet ≤ 256 KiB, the
+>   read clamp, the handle cap), and malformed input ends the session.
+>   The parser is a pure function, shaped for §6.2's Phase-3 fuzzing
+>   harness.
+> - The helper runs as the service account with no confinement in
+>   Phase 2. Any path the service account can reach is reachable, which
+>   is the access a `shell` session already has (§8.12). Confinement and
+>   per-user identity are Phase 3.
+
+The same PR updates §5.4.4's disposition to point at the byte counts that
+record "transferred N bytes". That is a factual update to an existing
+entry.
+
+### 7. Tests
 
 - **Unit tests:** the packet parser (bounds, truncation, the INIT-first
   rule) and each request handler, on a temporary directory.
