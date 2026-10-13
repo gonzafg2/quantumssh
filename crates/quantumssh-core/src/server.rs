@@ -48,6 +48,39 @@ use crate::transport::{self, RekeyThresholds, TransportError};
 /// last resort for stuck tasks, not the routine path (ADR-0028).
 const ABORT_GRACE: Duration = Duration::from_secs(2);
 
+/// How long the loop stops accepting after `accept()` runs out of
+/// descriptors or buffers (#200). The listener stays readable while the
+/// pending connection waits, so retrying at once would spin; hyper and
+/// axum pause for the same second. Live connections are served
+/// meanwhile, and closing them is what frees the descriptors.
+const ACCEPT_BACKOFF: Duration = Duration::from_secs(1);
+
+/// What an `accept()` error means for the loop (#200).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AcceptFailure {
+    /// The process or the system is out of descriptors or buffers:
+    /// pause for [`ACCEPT_BACKOFF`], then retry.
+    Resources,
+    /// The listening socket itself is unusable: end the loop, so that
+    /// the service manager restarts the server.
+    Listener,
+    /// One pending connection failed (reset, aborted, or a network
+    /// error accept(2) passes on): retry at once, so that a peer cannot
+    /// stall the loop.
+    Connection,
+}
+
+fn classify_accept_error(error: &io::Error) -> AcceptFailure {
+    use rustix::io::Errno;
+    match Errno::from_io_error(error) {
+        Some(Errno::MFILE | Errno::NFILE | Errno::NOBUFS | Errno::NOMEM) => {
+            AcceptFailure::Resources
+        }
+        Some(Errno::BADF | Errno::NOTSOCK | Errno::INVAL) => AcceptFailure::Listener,
+        _ => AcceptFailure::Connection,
+    }
+}
+
 /// Server configuration assembled by the binary from its CLI and the
 /// RFC-0010 config file.
 #[derive(Debug, Clone)]
@@ -120,8 +153,8 @@ impl Server {
         self.listener.local_addr()
     }
 
-    /// Runs the concurrent accept loop (ADR-0028) until the listener
-    /// fails or a shutdown signal drains it.
+    /// Runs the concurrent accept loop (ADR-0028) until the listening
+    /// socket fails or a shutdown signal drains it.
     ///
     /// `shutdown` is the broadcast the OS-signal listener (or a test)
     /// sends the **drain deadline** on: on the first value the loop
@@ -132,9 +165,12 @@ impl Server {
     ///
     /// # Errors
     ///
-    /// Returns the underlying I/O error when accepting a connection
-    /// fails at the listener level. A drained shutdown returns
-    /// `Ok(())`.
+    /// Returns the underlying I/O error when the listening socket
+    /// itself is unusable (`EBADF`, `ENOTSOCK`, `EINVAL`), so that the
+    /// service manager can restart the server. A failed pending
+    /// connection is skipped, and running out of descriptors or buffers
+    /// pauses accepting for [`ACCEPT_BACKOFF`]; neither ends the loop
+    /// (#200). A drained shutdown returns `Ok(())`.
     pub async fn serve(self, shutdown: broadcast::Sender<Instant>) -> io::Result<()> {
         let budget = self.handshake_timeout;
         let rekey = self.rekey;
@@ -148,11 +184,32 @@ impl Server {
         // Set on the first shutdown signal: when the remainder is
         // aborted. Accepting stops the moment it is `Some`.
         let mut abort_at: Option<Instant> = None;
+        // Set when `accept()` ran out of resources: accepting resumes
+        // then (#200).
+        let mut resume_at: Option<Instant> = None;
 
         loop {
             tokio::select! {
-                accepted = self.listener.accept(), if abort_at.is_none() => {
-                    let (stream, peer_addr) = accepted?;
+                accepted = self.listener.accept(), if abort_at.is_none() && resume_at.is_none() => {
+                    let (stream, peer_addr) = match accepted {
+                        Ok(accepted) => accepted,
+                        Err(e) => match classify_accept_error(&e) {
+                            AcceptFailure::Listener => return Err(e),
+                            AcceptFailure::Resources => {
+                                warn!(
+                                    error = %e,
+                                    pause_seconds = ACCEPT_BACKOFF.as_secs(),
+                                    "accept failed: out of resources; pausing accepts"
+                                );
+                                resume_at = Some(Instant::now() + ACCEPT_BACKOFF);
+                                continue;
+                            }
+                            AcceptFailure::Connection => {
+                                debug!(error = %e, "accept failed for one pending connection");
+                                continue;
+                            }
+                        },
+                    };
                     let span = info_span!("connection", peer_addr = %peer_addr);
                     match admission.try_admit(peer_addr.ip(), std::time::Instant::now()) {
                         Err(refusal) => {
@@ -203,6 +260,11 @@ impl Server {
                     } else {
                         abort_at = Some(deadline + ABORT_GRACE);
                     }
+                }
+                () = tokio::time::sleep_until(resume_at.unwrap_or_else(Instant::now)),
+                    if resume_at.is_some() =>
+                {
+                    resume_at = None;
                 }
                 () = tokio::time::sleep_until(abort_at.unwrap_or_else(Instant::now)),
                     if abort_at.is_some() =>
@@ -593,6 +655,35 @@ mod tests {
             all.iter()
                 .any(|r| r.message == "join error without connection span"),
             "expected diagnostic warn: {all:?}"
+        );
+    }
+
+    /// #200: only a broken listening socket ends the loop; running out
+    /// of resources pauses it, and anything else is one failed pending
+    /// connection.
+    #[test]
+    fn accept_errors_are_classified() {
+        use rustix::io::Errno;
+        let class = |errno: Errno| classify_accept_error(&io::Error::from(errno));
+        for errno in [Errno::MFILE, Errno::NFILE, Errno::NOBUFS, Errno::NOMEM] {
+            assert_eq!(class(errno), AcceptFailure::Resources, "{errno:?}");
+        }
+        for errno in [Errno::BADF, Errno::NOTSOCK, Errno::INVAL] {
+            assert_eq!(class(errno), AcceptFailure::Listener, "{errno:?}");
+        }
+        for errno in [
+            Errno::CONNABORTED,
+            Errno::CONNRESET,
+            Errno::PROTO,
+            Errno::HOSTUNREACH,
+            Errno::NETUNREACH,
+            Errno::PERM,
+        ] {
+            assert_eq!(class(errno), AcceptFailure::Connection, "{errno:?}");
+        }
+        assert_eq!(
+            classify_accept_error(&io::Error::other("not an OS error")),
+            AcceptFailure::Connection
         );
     }
 }
