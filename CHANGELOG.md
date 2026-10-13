@@ -17,7 +17,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `docs/deployment.md`, cover the service account, the file layout,
   port 22 and the stop semantics. CI runs the unit under a real
   systemd ([ADR-0043](docs/adr/0043-systemd-notify-service-and-reference-unit.md)).
-
 - Interactive sessions: `pty-req`, `shell` and `window-change` on the
   session channel. The shell runs on a pseudo-terminal whose slave is
   owned by the service account with mode `0600`, as a session leader
@@ -48,6 +47,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   which is `/` under systemd. They fall back to `/` when `HOME` is
   unset or not a directory
   ([RFC-0002](docs/rfcs/0002-threat-model-phase1-uid-model-and-non-goal.md)).
+- An `accept()` error no longer ends the server. At the default limits
+  this happened around 200 concurrent `exec` sessions under a
+  1024-descriptor limit. Errors are now handled by kind:
+  - A pending connection that failed (reset, aborted, or a network
+    error) is skipped at once.
+  - Any other error pauses accepting for one second while live
+    sessions keep running. This covers running out of file descriptors
+    or buffers, and a security-module denial.
+  - Only a broken listening socket (`EBADF`, `ENOTSOCK`, `EINVAL`)
+    still ends the server, so that a service manager can restart it.
+
+  ([#200](https://github.com/gonzafg2/quantumssh/issues/200)).
 
 ### Security
 
