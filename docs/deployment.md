@@ -21,8 +21,8 @@ identity (threat model §8.12). Concretely:
   one account.
 - Every session can read what the account can read, including the
   host private key, which the account must own (step 3).
-- Sessions and SFTP start in the account's home directory and can
-  reach any path the account can reach.
+- Sessions start in the account's home directory and can reach any
+  path the account can reach.
 
 ## 1. Install the binary
 
@@ -195,7 +195,7 @@ effect:
 
 | Directive | Effect on sessions |
 |---|---|
-| `ProtectSystem=strict` | The whole file system is read-only except `ReadWritePaths=`. SFTP uploads and writes elsewhere fail. |
+| `ProtectSystem=strict` | The whole file system is read-only except `ReadWritePaths=`. Every write elsewhere fails, in the account's home too unless it is listed. |
 | `ProtectHome=yes` | `/home`, `/root` and `/run/user` disappear. That includes the account's home if it lives there; the default `/var/lib/quantumssh` is not affected. |
 | `PrivateTmp=yes` | Sessions share a private `/tmp`, separate from the host's. |
 | `PrivateDevices=yes` | Only pseudo devices remain in `/dev`. PTYs still work. |
