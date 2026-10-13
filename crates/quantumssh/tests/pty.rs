@@ -19,7 +19,7 @@ use tokio::time::{Duration, timeout};
 const CH_SUCCESS: u8 = 99;
 
 async fn start() -> (SocketAddr, Arc<HostKey>) {
-    start_server_with_pty_helper(PathBuf::from(env!("CARGO_BIN_EXE_quantumssh"))).await
+    start_server_with_helper(PathBuf::from(env!("CARGO_BIN_EXE_quantumssh"))).await
 }
 
 /// Opens the session channel and allocates a PTY.

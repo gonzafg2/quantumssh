@@ -252,22 +252,23 @@ pub(crate) struct ChildScope {
     tasks: Mutex<JoinSet<()>>,
     /// PIDs of the connection's unreaped children, running or zombie.
     live: Arc<Mutex<Vec<Pid>>>,
-    /// The executable whose re-exec helper starts PTY children
-    /// (ADR-0038 §5); `None` refuses `pty-req`.
-    pty_helper: Option<Arc<Path>>,
+    /// The executable whose helper modes start PTY and SFTP children
+    /// (ADR-0038 §5, ADR-0041 §2); `None` refuses `pty-req` and
+    /// `subsystem`.
+    helper: Option<Arc<Path>>,
 }
 
 impl ChildScope {
-    pub(crate) fn new(pty_helper: Option<Arc<Path>>) -> Self {
+    pub(crate) fn new(helper: Option<Arc<Path>>) -> Self {
         Self {
             tasks: Mutex::default(),
             live: Arc::default(),
-            pty_helper,
+            helper,
         }
     }
 
-    pub(crate) fn pty_helper(&self) -> Option<&Path> {
-        self.pty_helper.as_deref()
+    pub(crate) fn helper(&self) -> Option<&Path> {
+        self.helper.as_deref()
     }
 
     fn spawn<F>(&self, task: F) -> AbortHandle
@@ -541,6 +542,28 @@ pub(crate) fn spawn(program: Program<'_>, scope: &ChildScope) -> io::Result<Chil
     let mut cmd = Command::new(SHELL);
     cmd.arg0(program.argv0());
     program.push_args(&mut cmd);
+    spawn_piped(cmd, scope)
+}
+
+/// Spawns the binary's SFTP helper on pipes (ADR-0041 §1), the ordinary
+/// pipe child of [`spawn`].
+///
+/// # Errors
+///
+/// [`std::io::Error`] if no helper is configured or the child cannot be
+/// spawned.
+pub(crate) fn spawn_sftp(scope: &ChildScope) -> io::Result<ChildIo> {
+    let helper = scope
+        .helper()
+        .ok_or_else(|| io::Error::other("no helper"))?;
+    let mut cmd = Command::new(helper);
+    cmd.arg(crate::sftp::HELPER_ARG);
+    spawn_piped(cmd, scope)
+}
+
+/// Spawns `cmd` with the sanitised environment, its stdio on pipes and
+/// its own process group, and supervises it in `scope`.
+fn spawn_piped(mut cmd: Command, scope: &ChildScope) -> io::Result<ChildIo> {
     sanitise_env(&mut cmd);
     cmd.current_dir(home_dir());
     cmd.stdin(Stdio::piped())
@@ -607,7 +630,7 @@ pub(crate) fn spawn_pty(
     scope: &ChildScope,
 ) -> io::Result<ChildIo> {
     let helper = scope
-        .pty_helper()
+        .helper()
         .ok_or_else(|| io::Error::other("no pty helper"))?;
     let PtyPair { master, slave } = pair;
     // ponytail: the deprecated constructor, sound as in `wait_exit`: the

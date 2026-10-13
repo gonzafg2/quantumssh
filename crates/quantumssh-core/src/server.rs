@@ -108,10 +108,11 @@ pub struct Config {
     pub rekey: RekeyThresholds,
     /// The ADR-0028 admission caps and per-source rate limit.
     pub limits: Limits,
-    /// The executable to re-exec for PTY children: a binary whose `main`
-    /// first calls [`crate::pty::run_helper_if_requested`]. `None` refuses
-    /// every `pty-req` (ADR-0038 §5).
-    pub pty_helper: Option<PathBuf>,
+    /// The executable to re-exec for PTY and SFTP children: a binary whose
+    /// `main` first calls [`crate::pty::run_helper_if_requested`] and
+    /// [`crate::sftp::run_server_if_requested`]. `None` refuses every
+    /// `pty-req` and `subsystem` (ADR-0038 §5, ADR-0041 §2).
+    pub helper: Option<PathBuf>,
 }
 
 /// A bound, not-yet-serving server.
@@ -123,7 +124,7 @@ pub struct Server {
     authorized_keys: Arc<AuthorizedKeys>,
     rekey: RekeyThresholds,
     limits: Limits,
-    pty_helper: Option<Arc<Path>>,
+    helper: Option<Arc<Path>>,
 }
 
 impl Server {
@@ -149,7 +150,7 @@ impl Server {
             authorized_keys: Arc::clone(&config.authorized_keys),
             rekey: config.rekey,
             limits: config.limits,
-            pty_helper: config.pty_helper.as_deref().map(Arc::from),
+            helper: config.helper.as_deref().map(Arc::from),
         })
     }
 
@@ -244,7 +245,7 @@ impl Server {
                         Ok(guard) => {
                             let host_key = Arc::clone(&self.host_key);
                             let authorized_keys = Arc::clone(&self.authorized_keys);
-                            let pty_helper = self.pty_helper.clone();
+                            let helper = self.helper.clone();
                             let conn_rx = shutdown.subscribe();
                             let connection = async move {
                                 info!("connection.accepted");
@@ -256,7 +257,7 @@ impl Server {
                                     rekey,
                                     guard,
                                     conn_rx,
-                                    pty_helper,
+                                    helper,
                                 )
                                 .await;
                             };
@@ -366,12 +367,12 @@ async fn handle(
     rekey: RekeyThresholds,
     guard: ConnectionGuard,
     mut shutdown: broadcast::Receiver<Instant>,
-    pty_helper: Option<Arc<Path>>,
+    helper: Option<Arc<Path>>,
 ) {
     // Outlives the connection future: a deadline that cancels the future
     // leaves the children's teardown running, and an abort of this task
     // runs the scope's synchronous kill guard (ADR-0038 §6).
-    let children = ChildScope::new(pty_helper);
+    let children = ChildScope::new(helper);
     // The block scopes the (possibly cancelled) connection future: at
     // its end the `&mut stream` borrow is released and the channel
     // driver's drop-side effects (child kill, owed `exec.finished`)

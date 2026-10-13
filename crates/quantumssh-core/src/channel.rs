@@ -92,6 +92,8 @@ const CHANNEL_TYPE_BOUND: usize = 64;
 const REQUEST_TYPE_BOUND: usize = 64;
 /// Bound on an `exec` command string — one packet's payload.
 const COMMAND_BOUND: usize = MAX_PACKET as usize;
+/// Bound on a `subsystem` name (ADR-0041 §1).
+const SUBSYSTEM_BOUND: usize = 64;
 
 /// Which child stream a pending output chunk came from.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -207,6 +209,11 @@ struct Driver<'a> {
     request_type: &'static str,
     /// The `pty` audit field: the child runs on a pseudo-terminal.
     on_pty: bool,
+    /// Channel payload bytes the child consumed from the client, for
+    /// `exec.finished` (ADR-0042).
+    bytes_received: u64,
+    /// Channel payload bytes of the child's output sent to the client.
+    bytes_sent: u64,
     /// `exec.finished` has been emitted (emit exactly once).
     finished_emitted: bool,
     /// Reply-generating inbound messages buffered during a re-key's
@@ -254,6 +261,8 @@ impl<'a> Driver<'a> {
             command: None,
             request_type: "exec",
             on_pty: false,
+            bytes_received: 0,
+            bytes_sent: 0,
             finished_emitted: false,
             deferred: Vec::new(),
             child: None,
@@ -426,7 +435,10 @@ where
             }
             credit = recv_opt_consumed(consumed), if consumed_active => {
                 match credit {
-                    Some(n) => d.credit_pending = d.credit_pending.saturating_add(n),
+                    Some(n) => {
+                        d.credit_pending = d.credit_pending.saturating_add(n);
+                        d.bytes_received = d.bytes_received.saturating_add(u64::from(n));
+                    }
                     None => d.consumed_closed = true,
                 }
             }
@@ -498,6 +510,7 @@ impl Driver<'_> {
             let frame = build_data_frame(self.peer_chan, kind, p.take(n));
             session.write_packet(&frame).await?;
             self.out_window -= n as u64;
+            self.bytes_sent = self.bytes_sent.saturating_add(n as u64);
             if self.pending_out.as_ref().is_some_and(PendingOut::is_empty) {
                 self.pending_out = None;
             }
@@ -608,6 +621,8 @@ impl Driver<'_> {
                 request_type = self.request_type,
                 pty = self.on_pty,
                 exit_status,
+                bytes_received = self.bytes_received,
+                bytes_sent = self.bytes_sent,
                 "exec.finished"
             );
         }
@@ -767,12 +782,14 @@ impl Driver<'_> {
                 let Ok(command) = std::str::from_utf8(cmd_bytes) else {
                     return Err(session.protocol_disconnect("non-utf8-command").await);
                 };
-                self.start(session, Program::Exec(command), want_reply)
+                self.start(session, Start::Program(Program::Exec(command)), want_reply)
                     .await
             }
             b"shell" if self.state == ChannelState::Idle => {
-                self.start(session, Program::Shell, want_reply).await
+                self.start(session, Start::Program(Program::Shell), want_reply)
+                    .await
             }
+            b"subsystem" => self.on_subsystem(session, r, want_reply).await,
             b"pty-req" => self.on_pty_req(session, r, want_reply).await,
             b"window-change" => self.on_window_change(session, r, want_reply).await,
             // Any other request (env, subsystem, x11-req, agent forwarding,
@@ -839,7 +856,7 @@ impl Driver<'_> {
         };
         let allowed = self.state == ChannelState::Idle
             && self.pty.is_none()
-            && self.children.pty_helper().is_some()
+            && self.children.helper().is_some()
             && pty::valid_term(term);
         // `valid_term` admits ASCII only, so the conversion cannot fail.
         let pending = allowed
@@ -855,6 +872,32 @@ impl Driver<'_> {
             self.pty = pending;
         }
         self.reply(session, want_reply, granted).await
+    }
+
+    /// `subsystem` (RFC 4254 §6.5, ADR-0041 §1): `sftp` is honoured once,
+    /// in `Idle`, with no PTY pending and a helper configured; anything
+    /// else is refused. A malformed name disconnects.
+    async fn on_subsystem<S>(
+        &mut self,
+        session: &mut Expect<S, Session>,
+        r: &mut Reader<'_>,
+        want_reply: bool,
+    ) -> Result<(), TransportError>
+    where
+        S: AsyncRead + AsyncWrite + Unpin + Send,
+    {
+        let Ok(name) = r.string(SUBSYSTEM_BOUND) else {
+            return Err(session.protocol_disconnect("malformed-subsystem").await);
+        };
+        if name == b"sftp"
+            && self.state == ChannelState::Idle
+            && self.pty.is_none()
+            && self.children.helper().is_some()
+        {
+            self.start(session, Start::Sftp, want_reply).await
+        } else {
+            self.reply(session, want_reply, false).await
+        }
     }
 
     /// `window-change` (RFC 4254 §6.7): applied to the master while a PTY
@@ -888,19 +931,21 @@ impl Driver<'_> {
     }
 
     /// Starts the channel's one child: on the PTY a `pty-req` allocated,
-    /// or on pipes. Every start emits `exec.started` (ADR-0038 §9).
+    /// or on pipes; the SFTP helper always on pipes. Every start emits
+    /// `exec.started` (ADR-0038 §9, ADR-0041 §1).
     async fn start<S>(
         &mut self,
         session: &mut Expect<S, Session>,
-        program: Program<'_>,
+        start: Start<'_>,
         want_reply: bool,
     ) -> Result<(), TransportError>
     where
         S: AsyncRead + AsyncWrite + Unpin + Send,
     {
-        let (command, request_type) = match program {
-            Program::Exec(command) => (command, "exec"),
-            Program::Shell => ("", "shell"),
+        let (command, request_type) = match start {
+            Start::Program(Program::Exec(command)) => (command, "exec"),
+            Start::Program(Program::Shell) => ("", "shell"),
+            Start::Sftp => ("sftp", "subsystem"),
         };
         let pending = self.pty.take();
         self.command = Some(command.to_string());
@@ -916,9 +961,13 @@ impl Driver<'_> {
             "exec.started"
         );
         self.reply(session, want_reply, true).await?;
-        let spawned = match pending {
-            Some(pending) => exec::spawn_pty(program, pending.pair, &pending.term, self.children),
-            None => exec::spawn(program, self.children),
+        let spawned = match (start, pending) {
+            // `on_subsystem` refuses SFTP while a PTY is pending.
+            (Start::Sftp, _) => exec::spawn_sftp(self.children),
+            (Start::Program(program), Some(pending)) => {
+                exec::spawn_pty(program, pending.pair, &pending.term, self.children)
+            }
+            (Start::Program(program), None) => exec::spawn(program, self.children),
         };
         if let Ok(child) = spawned {
             self.child = Some(child);
@@ -1057,6 +1106,15 @@ impl Driver<'_> {
         self.state = ChannelState::Draining;
         Ok(())
     }
+}
+
+/// What a channel request starts.
+#[derive(Clone, Copy)]
+enum Start<'a> {
+    /// `exec` or `shell`.
+    Program(Program<'a>),
+    /// `subsystem "sftp"` (ADR-0041).
+    Sftp,
 }
 
 /// A pair allocated by `pty-req`, with its validated `TERM` (empty means
@@ -1369,6 +1427,9 @@ mod tests {
         assert_eq!(field("command"), Some(""));
         assert!(field("authenticated_identity").is_some());
         assert!(field("executing_uid").is_some());
+        // ADR-0042: the channel byte counts, on every request type.
+        assert_eq!(field("bytes_received"), Some("0"));
+        assert_eq!(field("bytes_sent"), Some("0"));
     }
 
     fn finished_count(seen: &std::sync::Mutex<Vec<String>>) -> usize {
