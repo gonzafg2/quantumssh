@@ -1,7 +1,8 @@
 //! `QuantumSSH` server binary — a thin entrypoint (ADR-0017): parse the
 //! CLI, load the optional TOML config (RFC-0010 / ADR-0029), construct
 //! the log subscriber (ADR-0024), build the Tokio runtime (ADR-0022),
-//! and hand off to `quantumssh_core`.
+//! and hand off to `quantumssh_core`, telling systemd when the server
+//! is ready and when it starts stopping (ADR-0043).
 
 use std::io::IsTerminal;
 use std::net::SocketAddr;
@@ -27,6 +28,7 @@ use zeroize::Zeroizing;
 
 mod config;
 mod log_fields;
+mod notify;
 use config::{ConfigFile, LogFormat, TrustedClass};
 use log_fields::EscapingFields;
 
@@ -454,8 +456,10 @@ fn pty_helper() -> Option<PathBuf> {
 
 /// The SIGTERM/SIGINT listener (ADR-0028): the first signal broadcasts
 /// the drain deadline; a second broadcasts an immediate one, skipping
-/// what remains of the drain.
-async fn signal_listener(tx: broadcast::Sender<Instant>, drain: Duration) {
+/// what remains of the drain. The handlers are installed before this
+/// returns, so a stop request that follows `READY=1` always drains
+/// (ADR-0043); the first signal also tells systemd the drain started.
+fn spawn_signal_listener(tx: broadcast::Sender<Instant>, drain: Duration) {
     use tokio::signal::unix::{SignalKind, signal};
     let (Ok(mut term), Ok(mut int)) = (
         signal(SignalKind::terminate()),
@@ -464,15 +468,18 @@ async fn signal_listener(tx: broadcast::Sender<Instant>, drain: Duration) {
         tracing::warn!("cannot install SIGTERM/SIGINT handlers; graceful shutdown unavailable");
         return;
     };
-    tokio::select! { _ = term.recv() => {}, _ = int.recv() => {} }
-    info!(
-        drain_seconds = drain.as_secs(),
-        "shutdown signal received; draining"
-    );
-    let _ = tx.send(Instant::now() + drain);
-    tokio::select! { _ = term.recv() => {}, _ = int.recv() => {} }
-    info!("second shutdown signal received; aborting the drain");
-    let _ = tx.send(Instant::now());
+    drop(tokio::spawn(async move {
+        tokio::select! { _ = term.recv() => {}, _ = int.recv() => {} }
+        info!(
+            drain_seconds = drain.as_secs(),
+            "shutdown signal received; draining"
+        );
+        notify::notify(&notify::stopping(drain));
+        let _ = tx.send(Instant::now() + drain);
+        tokio::select! { _ = term.recv() => {}, _ = int.recv() => {} }
+        info!("second shutdown signal received; aborting the drain");
+        let _ = tx.send(Instant::now());
+    }));
 }
 
 async fn run(resolved: Resolved) -> ExitCode {
@@ -522,10 +529,10 @@ async fn run(resolved: Resolved) -> ExitCode {
     // shutdown completed as commanded.
     let (shutdown_tx, initial_rx) = broadcast::channel(4);
     drop(initial_rx);
-    drop(tokio::spawn(signal_listener(
-        shutdown_tx.clone(),
-        resolved.drain_timeout,
-    )));
+    spawn_signal_listener(shutdown_tx.clone(), resolved.drain_timeout);
+    // ADR-0043: under systemd, startup is finished — the port accepts
+    // and a stop request drains.
+    notify::notify(notify::READY);
     match server.serve(shutdown_tx).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {

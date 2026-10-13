@@ -22,9 +22,9 @@ We are not forking OpenSSH. We are not adding PQ algorithms as an option. We are
 
 Phase 0 (foundation) and Phase 1 (walking skeleton) are done: the greenfield SSH-2 server in Rust accepts OpenSSH 10.x clients end-to-end (hybrid `mlkem768x25519-sha256`, Ed25519 host keys, publickey auth, single-command `exec`, structured `tracing`, CI interop gate). Crates are at `0.0.1`; there is no public `0.1.0` tag yet.
 
-Phase 2 (“Usable”) is underway — tracked in [#109](https://github.com/gonzafg2/quantumssh/issues/109). Landed so far: TOML configuration file and StrictModes checks, concurrent accept loop with admission control, graceful shutdown, and interactive PTY sessions. Still open before `0.1.0`: SFTP, systemd integration, and the one-way freeze of the negotiation profile and audit-log schema.
+Phase 2 (“Usable”) is underway — tracked in [#109](https://github.com/gonzafg2/quantumssh/issues/109). Landed so far: TOML configuration file and StrictModes checks, concurrent accept loop with admission control, graceful shutdown, interactive PTY sessions, and systemd integration. Still open before `0.1.0`: SFTP, and the one-way freeze of the negotiation profile and audit-log schema.
 
-Supporting infrastructure (DNS, TLS, email, signing, repository hardening) is described in [`docs/infrastructure.md`](./docs/infrastructure.md); independent verification recipes live in [`docs/operations.md`](./docs/operations.md). Decision records live in [`docs/adr/`](./docs/adr/) and [`docs/rfcs/`](./docs/rfcs/).
+Supporting infrastructure (DNS, TLS, email, signing, repository hardening) is described in [`docs/infrastructure.md`](./docs/infrastructure.md); independent verification recipes live in [`docs/operations.md`](./docs/operations.md). Decision records live in [`docs/adr/`](./docs/adr/) and [`docs/rfcs/`](./docs/rfcs/). Running the server under systemd: [`docs/deployment.md`](./docs/deployment.md).
 
 ---
 

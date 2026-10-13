@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- systemd integration: the server sends `READY=1` once it listens and
+  `STOPPING=1`, with a stop timeout that covers the drain, when a
+  shutdown starts (`Type=notify`, implemented on the standard library
+  without `libsystemd`). A reference unit,
+  `contrib/systemd/quantumssh.service`, and an operator guide,
+  `docs/deployment.md`, cover the service account, the file layout,
+  port 22 and the stop semantics. CI runs the unit under a real
+  systemd ([ADR-0043](docs/adr/0043-systemd-notify-service-and-reference-unit.md)).
+
 - Interactive sessions: `pty-req`, `shell` and `window-change` on the
   session channel. The shell runs on a pseudo-terminal whose slave is
   owned by the service account with mode `0600`, as a session leader
