@@ -1,6 +1,6 @@
 # ADR 0024: Fix the Phase 1 structured-log event schema
 
-- **Status:** Accepted; the field lists of the `exec.started` and `exec.finished` rows are partially superseded by [ADR-0038](0038-phase-2-interactive-pty-sessions.md) §9, which adds `request_type` and `pty` to both
+- **Status:** Accepted; the field lists of the `exec.started` and `exec.finished` rows are partially superseded by [ADR-0038](0038-phase-2-interactive-pty-sessions.md) §9, which adds `request_type` and `pty` to both, and by [ADR-0042](0042-exec-finished-channel-byte-counts.md), which adds `bytes_received` and `bytes_sent` to `exec.finished`
 - **Date:** 2026-06-30 (accepted in the #86 Phase-1 governance sweep)
 - **Deciders:** Project lead
 - **Related:** Realises `docs/threat-model.md` §2.7 (audit record) and its mandated `authenticated_identity` / `executing_uid` fields; makes the §8.12 per-user-UID gap visible in logs; consumes [ADR-0022](0022-phase-1-async-runtime-tokio.md) (the runtime that emits) and [ADR-0023](0023-phase-1-channel-layer-scope.md) (the exec boundary that produces `exec.*` events). Implementation: subscriber init in the `quantumssh` binary (M0 [#62](https://github.com/gonzafg2/quantumssh/pull/62)), the `auth.*` and `exec.*` events in `quantumssh-core` (M4 [#78](https://github.com/gonzafg2/quantumssh/pull/78), M5 [#84](https://github.com/gonzafg2/quantumssh/pull/84)); at drafting time neither existed.
@@ -18,6 +18,10 @@
 >   The Context sentence "What does not yet exist is the concrete event
 >   list" now reads as of drafting time; the events had landed in the
 >   milestones the Related line names before the ADR was accepted.
+> - **2026-10-26** ([PR #196](https://github.com/gonzafg2/quantumssh/pull/196)): The
+>   `exec.finished` row omitted `command`. The code already emitted it
+>   when the ADR was accepted (`channel.rs` at `a3921d5`, 2026-06-30), as
+>   `exec.started` does. Corrected in place.
 
 ## Context
 
@@ -41,7 +45,7 @@ We will emit the following structured events via `tracing`. Each connection is w
 | `auth.succeeded` | INFO | `authenticated_identity`, `auth_method` |
 | `auth.failed` | WARN | `auth_method`, `failure_count` |
 | `exec.started` | INFO | `authenticated_identity`, `executing_uid`, `command` |
-| `exec.finished` | INFO | `authenticated_identity`, `executing_uid`, `exit_status` |
+| `exec.finished` | INFO | `authenticated_identity`, `executing_uid`, `command`, `exit_status` |
 | `connection.closed` | INFO | `reason` |
 | `server.started` | INFO | `listen_addr`, `host_key_fingerprint` |
 | `server.config_error` | ERROR | `message` |
