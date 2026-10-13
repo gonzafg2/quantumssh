@@ -103,4 +103,34 @@ case "$out" in
 esac
 echo "ok: openssh_pty"
 
+# 7. SFTP (ADR-0041): `sftp -b` and `scp` (which uses SFTP by default)
+# against the server's own SFTP v3 helper, each checked byte for byte.
+# Remote paths are absolute: the helper starts in the account's $HOME.
+COPY_OPTS=(-i "$WORK/clientkey" -P "$PORT"
+    -o StrictHostKeyChecking=no
+    -o UserKnownHostsFile=/dev/null
+    -o PasswordAuthentication=no
+    -o IdentitiesOnly=yes
+    -o ConnectTimeout=10)
+head -c 300000 /dev/urandom > "$WORK/payload"
+cat > "$WORK/batch" <<EOF
+mkdir $WORK/remote
+put $WORK/payload $WORK/remote/a
+rename $WORK/remote/a $WORK/remote/b
+get $WORK/remote/b $WORK/got
+ls -l $WORK/remote
+rm $WORK/remote/b
+rmdir $WORK/remote
+EOF
+sftp -b "$WORK/batch" "${COPY_OPTS[@]}" tester@127.0.0.1 >/dev/null || fail "sftp: batch exited $?"
+cmp -s "$WORK/payload" "$WORK/got" || fail "sftp: downloaded bytes differ"
+[ ! -e "$WORK/remote" ] || fail "sftp: rmdir left the directory"
+echo "ok: openssh_sftp"
+
+scp "${COPY_OPTS[@]}" "$WORK/payload" "tester@127.0.0.1:$WORK/scp-up" || fail "scp: upload exited $?"
+cmp -s "$WORK/payload" "$WORK/scp-up" || fail "scp: uploaded bytes differ"
+scp "${COPY_OPTS[@]}" "tester@127.0.0.1:$WORK/scp-up" "$WORK/scp-down" || fail "scp: download exited $?"
+cmp -s "$WORK/payload" "$WORK/scp-down" || fail "scp: downloaded bytes differ"
+echo "ok: openssh_scp"
+
 echo "INTEROP PASS"

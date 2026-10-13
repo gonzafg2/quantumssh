@@ -68,9 +68,7 @@ pub async fn start_server_full(
 }
 
 /// A server whose PTY children re-execute `helper` (ADR-0038 §5).
-pub async fn start_server_with_pty_helper(
-    helper: std::path::PathBuf,
-) -> (SocketAddr, Arc<HostKey>) {
+pub async fn start_server_with_helper(helper: std::path::PathBuf) -> (SocketAddr, Arc<HostKey>) {
     let budget = Duration::from_secs(30);
     let (addr, host_key, _tx, _serve) = start_server_configured(
         budget,
@@ -86,7 +84,7 @@ pub async fn start_server_configured(
     handshake_timeout: Duration,
     rekey: RekeyThresholds,
     limits: Limits,
-    pty_helper: Option<std::path::PathBuf>,
+    helper: Option<std::path::PathBuf>,
 ) -> (
     SocketAddr,
     Arc<HostKey>,
@@ -106,7 +104,7 @@ pub async fn start_server_configured(
         authorized_keys,
         rekey,
         limits,
-        pty_helper,
+        helper,
     };
     let server = Server::bind(&config).await.expect("bind ephemeral port");
     let addr = server.local_addr().expect("local addr");
@@ -571,6 +569,17 @@ pub fn channel_pty_req(recipient: u32, term: &[u8], cols: u32, rows: u32, modes:
     w.put_uint32(0);
     w.put_uint32(0);
     w.put_string(modes);
+    w.into_bytes()
+}
+
+/// `subsystem` (RFC 4254 §6.5) with a reply requested.
+pub fn channel_subsystem(recipient: u32, name: &[u8]) -> Vec<u8> {
+    let mut w = Writer::new();
+    w.put_byte(CH_REQUEST);
+    w.put_uint32(recipient);
+    w.put_string(b"subsystem");
+    w.put_boolean(true);
+    w.put_string(name);
     w.into_bytes()
 }
 
