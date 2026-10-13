@@ -1,0 +1,28 @@
+# QuantumSSH reference systemd unit (ADR-0043). Installation, file
+# layout and the port-22 options: docs/deployment.md.
+#
+# Every session runs as a child of the server, inside this unit (ADR-0016),
+# so any sandboxing directive added here also confines every session.
+
+[Unit]
+Description=QuantumSSH server
+Documentation=https://github.com/gonzafg2/quantumssh/blob/main/docs/deployment.md
+After=network.target
+
+[Service]
+# The server sends READY=1 once its port accepts connections, and
+# STOPPING=1 with a stop timeout that covers its drain.
+Type=notify
+# Load-bearing: only the server may notify systemd, never a session.
+NotifyAccess=main
+ExecStart=/usr/local/bin/quantumssh --config /etc/quantumssh/config.toml
+User=quantumssh
+Group=quantumssh
+# SIGTERM to the server alone, which drains its connections (ADR-0028);
+# SIGKILL to whatever sessions leave behind once it exits.
+KillMode=mixed
+Restart=on-failure
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

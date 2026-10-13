@@ -173,6 +173,13 @@ impl Server {
     /// deadline; a second value skips the remaining deadline. Dropping
     /// every sender simply means no shutdown ever arrives.
     ///
+    /// `loop_rx` is the loop's own receiver of `shutdown`: the one
+    /// `broadcast::channel` returns, so it exists before any signal can
+    /// be sent. A broadcast reaches only the receivers that exist when it
+    /// is sent, so a receiver subscribed here, when the future first
+    /// runs, would miss a signal that arrives just after `READY=1`
+    /// (ADR-0043 §2).
+    ///
     /// # Errors
     ///
     /// Returns the underlying I/O error when the listening socket
@@ -182,7 +189,11 @@ impl Server {
     /// descriptors first among them, pauses accepting for
     /// [`ACCEPT_BACKOFF`]. Neither ends the loop (#200). A drained
     /// shutdown returns `Ok(())`.
-    pub async fn serve(self, shutdown: broadcast::Sender<Instant>) -> io::Result<()> {
+    pub async fn serve(
+        self,
+        shutdown: broadcast::Sender<Instant>,
+        mut loop_rx: broadcast::Receiver<Instant>,
+    ) -> io::Result<()> {
         let budget = self.handshake_timeout;
         let rekey = self.rekey;
         let admission = Admission::new(self.limits);
@@ -191,7 +202,6 @@ impl Server {
         // `connection.closed` inherits `peer_addr` (ADR-0024) without
         // repeating it as an event field.
         let mut connection_spans: HashMap<tokio::task::Id, Span> = HashMap::new();
-        let mut loop_rx = shutdown.subscribe();
         // Set on the first shutdown signal: when the remainder is
         // aborted. Accepting stops the moment it is `Some`.
         let mut abort_at: Option<Instant> = None;

@@ -110,9 +110,8 @@ pub async fn start_server_configured(
     };
     let server = Server::bind(&config).await.expect("bind ephemeral port");
     let addr = server.local_addr().expect("local addr");
-    let (tx, initial_rx) = broadcast::channel(4);
-    drop(initial_rx);
-    let serve = tokio::spawn(server.serve(tx.clone()));
+    let (tx, loop_rx) = broadcast::channel(4);
+    let serve = tokio::spawn(server.serve(tx.clone(), loop_rx));
     (addr, host_key, tx, serve)
 }
 

@@ -1,7 +1,7 @@
 # ADR 0043: Run under systemd as a `Type=notify` service, with a first-party readiness protocol and a reference unit
 
-- **Status:** Proposed
-- **Date:** — (set on acceptance; drafted 2026-10-13)
+- **Status:** Accepted
+- **Date:** 2026-10-13 (accepted with the implementing PR [#198](https://github.com/gonzafg2/quantumssh/pull/198); drafted 2026-10-13)
 - **Deciders:** Project lead
 - **Related:** The systemd workstream of the Phase-2 milestone ([#109](https://github.com/gonzafg2/quantumssh/issues/109); [`docs/plans/phase2-scoping.md`](../plans/phase2-scoping.md), "Likely lane: ADR (operational)"). Consumes, without redefining, the graceful shutdown of [ADR-0028](0028-phase-2-concurrent-connections-limits-graceful-shutdown.md), which names "the systemd ADR" as its consumer. Deploys the service-account posture of [ADR-0016](0016-phase-1-service-account-uid-model.md) and writes the operator guidance its Consequences leave open. Picks up the cgroup containment that [ADR-0038](0038-phase-2-interactive-pty-sessions.md) §7 ("What 'no orphan' covers") defers "to the systemd ADR or to Phase 3". Constrained by [ADR-0018](0018-phase-1-unsafe-code-forbid-workspace.md) (`unsafe_code = "forbid"`), [ADR-0017](0017-phase-1-workspace-topology-two-crates-flat.md) (thin binary), [ADR-0024](0024-phase-1-log-event-schema.md) (logging to stderr) and [RFC-0010](../rfcs/0010-configuration-file.md) (reload is restart-only in Phase 2). Threat model §8.8 (host-level hardening is the operator's).
 
@@ -362,11 +362,12 @@ deadline would not hold. Rejected.
 
 ## Links
 
-- **Implementation:**
-  - `crates/quantumssh/src/notify.rs` and `crates/quantumssh/src/main.rs`
-    (TBD);
-  - `contrib/systemd/quantumssh.service` (TBD);
-  - `docs/deployment.md` (TBD).
+- **Implementation**, in [#198](https://github.com/gonzafg2/quantumssh/pull/198):
+  - `crates/quantumssh/src/notify.rs` and `crates/quantumssh/src/main.rs`;
+  - `contrib/systemd/quantumssh.service`;
+  - `docs/deployment.md`;
+  - `crates/quantumssh/tests/systemd.rs`, `tests/systemd/` and the
+    `systemd reference unit` step of `.github/workflows/ci.yml`.
 - **systemd sources, at `v262`:**
   - `man/sd_notify.xml`: Notes, "Standalone Implementations", and the
     `READY=1`, `STOPPING=1` and `EXTEND_TIMEOUT_USEC=` entries;

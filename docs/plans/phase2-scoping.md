@@ -82,7 +82,7 @@ here.
 | **Runtime / concurrency** | Real concurrent connections; per-source rate-limits; half-open caps; graceful shutdown | **[ADR-0028](../adr/0028-phase-2-concurrent-connections-limits-graceful-shutdown.md) — Accepted**; implemented in [#129](https://github.com/gonzafg2/quantumssh/pull/129) (extends ADR-0022) | — |
 | **SFTP subsystem** | The `subsystem` request; second concurrent channel | **RFC or ADR** (new protocol surface) | Channel multiplexing (PTY/second-channel work) |
 | **SSH certificate auth** | Cert-based auth (threat-model §5.3.2 mitigant) | **RFC-0008 — already Accepted**; needs implementation | Config file (cert-trust surface) |
-| **systemd integration** | Service deployment | **ADR** (operational) | Graceful shutdown |
+| **systemd integration** | Service deployment | **[ADR-0043](../adr/0043-systemd-notify-service-and-reference-unit.md) — Accepted**; implemented in [#198](https://github.com/gonzafg2/quantumssh/pull/198) | Graceful shutdown |
 | **Release `0.1.0`** | First public release | tag + the freeze checklist below | All of the above + freezes |
 
 ## Suggested ordering (non-normative)
@@ -102,7 +102,8 @@ as rationale for the RFCs to weigh, not as a plan of record:
    brings `exit-signal` with it ([ADR-0023](../adr/0023-phase-1-channel-layer-scope.md)).
 4. **SFTP** and **certificate auth (RFC-0008 implementation)**, once channel
    multiplexing and the config surface respectively exist.
-5. **systemd** (graceful shutdown already exists via ADR-0028).
+5. **systemd.** ✅ Landed (ADR-0043): `Type=notify` on the ADR-0028 shutdown
+   path, a reference unit and an operator guide.
 6. **Freeze, then tag `0.1.0`** (checklist below) — last, because the freeze is
    one-way.
 
