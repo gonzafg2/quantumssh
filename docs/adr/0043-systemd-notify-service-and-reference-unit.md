@@ -187,8 +187,8 @@ Each directive is here for one reason:
   the server. For example:
   - `ProtectHome=` would hide `/home`, `/root` and `/run/user` from
     every session.
-  - `ProtectSystem=strict` would make SFTP uploads fail outside
-    `ReadWritePaths=`.
+  - `ProtectSystem=strict` would make every write outside
+    `ReadWritePaths=` fail, in the account's home too.
   - `RestrictAddressFamilies=` would cut network access from every
     session.
 
