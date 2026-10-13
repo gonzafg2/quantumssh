@@ -137,15 +137,15 @@ only.
 | Request | Operation |
 |---|---|
 | OPEN | `OpenOptions`: READ, WRITE, APPEND, CREAT, TRUNC and EXCL map to read, write, append, create, truncate and create_new. The create mode is the ATTRS permissions `& 0o777`, or `0o666` if absent; the umask applies. |
-| CLOSE | Drops the handle. |
+| CLOSE | A file handle that was written since it was opened is first synced with `sync_data`; a failure is the reply's status (§4 mapping). Then the handle is dropped. This is the only safe way to observe a deferred write error at CLOSE, as OpenSSH's `close()` does (`sftp-server.c:785-786`): `std::fs::File` ignores the close error in `Drop`, and `rustix::io::close` is `unsafe` and returns nothing (rustix 1.1.5, `src/io/close.rs:54`). A directory handle, or a file handle that was only read, is dropped. |
 | READ | `read_at(offset)`: `SSH_FX_EOF` at end of file, otherwise DATA of ≤ min(len, 261 120) bytes. |
-| WRITE | `write_all_at(offset)`. With APPEND, the kernel appends. |
+| WRITE | On a handle opened with APPEND, `write_all`: the kernel appends and the offset is ignored, as OpenSSH's `process_write` does by skipping `lseek` for `O_APPEND` (`sftp-server.c:865-872`). On any other handle, `write_all_at(offset)`. A positional write is never used with APPEND, because POSIX gives `O_APPEND` no effect on `pwrite`, and macOS follows POSIX: only Linux appends regardless (pwrite(2), BUGS). |
 | STAT / LSTAT / FSTAT | `metadata` / `symlink_metadata` / `File::metadata`. |
 | SETSTAT / FSETSTAT | Applied in this order, each only if its flag is set: size, `set_len` (on the handle, or after opening the path for write); uid/gid, `chown`/`fchown`; permissions, `set_permissions(perm & 0o7777)`; times, `File::set_times` on a handle, or `rustix::fs::utimensat` on a path. The first failure ends the request with its status. |
 | OPENDIR / READDIR | `read_dir`. Each NAME carries the entry name, the longname (§5) and `symlink_metadata` ATTRS. `SSH_FX_EOF` once exhausted. |
 | REMOVE / MKDIR / RMDIR | `remove_file` / `DirBuilder` with mode `perm & 0o777` (`0o777` if absent) / `remove_dir`. |
 | REALPATH | `canonicalize`. If only the last component is missing, the canonical parent joined with that component, as OpenSSH's `sftp-realpath.c:161-165` does. An empty path means `.`. |
-| RENAME | Refuses to overwrite, with OpenSSH's semantics (`sftp-server.c:1274-1314`): a regular file is renamed by `hard_link` + `remove_file`; anything else gets an existence check, then `rename`. |
+| RENAME | Refuses to overwrite, with OpenSSH's semantics (`sftp-server.c:1274-1314`). For a regular file (`symlink_metadata`): `hard_link(old, new)`, then `remove_file(old)`. If the link fails with `EOPNOTSUPP`, `ENOSYS` or `EXDEV` (a filesystem without hard links, or another device), it falls back to an existence check of `new`, then `rename`. If the link succeeds but removing `old` fails, it removes the spare `new` link and replies with the removal's error. Anything else gets an existence check, then `rename`. |
 | READLINK | `read_link`. |
 | SYMLINK | OpenSSH's order: the first string is the target, the second the link path (`PROTOCOL` §4.1). |
 | `posix-rename@openssh.com` | `rename` (overwrites). |
@@ -193,13 +193,16 @@ show it only when `users-groups-by-id` is absent, which it is
   acceptance. It also records two errata under ADR-0015: ADR-0038's
   Consequences said SFTP "brings multiplexing" (RFC-0013 §Motivation), and
   ADR-0024's `exec.finished` row omits the `command` field, which the code
-  has emitted since Phase 1. ADR-0038's Status field also gains a pointer:
-  this ADR extends §9's `request_type` values with `"subsystem"`, a
-  partial supersession recorded the way ADR-0038 recorded its own on
+  has emitted since Phase 1. ADR-0038's Status field also gains a pointer
+  naming both partial supersessions: §1, where `subsystem` moves from
+  "still refused" to honoured, and §9, whose `request_type` values gain
+  `"subsystem"`. This follows the way ADR-0038 recorded its own on
   ADR-0024.
 - **Unit tests:** framing (bounds, truncation, INIT first), each handler
-  on a temporary directory, the RENAME semantics, REALPATH with a missing
-  last component, the longname formatter, and the status mapping.
+  on a temporary directory, the RENAME semantics (including the
+  link-failure fallback and the spare-link cleanup), APPEND writes ignoring
+  the offset, CLOSE reporting a sync failure, REALPATH with a missing last
+  component, the longname formatter, and the status mapping.
 - **Integration tests:** they drive `subsystem sftp` through the shared
   SSH test client from the binary crate, re-executing the real binary
   (ADR-0038 §11).
@@ -228,9 +231,13 @@ show it only when `users-groups-by-id` is absent, which it is
   Phase-3 fuzzing harness.
 - `df`, `ln` without `-s`, `cp`, `chmod -h` and `~user` paths do not work.
   `ls -l` shows numeric owners and UTC dates.
-- RENAME's no-overwrite check for non-regular files is check-then-act, as
-  in OpenSSH. A concurrent writer can race it, but only within the service
-  account's own files.
+- RENAME's no-overwrite check is check-then-act for non-regular files, and
+  for regular files on filesystems without hard links, as in OpenSSH. A
+  concurrent writer can race it, but only within the service account's own
+  files.
+- Each CLOSE of a written file costs one `fdatasync`, which OpenSSH's
+  CLOSE does not do. In exchange, a deferred write failure reaches the
+  client, and an upload is durable once CLOSE succeeds.
 
 ### Neutral
 
@@ -259,7 +266,15 @@ A crate such as `uzers` could resolve the account database. It was not
 chosen: it is a new dependency with `unsafe` NSS calls, for a cosmetic
 column that only appears when `users-groups-by-id` is absent.
 
-### Alternative 4: a handle cap from `RLIMIT_NOFILE`
+### Alternative 4: CLOSE by dropping the handle
+
+This would avoid the `fdatasync`. It was not chosen: a deferred write
+failure (NFS, quota, delayed write-back) would reach the client as
+`SSH_FX_OK`, which `draft-ietf-secsh-filexfer-02` and OpenSSH's
+error-mapped `close()` both rule out. No safe close that returns its error
+exists.
+
+### Alternative 5: a handle cap from `RLIMIT_NOFILE`
 
 This is what OpenSSH does (`sftp-server.c:1521-1523`). It was not chosen:
 a fixed, small cap makes the per-session bound explicit and independent of
