@@ -20,6 +20,7 @@ use quantumssh_core::transport::RekeyThresholds;
 use tokio::sync::broadcast;
 use tokio::time::Instant;
 use tracing::{error, info};
+use tracing_subscriber::fmt::MakeWriter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -268,12 +269,14 @@ fn resolve(
     }
 }
 
-/// One formatting layer (JSON or human) writing to stderr.
-fn fmt_layer<S>(format: LogFormat) -> Box<dyn Layer<S> + Send + Sync>
+/// One formatting layer (JSON or human) writing to `writer` (stderr in
+/// the binary).
+fn fmt_layer<S, W>(format: LogFormat, writer: W) -> Box<dyn Layer<S> + Send + Sync>
 where
     S: tracing::Subscriber + for<'a> LookupSpan<'a>,
+    W: for<'w> MakeWriter<'w> + Send + Sync + 'static,
 {
-    let base = tracing_subscriber::fmt::layer().with_writer(std::io::stderr);
+    let base = tracing_subscriber::fmt::layer().with_writer(writer);
     match format {
         // serde escapes control bytes; no custom formatter needed.
         LogFormat::Json => base.json().boxed(),
@@ -297,21 +300,35 @@ where
 ///   the guarantee exists before its first consumer.
 fn init_logging(format: LogFormat) {
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    subscriber(format, env_filter, std::io::stderr).init();
+}
 
-    let general = fmt_layer(format)
+/// The two-layer subscriber [`init_logging`] installs, writing to
+/// `writer`.
+///
+/// The audit layer admits every span, not only `audit` events: a layer
+/// that filters a span out never sees it, so its events would lose the
+/// `connection` span and the `peer_addr` ADR-0024 says they inherit.
+fn subscriber<W>(
+    format: LogFormat,
+    env_filter: EnvFilter,
+    writer: W,
+) -> impl tracing::Subscriber + Send + Sync
+where
+    W: for<'w> MakeWriter<'w> + Clone + Send + Sync + 'static,
+{
+    let general = fmt_layer(format, writer.clone())
         .with_filter(tracing_subscriber::filter::filter_fn(|meta| {
             meta.target() != "audit"
         }))
         .with_filter(env_filter);
 
-    let audit = fmt_layer(format).with_filter(tracing_subscriber::filter::filter_fn(|meta| {
-        meta.target() == "audit"
-    }));
+    let audit =
+        fmt_layer(format, writer).with_filter(tracing_subscriber::filter::filter_fn(|meta| {
+            meta.is_span() || meta.target() == "audit"
+        }));
 
-    tracing_subscriber::registry()
-        .with(general)
-        .with(audit)
-        .init();
+    tracing_subscriber::registry().with(general).with(audit)
 }
 
 /// Loads and checks the optional config file — `StrictModes` on the
@@ -650,5 +667,66 @@ mod tests {
         );
         assert_eq!(r.authorized_keys_path.as_deref(), Some("/cfg/ak"));
         assert_eq!(r.overrides, Vec::<&str>::new());
+    }
+
+    /// An in-memory log sink for [`subscriber`].
+    #[derive(Clone, Default)]
+    struct Sink(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for Sink {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().expect("sink").extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// The JSON lines that `emit` produces through the binary's two-layer
+    /// subscriber, under the `RUST_LOG`-style filter `directives`.
+    fn json_lines(directives: &str, emit: impl FnOnce()) -> Vec<String> {
+        let sink = Sink::default();
+        let writer = {
+            let sink = sink.clone();
+            move || sink.clone()
+        };
+        let subscriber = subscriber(LogFormat::Json, EnvFilter::new(directives), writer);
+        tracing::subscriber::with_default(subscriber, emit);
+        let bytes = sink.0.lock().expect("sink").clone();
+        String::from_utf8(bytes)
+            .expect("utf-8")
+            .lines()
+            .map(str::to_string)
+            .collect()
+    }
+
+    /// ADR-0024: every event inherits `peer_addr` from its `connection`
+    /// span, audit events included, and no `RUST_LOG` directive removes
+    /// them. Before, the audit layer filtered the span out with
+    /// everything not targeted `audit`, so its events carried no
+    /// `peer_addr`.
+    #[test]
+    fn audit_events_carry_the_connection_span() {
+        for directives in ["info", "off"] {
+            let lines = json_lines(directives, || {
+                let span = tracing::info_span!("connection", peer_addr = "192.0.2.7:50022");
+                let _entered = span.enter();
+                tracing::info!(
+                    target: "audit",
+                    authenticated_identity = "SHA256:test",
+                    auth_method = "publickey",
+                    "auth.succeeded"
+                );
+            });
+            let audit = lines
+                .iter()
+                .find(|l| l.contains("auth.succeeded"))
+                .unwrap_or_else(|| panic!("no audit line under {directives:?}: {lines:?}"));
+            assert!(
+                audit.contains(r#""peer_addr":"192.0.2.7:50022""#),
+                "audit line without peer_addr under {directives:?}: {audit}"
+            );
+        }
     }
 }
