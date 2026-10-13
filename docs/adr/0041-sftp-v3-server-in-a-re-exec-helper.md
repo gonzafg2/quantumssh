@@ -1,7 +1,7 @@
 # ADR 0041: SFTP v3 server in a re-exec helper — request handling, bounds and file operations
 
-- **Status:** Proposed
-- **Date:** — (set on acceptance; drafted 2026-10-12)
+- **Status:** Accepted
+- **Date:** 2026-10-26 (accepted with the implementing PR [#196](https://github.com/gonzafg2/quantumssh/pull/196), on RFC-0013's acceptance; drafted 2026-10-12)
 - **Deciders:** Project lead
 - **Related:** Implements [RFC-0013](../rfcs/0013-sftp-subsystem.md)
   (Draft, [#194](https://github.com/gonzafg2/quantumssh/pull/194)), which

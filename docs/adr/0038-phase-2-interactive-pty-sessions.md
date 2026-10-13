@@ -1,6 +1,6 @@
 # ADR 0038: Phase 2 interactive sessions — PTY allocation through a safe re-exec helper, and `tokio::process` for every channel child
 
-- **Status:** Accepted
+- **Status:** Accepted; §1's refusal of `subsystem` and §9's `request_type` values are partially superseded by [ADR-0041](0041-sftp-v3-server-in-a-re-exec-helper.md), which honours `subsystem "sftp"` and adds `"subsystem"`
 - **Date:** 2026-10-12 (accepted with the implementing PR [#193](https://github.com/gonzafg2/quantumssh/pull/193); drafted 2026-10-12)
 - **Deciders:** Project lead
 - **Related:** Extends [ADR-0023](0023-phase-1-channel-layer-scope.md)
@@ -38,6 +38,12 @@
 >   the PTY tests), and that keys with options get no PTY (under
 >   ADR-0040 they get no session at all); Links said the PTY module
 >   does not exist yet.
+> - **2026-10-26** ([PR #196](https://github.com/gonzafg2/quantumssh/pull/196)): Consequences
+>   said "Still one channel per connection; SFTP brings multiplexing".
+>   SFTP needs no multiplexing: OpenSSH's `sftp` and `scp` open one
+>   `session` channel and send `subsystem "sftp"` on it
+>   ([RFC-0013](../rfcs/0013-sftp-subsystem.md) §Motivation). Corrected
+>   in place.
 
 ## Context
 
@@ -695,7 +701,7 @@ the process-spawning path.
 
 - The shell stays fixed at `/bin/sh`, as for `exec`. A `[session]` shell
   key can be added compatibly later, before or after the freeze.
-- Still one channel per connection; SFTP brings multiplexing.
+- Still one channel per connection; SFTP does not change that (RFC-0013).
 - Terminal speeds are ignored.
 
 ## Alternatives considered

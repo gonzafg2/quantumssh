@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- SFTP: `sftp` and `scp` (which uses SFTP by default) work through
+  QuantumSSH's own SFTP version 3 server, a helper mode of the
+  `quantumssh` binary with OpenSSH's 256 KiB packet bound and the
+  `posix-rename`, `fsync`, `limits` and `expand-path` extensions. Files
+  are reached as the service account, starting in its home directory,
+  with no confinement until Phase 3
+  ([RFC-0013](docs/rfcs/0013-sftp-subsystem.md),
+  [ADR-0041](docs/adr/0041-sftp-v3-server-in-a-re-exec-helper.md)).
+- `exec.finished` carries `bytes_received` and `bytes_sent`, the channel
+  payload bytes moved in each direction, for every request type
+  ([ADR-0042](docs/adr/0042-exec-finished-channel-byte-counts.md)).
+
 - Interactive sessions: `pty-req`, `shell` and `window-change` on the
   session channel. The shell runs on a pseudo-terminal whose slave is
   owned by the service account with mode `0600`, as a session leader

@@ -1030,7 +1030,40 @@ defence; access control to data the user can read is the host's
 job. The QuantumSSH contribution is logging fidelity — a session
 recorded as having opened an SFTP subsystem, transferred N
 bytes, and closed it, even if the *content* of the transfer is
-not recorded.
+not recorded. That record is `exec.finished` with
+`request_type = "subsystem"` and its `bytes_received` and
+`bytes_sent` fields ([ADR-0042](adr/0042-exec-finished-channel-byte-counts.md)).
+
+#### 5.4.5 SFTP request handling
+
+**Mechanism.** An authenticated peer sends crafted SFTP packets to the
+server's SFTP helper. It chooses lengths, counts and handles to exhaust
+memory or file descriptors or to reach a parser or handler defect, or
+paths (`..`, symlinks, `~`) to reach files outside the directory the
+operator expected.
+
+**Assets at risk.** Service availability (§2.8), the integrity of the
+SFTP helper process, and the files the service account can reach.
+
+**Actors.** Authenticated peer upward.
+
+**ATT&CK reference.** `T1210` (Exploitation of Remote Services) for a
+parser or handler defect. Path tricks map to no technique, because
+Phase 2 grants no confinement to escape.
+
+**Test handle.**
+
+- The helper is first-party Rust with no `unsafe`. It runs in its own
+  single-threaded process, outside the server process that holds the
+  host key ([RFC-0013](rfcs/0013-sftp-subsystem.md)).
+- Every attacker-controlled length is bounded (a packet ≤ 256 KiB, the
+  read clamp, the handle cap), and malformed input ends the session.
+  The parser is a pure function, shaped for §6.2's Phase-3 fuzzing
+  harness.
+- The helper runs as the service account with no confinement in
+  Phase 2. Any path the service account can reach is reachable, which
+  is the access a `shell` session already has (§8.12). Confinement and
+  per-user identity are Phase 3.
 
 ### 5.5 Server lifecycle and operations
 
