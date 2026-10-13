@@ -118,6 +118,23 @@ async fn exec_on_a_pty_gets_a_controlling_terminal_term_size_and_modes() {
     assert_eq!(exit, Some(0));
 }
 
+/// RFC-0002: a PTY child, too, starts in `$HOME`, not in the directory
+/// the server was started from.
+#[tokio::test]
+async fn exec_on_a_pty_runs_in_the_home_directory() {
+    let home = std::env::var_os("HOME").expect("HOME is set for the test");
+    let expected = std::fs::canonicalize(&home).expect("HOME exists");
+    let (addr, host_key) = start().await;
+    let (mut stream, mut client, chan) = open_with_pty(addr, &host_key, 80, 24, &[]).await;
+    client
+        .write_sealed(&mut stream, &channel_exec(chan, b"pwd -P"))
+        .await;
+    let (out, _err, exit) = collect_session(&mut client, &mut stream, chan).await;
+    let pwd = String::from_utf8(out).expect("utf-8");
+    assert_eq!(std::path::Path::new(pwd.trim_end()), expected);
+    assert_eq!(exit, Some(0));
+}
+
 #[tokio::test]
 async fn shell_on_a_pty_reads_input_and_reports_its_exit() {
     let (addr, host_key) = start().await;
