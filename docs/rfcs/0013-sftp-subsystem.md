@@ -41,7 +41,9 @@ and the audit record. Implementing ADRs lock the details.
   ("SFTP brings multiplexing") and the Phase-2 scoping note expected that it
   would. It does not: `sftp` and `scp` open one `session` channel and send
   `subsystem "sftp"` on it (`sftp.c:2724-2730`, `clientloop.c:2799-2803`).
-  ADR-0023's one channel per connection therefore holds.
+  ADR-0023's one channel per connection therefore holds. The implementing
+  PR records this correction as a post-acceptance erratum on ADR-0038
+  (ADR-0015).
 
 ## Guide-level explanation
 
