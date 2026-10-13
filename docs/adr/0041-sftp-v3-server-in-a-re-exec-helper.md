@@ -193,7 +193,10 @@ show it only when `users-groups-by-id` is absent, which it is
   acceptance. It also records two errata under ADR-0015: ADR-0038's
   Consequences said SFTP "brings multiplexing" (RFC-0013 §Motivation), and
   ADR-0024's `exec.finished` row omits the `command` field, which the code
-  has emitted since Phase 1.
+  has emitted since Phase 1. ADR-0038's Status field also gains a pointer:
+  this ADR extends §9's `request_type` values with `"subsystem"`, a
+  partial supersession recorded the way ADR-0038 recorded its own on
+  ADR-0024.
 - **Unit tests:** framing (bounds, truncation, INIT first), each handler
   on a temporary directory, the RENAME semantics, REALPATH with a missing
   last component, the longname formatter, and the status mapping.
@@ -202,8 +205,10 @@ show it only when `users-groups-by-id` is absent, which it is
   (ADR-0038 §11).
 - **Interop gate (ADR-0020):** `sftp -b` (put, get, ls, rename, rm, mkdir,
   rmdir) and `scp` in both directions, each checked byte for byte.
-- **Threat model:** a §5.4 entry for SFTP request handling, and §5.4.4's
-  record pointing at ADR-0042.
+- **Threat model:** adds verbatim the §5.4.5 entry that RFC-0013 §6
+  carries (a new attack vector goes through the RFC process, threat
+  model "Maintenance"), and points §5.4.4's disposition at ADR-0042's
+  byte counts, as a factual update.
 
 ## Consequences
 
