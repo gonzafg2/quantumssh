@@ -161,6 +161,10 @@ Each directive is here for one reason:
   There is no hand-over between an old and a new process.
 - **No `TimeoutStopSec=`.** The extension in §2 sizes the stop timeout
   from the configured drain.
+- **No `WorkingDirectory=`.** The server starts every session in the
+  account's `$HOME` itself, as RFC-0002's execution contract requires
+  ([#199](https://github.com/gonzafg2/quantumssh/pull/199)). It does
+  not depend on the directory systemd starts it in, which is `/`.
 
 ### 4. What the unit leaves out, and why
 
