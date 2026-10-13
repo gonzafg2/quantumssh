@@ -527,13 +527,14 @@ async fn run(resolved: Resolved) -> ExitCode {
     // broadcast the accept loop and every connection subscribe to.
     // Exit code is 0 on both the drained and the aborted path — the
     // shutdown completed as commanded.
-    let (shutdown_tx, initial_rx) = broadcast::channel(4);
-    drop(initial_rx);
+    // The loop's receiver is the channel's first: it exists before the
+    // listener can send, so no signal is lost before `serve` runs.
+    let (shutdown_tx, loop_rx) = broadcast::channel(4);
     spawn_signal_listener(shutdown_tx.clone(), resolved.drain_timeout);
     // ADR-0043: under systemd, startup is finished — the port accepts
     // and a stop request drains.
     notify::notify(notify::READY);
-    match server.serve(shutdown_tx).await {
+    match server.serve(shutdown_tx, loop_rx).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             error!(message = %format!("accept loop failed: {e}"), "server.config_error");

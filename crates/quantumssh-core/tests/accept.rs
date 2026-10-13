@@ -1144,6 +1144,28 @@ async fn shutdown_disconnects_pre_auth_immediately_and_serve_returns() {
     result.expect("clean shutdown");
 }
 
+/// A signal that arrives before `serve` first runs — right after
+/// `READY=1`, under systemd (ADR-0043 §2) — still drains: the loop's
+/// receiver exists from the channel's creation. On this single-threaded
+/// test runtime the spawned `serve` has not been polled yet when the
+/// signal is sent.
+#[tokio::test]
+async fn shutdown_sent_before_serve_first_runs_is_not_lost() {
+    let (_addr, _hk, tx, serve) = start_server_full(
+        TEST_BUDGET,
+        RekeyThresholds::bsi_defaults(TEST_BUDGET),
+        Limits::default(),
+    )
+    .await;
+    tx.send(tokio::time::Instant::now() + Duration::from_secs(61))
+        .expect("the loop's receiver exists before serve runs");
+    let result = timeout(TEST_BUDGET, serve)
+        .await
+        .expect("serve returns instead of accepting forever")
+        .expect("join serve");
+    result.expect("clean shutdown");
+}
+
 #[tokio::test]
 async fn shutdown_drains_an_authenticated_session_at_the_deadline() {
     let (addr, host_key, tx, serve) = start_server_full(
