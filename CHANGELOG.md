@@ -33,12 +33,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- An `accept()` error no longer ends the server. Running out of file
-  descriptors or buffers (`EMFILE`, `ENFILE`, `ENOBUFS`, `ENOMEM`)
-  pauses accepting for one second while live sessions keep running.
-  At the default limits this happened around 200 concurrent `exec`
-  sessions under a 1024-descriptor limit.
-  - A failed pending connection is skipped at once.
+- An `accept()` error no longer ends the server. At the default limits
+  this happened around 200 concurrent `exec` sessions under a
+  1024-descriptor limit. Errors are now handled by kind:
+  - A pending connection that failed (reset, aborted, or a network
+    error) is skipped at once.
+  - Any other error pauses accepting for one second while live
+    sessions keep running. This covers running out of file descriptors
+    or buffers, and a security-module denial.
   - Only a broken listening socket (`EBADF`, `ENOTSOCK`, `EINVAL`)
     still ends the server, so that a service manager can restart it.
 

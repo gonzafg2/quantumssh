@@ -48,36 +48,46 @@ use crate::transport::{self, RekeyThresholds, TransportError};
 /// last resort for stuck tasks, not the routine path (ADR-0028).
 const ABORT_GRACE: Duration = Duration::from_secs(2);
 
-/// How long the loop stops accepting after `accept()` runs out of
-/// descriptors or buffers (#200). The listener stays readable while the
-/// pending connection waits, so retrying at once would spin; hyper and
-/// axum pause for the same second. Live connections are served
-/// meanwhile, and closing them is what frees the descriptors.
+/// How long the loop stops accepting after an `accept()` error that did
+/// not dispose of the pending connection (#200). The listener stays
+/// readable while that connection waits, so retrying at once would spin;
+/// hyper and axum pause for the same second. Live connections are served
+/// meanwhile; closing them is what frees descriptors.
 const ACCEPT_BACKOFF: Duration = Duration::from_secs(1);
 
 /// What an `accept()` error means for the loop (#200).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AcceptFailure {
-    /// The process or the system is out of descriptors or buffers:
-    /// pause for [`ACCEPT_BACKOFF`], then retry.
-    Resources,
     /// The listening socket itself is unusable: end the loop, so that
     /// the service manager restarts the server.
     Listener,
-    /// One pending connection failed (reset, aborted, or a network
-    /// error accept(2) passes on): retry at once, so that a peer cannot
-    /// stall the loop.
+    /// One pending connection failed and left the queue (reset, aborted,
+    /// or a network error accept(2) passes on): retry at once, so that a
+    /// peer cannot stall the loop.
     Connection,
+    /// Anything else: out of descriptors or buffers, a security-module
+    /// denial on the listener (`EACCES`, `EPERM`), or an error not known
+    /// to concern one connection. The connection may still be queued, so
+    /// pause for [`ACCEPT_BACKOFF`] rather than spin.
+    Pause,
 }
 
 fn classify_accept_error(error: &io::Error) -> AcceptFailure {
     use rustix::io::Errno;
     match Errno::from_io_error(error) {
-        Some(Errno::MFILE | Errno::NFILE | Errno::NOBUFS | Errno::NOMEM) => {
-            AcceptFailure::Resources
-        }
         Some(Errno::BADF | Errno::NOTSOCK | Errno::INVAL) => AcceptFailure::Listener,
-        _ => AcceptFailure::Connection,
+        Some(
+            Errno::CONNABORTED
+            | Errno::CONNRESET
+            | Errno::PROTO
+            | Errno::NOPROTOOPT
+            | Errno::OPNOTSUPP
+            | Errno::NETDOWN
+            | Errno::NETUNREACH
+            | Errno::HOSTDOWN
+            | Errno::HOSTUNREACH,
+        ) => AcceptFailure::Connection,
+        _ => AcceptFailure::Pause,
     }
 }
 
@@ -167,10 +177,11 @@ impl Server {
     ///
     /// Returns the underlying I/O error when the listening socket
     /// itself is unusable (`EBADF`, `ENOTSOCK`, `EINVAL`), so that the
-    /// service manager can restart the server. A failed pending
-    /// connection is skipped, and running out of descriptors or buffers
-    /// pauses accepting for [`ACCEPT_BACKOFF`]; neither ends the loop
-    /// (#200). A drained shutdown returns `Ok(())`.
+    /// service manager can restart the server. A pending connection that
+    /// failed is skipped at once; any other error, running out of
+    /// descriptors first among them, pauses accepting for
+    /// [`ACCEPT_BACKOFF`]. Neither ends the loop (#200). A drained
+    /// shutdown returns `Ok(())`.
     pub async fn serve(self, shutdown: broadcast::Sender<Instant>) -> io::Result<()> {
         let budget = self.handshake_timeout;
         let rekey = self.rekey;
@@ -184,7 +195,7 @@ impl Server {
         // Set on the first shutdown signal: when the remainder is
         // aborted. Accepting stops the moment it is `Some`.
         let mut abort_at: Option<Instant> = None;
-        // Set when `accept()` ran out of resources: accepting resumes
+        // Set when an `accept()` error paused accepting: it resumes
         // then (#200).
         let mut resume_at: Option<Instant> = None;
 
@@ -195,11 +206,11 @@ impl Server {
                         Ok(accepted) => accepted,
                         Err(e) => match classify_accept_error(&e) {
                             AcceptFailure::Listener => return Err(e),
-                            AcceptFailure::Resources => {
+                            AcceptFailure::Pause => {
                                 warn!(
                                     error = %e,
                                     pause_seconds = ACCEPT_BACKOFF.as_secs(),
-                                    "accept failed: out of resources; pausing accepts"
+                                    "accept failed; pausing accepts"
                                 );
                                 resume_at = Some(Instant::now() + ACCEPT_BACKOFF);
                                 continue;
@@ -658,16 +669,13 @@ mod tests {
         );
     }
 
-    /// #200: only a broken listening socket ends the loop; running out
-    /// of resources pauses it, and anything else is one failed pending
-    /// connection.
+    /// #200: only a broken listening socket ends the loop; only errors
+    /// known to concern one dequeued connection retry at once; anything
+    /// else, which may leave the connection queued, pauses.
     #[test]
     fn accept_errors_are_classified() {
         use rustix::io::Errno;
         let class = |errno: Errno| classify_accept_error(&io::Error::from(errno));
-        for errno in [Errno::MFILE, Errno::NFILE, Errno::NOBUFS, Errno::NOMEM] {
-            assert_eq!(class(errno), AcceptFailure::Resources, "{errno:?}");
-        }
         for errno in [Errno::BADF, Errno::NOTSOCK, Errno::INVAL] {
             assert_eq!(class(errno), AcceptFailure::Listener, "{errno:?}");
         }
@@ -675,15 +683,26 @@ mod tests {
             Errno::CONNABORTED,
             Errno::CONNRESET,
             Errno::PROTO,
-            Errno::HOSTUNREACH,
             Errno::NETUNREACH,
-            Errno::PERM,
+            Errno::HOSTUNREACH,
         ] {
             assert_eq!(class(errno), AcceptFailure::Connection, "{errno:?}");
         }
+        // Resources, and the SELinux/AppArmor denials that leave the
+        // connection queued (a retry at once would spin).
+        for errno in [
+            Errno::MFILE,
+            Errno::NFILE,
+            Errno::NOBUFS,
+            Errno::NOMEM,
+            Errno::ACCESS,
+            Errno::PERM,
+        ] {
+            assert_eq!(class(errno), AcceptFailure::Pause, "{errno:?}");
+        }
         assert_eq!(
             classify_accept_error(&io::Error::other("not an OS error")),
-            AcceptFailure::Connection
+            AcceptFailure::Pause
         );
     }
 }
