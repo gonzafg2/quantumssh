@@ -148,7 +148,7 @@ filter is compiled in, and no `RUST_LOG` directive reaches it
 |---|---|---|---|
 | `server.started` | INFO | no | `listen_addr` (string), `host_key_fingerprint` (string), `config_file` (string) |
 | `server.config_override` | INFO | no | `key` (enumeration: the config key a command-line flag overrode) |
-| `server.config_error` | ERROR | no | `class` (enumeration, §4), `error` (string, free text) |
+| `server.config_error` | ERROR | no | `class` (enumeration, §4), `error` (string, free text), `config_file` (string) |
 | `connection.accepted` | INFO | yes | — |
 | `connection.refused` | INFO | yes | `limit` (enumeration: `max_connections`, `max_half_open`, `max_per_source`, `accept_rate`) |
 | `connection.closed` | INFO | yes | `reason` (string, free text) |
@@ -163,10 +163,16 @@ filter is compiled in, and no `RUST_LOG` directive reaches it
 ### 4. Field semantics
 
 - **Presence.** Every field listed in §3 is always present on its
-  event. `command` is `""` for a shell (ADR-0038 §9). `config_file` is
-  `""` when the server started without `--config`. Only a field added
+  event. `command` is `""` for a shell (ADR-0038 §9). Only a field added
   after version 1 may be conditional, and only if the change that adds
   it says so (§5).
+- **`config_file`** names the configuration file the server was started
+  with: its canonical path once StrictModes resolved it, the path as
+  given when that failed, or `""` without `--config`. It is on
+  `server.started` and on every `server.config_error`. A failure after a
+  successful load, such as a bad host key or a taken port, therefore
+  still names the configuration that produced it, with no
+  `server.started` to pair it with.
 - **Enumerations are open.** A consumer must accept values it does not
   know.
 - **`authenticated_identity`** is `SHA256:` followed by the unpadded
@@ -244,8 +250,8 @@ pointer to it.
     `connection.accepted`, `connection.refused`, `connection.closed`
     and `kex.completed` join the audit tier;
   - `server.config_error`'s `message` becomes `class` plus `error`;
-  - `server.started` gains `config_file`, and `server.config_override`
-    joins the catalogue;
+  - `server.started` and `server.config_error` gain `config_file`, and
+    `server.config_override` joins the catalogue;
   - `exec.finished` lists `command`, which the code has emitted since
     `a3921d5` but ADR-0024's row omitted. An erratum is proposed for
     that in [#196](https://github.com/gonzafg2/quantumssh/pull/196).
@@ -281,7 +287,7 @@ This RFC needs no separate ADR. Its implementing PR does six things:
 - **The tier moves:** the six events move to the audit target.
 - **The new fields:** `server.started` gains `config_file`;
   `server.config_override` replaces the override diagnostic; and
-  `server.config_error` gains `class` and `error`.
+  `server.config_error` gains `class`, `error` and `config_file`.
 - **Golden tests:** one per catalogue event, each pinning the exact key
   set of its line, plus one diagnostic line.
 - **The flip:** the PR flips this RFC to Accepted and adds the Status
