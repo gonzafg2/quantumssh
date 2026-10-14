@@ -642,7 +642,9 @@ where
     /// terminated with `SSH_DISCONNECT_BY_APPLICATION` (11).
     ///
     /// Audit events (`auth.succeeded` / `auth.failed`) are emitted on
-    /// the `audit` target (ADR-0024).
+    /// the `audit` target (ADR-0024). Every failed request emits
+    /// `auth.failed`, the one that exhausts the attempt budget included,
+    /// before the disconnect.
     ///
     /// Returns the machine advanced to [`AuthAccepted`].
     ///
@@ -714,6 +716,12 @@ where
             if method != auth::AUTH_METHOD {
                 attempts += 1;
                 failures += 1;
+                warn!(
+                    target: "audit",
+                    auth_method = method,
+                    failure_count = failures,
+                    "auth.failed"
+                );
                 if attempts >= auth::MAX_AUTH_ATTEMPTS {
                     return Err(self
                         .reject_sealed(Rejection {
@@ -722,12 +730,6 @@ where
                         })
                         .await);
                 }
-                warn!(
-                    target: "audit",
-                    auth_method = method,
-                    failure_count = failures,
-                    "auth.failed"
-                );
                 let failure = auth::build_failure_payload(false);
                 self.write_sealed(&failure).await?;
                 continue;
@@ -751,6 +753,12 @@ where
             if key_algorithm != auth::KEY_ALGORITHM {
                 attempts += 1;
                 failures += 1;
+                warn!(
+                    target: "audit",
+                    auth_method = method,
+                    failure_count = failures,
+                    "auth.failed"
+                );
                 if attempts >= auth::MAX_AUTH_ATTEMPTS {
                     return Err(self
                         .reject_sealed(Rejection {
@@ -759,12 +767,6 @@ where
                         })
                         .await);
                 }
-                warn!(
-                    target: "audit",
-                    auth_method = method,
-                    failure_count = failures,
-                    "auth.failed"
-                );
                 let failure = auth::build_failure_payload(false);
                 self.write_sealed(&failure).await?;
                 continue;
@@ -820,6 +822,12 @@ where
                 let Some(ak) = authorized_keys.lookup(key_blob) else {
                     attempts += 1;
                     failures += 1;
+                    warn!(
+                        target: "audit",
+                        auth_method = method,
+                        failure_count = failures,
+                        "auth.failed"
+                    );
                     if attempts >= auth::MAX_AUTH_ATTEMPTS {
                         return Err(self
                             .reject_sealed(Rejection {
@@ -828,12 +836,6 @@ where
                             })
                             .await);
                     }
-                    warn!(
-                        target: "audit",
-                        auth_method = method,
-                        failure_count = failures,
-                        "auth.failed"
-                    );
                     let failure = auth::build_failure_payload(false);
                     self.write_sealed(&failure).await?;
                     continue;
@@ -871,6 +873,12 @@ where
                 }
                 attempts += 1;
                 failures += 1;
+                warn!(
+                    target: "audit",
+                    auth_method = method,
+                    failure_count = failures,
+                    "auth.failed"
+                );
                 if attempts >= auth::MAX_AUTH_ATTEMPTS {
                     return Err(self
                         .reject_sealed(Rejection {
@@ -879,12 +887,6 @@ where
                         })
                         .await);
                 }
-                warn!(
-                    target: "audit",
-                    auth_method = method,
-                    failure_count = failures,
-                    "auth.failed"
-                );
                 let failure = auth::build_failure_payload(false);
                 self.write_sealed(&failure).await?;
                 continue;
@@ -903,18 +905,8 @@ where
             // model §5.3.1). A known-key probe is not a failure, so it
             // does not touch `failures` or emit `auth.failed`.
             attempts += 1;
-            if attempts >= auth::MAX_AUTH_ATTEMPTS {
-                return Err(self
-                    .reject_sealed(Rejection {
-                        reason: "too-many-auth-attempts",
-                        disconnect_code: DISCONNECT_BY_APPLICATION,
-                    })
-                    .await);
-            }
-            if authorized_keys.lookup(key_blob).is_some() {
-                let pk_ok = auth::build_pk_ok(auth::KEY_ALGORITHM, key_blob);
-                self.write_sealed(&pk_ok).await?;
-            } else {
+            let known = authorized_keys.lookup(key_blob).is_some();
+            if !known {
                 // An unknown-key probe is a failure like any other.
                 failures += 1;
                 warn!(
@@ -923,6 +915,19 @@ where
                     failure_count = failures,
                     "auth.failed"
                 );
+            }
+            if attempts >= auth::MAX_AUTH_ATTEMPTS {
+                return Err(self
+                    .reject_sealed(Rejection {
+                        reason: "too-many-auth-attempts",
+                        disconnect_code: DISCONNECT_BY_APPLICATION,
+                    })
+                    .await);
+            }
+            if known {
+                let pk_ok = auth::build_pk_ok(auth::KEY_ALGORITHM, key_blob);
+                self.write_sealed(&pk_ok).await?;
+            } else {
                 let failure = auth::build_failure_payload(false);
                 self.write_sealed(&failure).await?;
             }
