@@ -703,11 +703,61 @@ async fn auth_pk_ok_then_signed_succeeds() {
     assert_eq!(success, vec![auth::SSH_MSG_USERAUTH_SUCCESS]);
 }
 
-#[tokio::test]
-async fn max_auth_attempts_disconnects() {
-    let auth_signing = SigningKey::from_bytes(&[77u8; 32]);
-    let auth_vk = auth_signing.verifying_key();
-    let _key_blob = auth_test_blob(&auth_vk);
+/// Records the `failure_count` of every `auth.failed` audit event. The
+/// test runtime is single-threaded, so the spawned server's events reach
+/// the thread's default subscriber.
+#[derive(Clone, Default)]
+struct AuthFailures(std::sync::Arc<std::sync::Mutex<Vec<u64>>>);
+
+impl tracing::Subscriber for AuthFailures {
+    fn enabled(&self, _: &tracing::Metadata<'_>) -> bool {
+        true
+    }
+    fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+        tracing::span::Id::from_u64(1)
+    }
+    fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+    fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+    fn event(&self, event: &tracing::Event<'_>) {
+        #[derive(Default)]
+        struct Fields {
+            auth_failed: bool,
+            count: Option<u64>,
+        }
+        impl tracing::field::Visit for Fields {
+            fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+                if field.name() == "message" {
+                    self.auth_failed = format!("{value:?}").trim_matches('"') == "auth.failed";
+                }
+            }
+            fn record_u64(&mut self, field: &tracing::field::Field, value: u64) {
+                if field.name() == "failure_count" {
+                    self.count = Some(value);
+                }
+            }
+        }
+        if event.metadata().target() != "audit" {
+            return;
+        }
+        let mut fields = Fields::default();
+        event.record(&mut fields);
+        if let (true, Some(count)) = (fields.auth_failed, fields.count) {
+            self.0.lock().expect("capture").push(count);
+        }
+    }
+    fn enter(&self, _: &tracing::span::Id) {}
+    fn exit(&self, _: &tracing::span::Id) {}
+}
+
+/// Spends the whole attempt budget with failing requests for an unknown
+/// key: signed requests when `signed`, unsigned probes otherwise. The
+/// attempt that exhausts the budget is audited like the others: twelve
+/// failures, twelve `auth.failed` events with `failure_count` 1 to 12,
+/// then the disconnect. Before, the twelfth was rejected before its
+/// event.
+async fn exhaust_auth_attempts(signed: bool) {
+    let audited = AuthFailures::default();
+    let _subscriber = tracing::subscriber::set_default(audited.clone());
 
     let (addr, host_key) = start_server(Duration::from_secs(30)).await;
     let mut stream = connect(addr).await;
@@ -732,14 +782,16 @@ async fn max_auth_attempts_disconnects() {
         w.put_string(b"testuser");
         w.put_string(b"ssh-connection");
         w.put_string(b"publickey");
-        w.put_boolean(true);
+        w.put_boolean(signed);
         w.put_string(b"ssh-ed25519");
         w.put_string(&[0xe0u8; 12]); // unknown blob
-        // RFC 8709 §6 nested encoding with wrong raw signature bytes.
-        let mut sig_blob = Writer::new();
-        sig_blob.put_string(b"ssh-ed25519");
-        sig_blob.put_string(&[0u8; 64]);
-        w.put_string(&sig_blob.into_bytes());
+        if signed {
+            // RFC 8709 §6 nested encoding with wrong raw signature bytes.
+            let mut sig_blob = Writer::new();
+            sig_blob.put_string(b"ssh-ed25519");
+            sig_blob.put_string(&[0u8; 64]);
+            w.put_string(&sig_blob.into_bytes());
+        }
         client.write_sealed(&mut stream, &w.into_bytes()).await;
 
         let reply = client.read_sealed(&mut stream).await;
@@ -753,9 +805,21 @@ async fn max_auth_attempts_disconnects() {
             let mut r = Reader::new(&reply);
             assert_eq!(r.byte().unwrap(), kex::SSH_MSG_DISCONNECT, "attempt {i}");
             assert_eq!(r.uint32().unwrap(), 11, "DISCONNECT_BY_APPLICATION");
+            let counts = audited.0.lock().expect("capture").clone();
+            assert_eq!(counts, (1..=12).collect::<Vec<u64>>());
             return;
         }
     }
+}
+
+#[tokio::test]
+async fn max_auth_attempts_disconnects() {
+    exhaust_auth_attempts(true).await;
+}
+
+#[tokio::test]
+async fn max_auth_attempts_by_unknown_key_probes_disconnects() {
+    exhaust_auth_attempts(false).await;
 }
 
 #[tokio::test]
