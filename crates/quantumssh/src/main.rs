@@ -1,11 +1,12 @@
 //! `QuantumSSH` server binary — a thin entrypoint (ADR-0017): parse the
 //! CLI, load the optional TOML config (RFC-0010 / ADR-0029), construct
 //! the log subscriber (ADR-0024), build the Tokio runtime (ADR-0022),
-//! and hand off to `quantumssh_core`.
+//! and hand off to `quantumssh_core`, telling systemd when the server
+//! is ready and when it starts stopping (ADR-0043).
 
 use std::io::IsTerminal;
 use std::net::SocketAddr;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Duration;
 
@@ -27,6 +28,7 @@ use zeroize::Zeroizing;
 
 mod config;
 mod log_fields;
+mod notify;
 use config::{ConfigFile, LogFormat, TrustedClass};
 use log_fields::EscapingFields;
 
@@ -34,10 +36,11 @@ const DEFAULT_LISTEN: &str = "127.0.0.1:2222";
 const DEFAULT_HANDSHAKE_TIMEOUT_SECS: u64 = 30;
 /// ADR-0028: graceful-shutdown drain deadline default.
 const DEFAULT_DRAIN_TIMEOUT_SECS: u64 = 30;
-/// ADR-0028: each exec holds up to four `spawn_blocking` tasks
-/// (stdout/stderr/stdin pumps and the reap), so the blocking pool is
-/// sized from the connection cap — admission control, not thread-pool
-/// starvation, is what bounds concurrency.
+/// ADR-0028 sized the blocking pool from the connection cap for the four
+/// `spawn_blocking` tasks each exec held. ADR-0038 moved those onto
+/// `tokio::process`, so the channel layer no longer uses the pool; the
+/// bound stays as an upper limit, since tokio starts blocking threads on
+/// demand.
 const BLOCKING_THREADS_PER_CONNECTION: usize = 4;
 
 const USAGE: &str = "\
@@ -375,6 +378,10 @@ fn load_authorized_keys(path: &str) -> Option<Arc<AuthorizedKeys>> {
 }
 
 fn main() -> ExitCode {
+    // First, before CLI parsing, configuration, logging or the runtime:
+    // a PTY child re-executes this binary in its helper mode, which never
+    // returns (ADR-0038 §5).
+    quantumssh_core::pty::run_helper_if_requested();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let cli = match parse_cli(&args) {
         Ok(CliOutcome::Run(cli)) => cli,
@@ -435,10 +442,24 @@ fn main() -> ExitCode {
     runtime.block_on(run(resolved))
 }
 
+/// This binary, re-executed for PTY children (ADR-0038 §5). On Linux
+/// `/proc/self/exe` names the running image even if the file on disk was
+/// replaced; elsewhere the path the process was started from. `None`
+/// (no current executable) refuses `pty-req`.
+fn pty_helper() -> Option<PathBuf> {
+    if cfg!(target_os = "linux") {
+        Some(PathBuf::from("/proc/self/exe"))
+    } else {
+        std::env::current_exe().ok()
+    }
+}
+
 /// The SIGTERM/SIGINT listener (ADR-0028): the first signal broadcasts
 /// the drain deadline; a second broadcasts an immediate one, skipping
-/// what remains of the drain.
-async fn signal_listener(tx: broadcast::Sender<Instant>, drain: Duration) {
+/// what remains of the drain. The handlers are installed before this
+/// returns, so a stop request that follows `READY=1` always drains
+/// (ADR-0043); the first signal also tells systemd the drain started.
+fn spawn_signal_listener(tx: broadcast::Sender<Instant>, drain: Duration) {
     use tokio::signal::unix::{SignalKind, signal};
     let (Ok(mut term), Ok(mut int)) = (
         signal(SignalKind::terminate()),
@@ -447,15 +468,18 @@ async fn signal_listener(tx: broadcast::Sender<Instant>, drain: Duration) {
         tracing::warn!("cannot install SIGTERM/SIGINT handlers; graceful shutdown unavailable");
         return;
     };
-    tokio::select! { _ = term.recv() => {}, _ = int.recv() => {} }
-    info!(
-        drain_seconds = drain.as_secs(),
-        "shutdown signal received; draining"
-    );
-    let _ = tx.send(Instant::now() + drain);
-    tokio::select! { _ = term.recv() => {}, _ = int.recv() => {} }
-    info!("second shutdown signal received; aborting the drain");
-    let _ = tx.send(Instant::now());
+    drop(tokio::spawn(async move {
+        tokio::select! { _ = term.recv() => {}, _ = int.recv() => {} }
+        info!(
+            drain_seconds = drain.as_secs(),
+            "shutdown signal received; draining"
+        );
+        notify::notify(&notify::stopping(drain));
+        let _ = tx.send(Instant::now() + drain);
+        tokio::select! { _ = term.recv() => {}, _ = int.recv() => {} }
+        info!("second shutdown signal received; aborting the drain");
+        let _ = tx.send(Instant::now());
+    }));
 }
 
 async fn run(resolved: Resolved) -> ExitCode {
@@ -489,6 +513,7 @@ async fn run(resolved: Resolved) -> ExitCode {
         // mirrors the handshake budget.
         rekey: RekeyThresholds::bsi_defaults(resolved.handshake_timeout),
         limits: resolved.limits,
+        pty_helper: pty_helper(),
     };
     let server = match Server::bind(&config).await {
         Ok(server) => server,
@@ -502,13 +527,14 @@ async fn run(resolved: Resolved) -> ExitCode {
     // broadcast the accept loop and every connection subscribe to.
     // Exit code is 0 on both the drained and the aborted path — the
     // shutdown completed as commanded.
-    let (shutdown_tx, initial_rx) = broadcast::channel(4);
-    drop(initial_rx);
-    drop(tokio::spawn(signal_listener(
-        shutdown_tx.clone(),
-        resolved.drain_timeout,
-    )));
-    match server.serve(shutdown_tx).await {
+    // The loop's receiver is the channel's first: it exists before the
+    // listener can send, so no signal is lost before `serve` runs.
+    let (shutdown_tx, loop_rx) = broadcast::channel(4);
+    spawn_signal_listener(shutdown_tx.clone(), resolved.drain_timeout);
+    // ADR-0043: under systemd, startup is finished — the port accepts
+    // and a stop request drains.
+    notify::notify(notify::READY);
+    match server.serve(shutdown_tx, loop_rx).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             error!(message = %format!("accept loop failed: {e}"), "server.config_error");

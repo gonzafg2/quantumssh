@@ -7,6 +7,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- systemd integration: the server sends `READY=1` once it listens and
+  `STOPPING=1`, with a stop timeout that covers the drain, when a
+  shutdown starts (`Type=notify`, implemented on the standard library
+  without `libsystemd`). A reference unit,
+  `contrib/systemd/quantumssh.service`, and an operator guide,
+  `docs/deployment.md`, cover the service account, the file layout,
+  port 22 and the stop semantics. CI runs the unit under a real
+  systemd ([ADR-0043](docs/adr/0043-systemd-notify-service-and-reference-unit.md)).
+- Interactive sessions: `pty-req`, `shell` and `window-change` on the
+  session channel. The shell runs on a pseudo-terminal whose slave is
+  owned by the service account with mode `0600`, as a session leader
+  with the slave as its controlling terminal, through a re-exec helper
+  mode of the `quantumssh` binary (no first-party `unsafe`). `shell`
+  without a PTY runs on pipes
+  ([ADR-0038](docs/adr/0038-phase-2-interactive-pty-sessions.md)).
+- The `exec.started` and `exec.finished` audit events carry two new
+  fields, `request_type` (`"exec"` or `"shell"`) and `pty` (a boolean).
+  A shell session is an `exec` event whose `command` is empty
+  (ADR-0038 §9).
+
+### Changed
+
+- A remote command killed by a signal on RFC 4254 §6.10's list (`ABRT`,
+  `ALRM`, `FPE`, `HUP`, `ILL`, `INT`, `KILL`, `PIPE`, `QUIT`, `SEGV`,
+  `TERM`, `USR1`, `USR2`) is now reported with `exit-signal` instead of
+  `exit-status` 128 + n. OpenSSH's `ssh` does not parse `exit-signal`,
+  so it now exits with 255 in that case. Other signals still report
+  128 + n, and the audit `exit_status` keeps 128 + n for every signal
+  ([ADR-0038](docs/adr/0038-phase-2-interactive-pty-sessions.md) §8).
+
+### Fixed
+
+- `exec` and `shell` commands, on pipes or on a PTY, now start in the
+  service account's `$HOME`, as RFC-0002's execution contract states.
+  Before, they inherited the directory the server was started from,
+  which is `/` under systemd. They fall back to `/` when `HOME` is
+  unset or not a directory
+  ([RFC-0002](docs/rfcs/0002-threat-model-phase1-uid-model-and-non-goal.md)).
+- An `accept()` error no longer ends the server. At the default limits
+  this happened around 200 concurrent `exec` sessions under a
+  1024-descriptor limit. Errors are now handled by kind:
+  - A pending connection that failed (reset, aborted, or a network
+    error) is skipped at once.
+  - Any other error pauses accepting for one second while live
+    sessions keep running. This covers running out of file descriptors
+    or buffers, and a security-module denial.
+  - Only a broken listening socket (`EBADF`, `ENOTSOCK`, `EINVAL`)
+    still ends the server, so that a service manager can restart it.
+
+  ([#200](https://github.com/gonzafg2/quantumssh/issues/200)).
+
+### Security
+
+- An `authorized_keys` line that carries options (`from=`, `command=`,
+  `restrict`, …) now stops the server at startup with
+  `server.config_error`. Before, the options were ignored and the key
+  loaded unrestricted. No option is enforced yet: remove the line, or
+  remove its options to grant the key unrestricted access on purpose
+  ([ADR-0040](docs/adr/0040-refuse-authorized-keys-options-until-enforced.md),
+  [#183](https://github.com/gonzafg2/quantumssh/issues/183)).
+
 ## [0.0.1] - 2026-07-20
 
 ### Added

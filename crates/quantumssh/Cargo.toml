@@ -30,6 +30,14 @@ rustix     = { workspace = true }
 # `tracing::subscriber::with_default` (scoped test subscriber) is
 # behind the `std` feature the runtime dependency leaves off.
 tracing = { workspace = true, features = ["std"] }
+# The PTY integration tests (ADR-0038 §11) drive the server through the
+# SSH test client shared with quantumssh-core's tests, which needs these
+# primitives and Tokio's networking. All are already in the lockfile.
+tokio         = { workspace = true, features = ["macros", "rt-multi-thread", "net", "io-util", "time", "sync"] }
+ml-kem        = { workspace = true }
+x25519-dalek  = { workspace = true }
+ed25519-dalek = { workspace = true }
+sha2          = { workspace = true }
 
 [lints]
 workspace = true

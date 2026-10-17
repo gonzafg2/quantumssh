@@ -1,8 +1,10 @@
 //! The RFC 4254 connection layer, scoped by ADR-0023 to exactly **one
-//! `session` channel carrying one `exec` request**, then a clean close.
+//! `session` channel running one child**, then a clean close. The child is
+//! an `exec` or a `shell`, on pipes or, after a `pty-req`, on a
+//! pseudo-terminal (ADR-0038).
 //!
 //! The [`drive`] loop is the single owner of all wire I/O for the
-//! post-auth phase. The child process runs on the blocking pool
+//! post-auth phase. The child process runs under `tokio::process`
 //! ([`crate::exec`]); the driver multiplexes inbound packets against the
 //! child's stdout/stderr/exit and stdin-consumption acks with a
 //! `tokio::select!`, never holding two `&mut` borrows of the wire at
@@ -28,7 +30,8 @@ use tokio::sync::mpsc;
 use tokio::time::Instant;
 use tracing::info;
 
-use crate::exec::{self, ChildChunk, ChildIo};
+use crate::exec::{self, ChildChunk, ChildIo, ChildScope, Program};
+use crate::pty::{self, PtyPair, Size};
 use crate::transport::{Expect, RekeyStep, Session, TransportError};
 use crate::wire::{Reader, Writer};
 
@@ -154,7 +157,13 @@ impl ChannelState {
 /// enum without losing orthogonal state; the `ChannelState` enum carries
 /// the primary phase.
 #[allow(clippy::struct_excessive_bools)]
-struct Driver {
+struct Driver<'a> {
+    /// The connection's children (ADR-0038 §6); the child spawns into it,
+    /// and a PTY child through its helper executable (ADR-0038 §5).
+    children: &'a ChildScope,
+    /// A pair allocated by `pty-req`, waiting for the child that starts
+    /// on it.
+    pty: Option<PendingPty>,
     identity: String,
     uid: u32,
     state: ChannelState,
@@ -182,14 +191,22 @@ struct Driver {
     early_close: bool,
     /// The child's exit status, once known.
     exit_status: Option<i32>,
+    /// The listed signal that killed the child, with its core-dumped flag:
+    /// sent as `exit-signal` instead of `exit-status` (ADR-0038 §8).
+    exit_signal: Option<(&'static str, bool)>,
     /// Both child output pumps have hit EOF (and the reap reported exit).
     child_out_closed: bool,
     /// The consumed-acks channel has closed (stdin pump finished).
     consumed_closed: bool,
-    /// The accepted `exec` command — `Some` once an `exec` is accepted (so
-    /// an `exec.finished` audit event is owed) and the value the `exec.*`
-    /// events carry as the structured `command` field (ADR-0024).
+    /// The accepted `exec` command, or the empty string for a `shell` —
+    /// `Some` once a child is accepted (so an `exec.finished` audit event
+    /// is owed) and the value the `exec.*` events carry as the structured
+    /// `command` field (ADR-0024).
     command: Option<String>,
+    /// The `request_type` audit field: `"exec"` or `"shell"` (ADR-0038 §9).
+    request_type: &'static str,
+    /// The `pty` audit field: the child runs on a pseudo-terminal.
+    on_pty: bool,
     /// `exec.finished` has been emitted (emit exactly once).
     finished_emitted: bool,
     /// Reply-generating inbound messages buffered during a re-key's
@@ -206,15 +223,17 @@ struct Driver {
 /// — so the audit trail cannot lose its terminal record. Runs before the
 /// fields drop, so the event precedes the child teardown that
 /// [`ChildIo`]'s own `Drop` triggers. No-op when already emitted.
-impl Drop for Driver {
+impl Drop for Driver<'_> {
     fn drop(&mut self) {
         self.emit_finished();
     }
 }
 
-impl Driver {
-    fn new(identity: String) -> Self {
+impl<'a> Driver<'a> {
+    fn new(identity: String, children: &'a ChildScope) -> Self {
         Self {
+            children,
+            pty: None,
             identity,
             uid: exec::executing_uid(),
             state: ChannelState::BeforeOpen,
@@ -229,9 +248,12 @@ impl Driver {
             client_eof: false,
             early_close: false,
             exit_status: None,
+            exit_signal: None,
             child_out_closed: false,
             consumed_closed: false,
             command: None,
+            request_type: "exec",
+            on_pty: false,
             finished_emitted: false,
             deferred: Vec::new(),
             child: None,
@@ -293,11 +315,14 @@ impl Driver {
 /// [`TransportError::Rejected`] on a protocol violation (the
 /// `SSH_MSG_DISCONNECT` is already sent), or [`TransportError::Io`] on a
 /// connection failure.
-pub(crate) async fn drive<S>(session: &mut Expect<S, Session>) -> Result<(), TransportError>
+pub(crate) async fn drive<S>(
+    session: &mut Expect<S, Session>,
+    children: &ChildScope,
+) -> Result<(), TransportError>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
-    let mut d = Driver::new(session.identity().to_string());
+    let mut d = Driver::new(session.identity().to_string(), children);
 
     loop {
         // Outbound channel work is suppressed during a re-key (RFC 4253 §9
@@ -383,10 +408,15 @@ where
             }
             chunk = recv_opt_out(out), if want_output => {
                 match chunk {
+                    // The client closed first: its output has no sink.
+                    Some(ChildChunk::Stdout(_) | ChildChunk::Stderr(_)) if d.early_close => {}
                     Some(ChildChunk::Stdout(b)) => d.pending_out = Some(PendingOut::new(Stream::Stdout, b)),
                     Some(ChildChunk::Stderr(b)) => d.pending_out = Some(PendingOut::new(Stream::Stderr, b)),
-                    Some(ChildChunk::Exited(code)) => {
-                        d.exit_status.get_or_insert(code);
+                    Some(ChildChunk::Exited(exit)) => {
+                        if d.exit_status.is_none() {
+                            d.exit_status = Some(exit.code);
+                            d.exit_signal = exit.signal;
+                        }
                         if d.state == ChannelState::Running {
                             d.state = ChannelState::Draining;
                         }
@@ -436,7 +466,7 @@ async fn recv_opt_consumed(rx: Option<&mut mpsc::UnboundedReceiver<u32>>) -> Opt
     }
 }
 
-impl Driver {
+impl Driver<'_> {
     /// (A) Sends as much pending output as the client window and max
     /// packet allow, splitting one chunk across packets as needed.
     async fn flush_output<S>(
@@ -531,9 +561,10 @@ impl Driver {
         self.state == ChannelState::Draining && self.child_out_closed && self.pending_out.is_none()
     }
 
-    /// (D) Sends the terminal sequence. On a normal exit: `exit-status`,
-    /// `CHANNEL_EOF`, `CHANNEL_CLOSE`, then awaits the client's close. On
-    /// an early client close: just our `CHANNEL_CLOSE`, and we are done.
+    /// (D) Sends the terminal sequence. On a normal exit: `exit-status`
+    /// (or `exit-signal` for a death by a listed signal), `CHANNEL_EOF`,
+    /// `CHANNEL_CLOSE`, then awaits the client's close. On an early client
+    /// close: just our `CHANNEL_CLOSE`, and we are done.
     async fn send_terminal<S>(
         &mut self,
         session: &mut Expect<S, Session>,
@@ -546,7 +577,11 @@ impl Driver {
             self.state = ChannelState::Closed;
             return Ok(());
         }
-        if let Some(code) = self.exit_status {
+        if let Some((name, core_dumped)) = self.exit_signal {
+            session
+                .write_packet(&build_exit_signal(self.peer_chan, name, core_dumped))
+                .await?;
+        } else if let Some(code) = self.exit_status {
             let status = u32::from_ne_bytes(code.to_ne_bytes());
             session
                 .write_packet(&build_exit_status(self.peer_chan, status))
@@ -570,6 +605,8 @@ impl Driver {
                 authenticated_identity = %self.identity,
                 executing_uid = self.uid,
                 command = %command,
+                request_type = self.request_type,
+                pty = self.on_pty,
                 exit_status,
                 "exec.finished"
             );
@@ -722,49 +759,168 @@ impl Driver {
         if recipient != LOCAL_CHANNEL {
             return Err(session.protocol_disconnect("unknown-channel").await);
         }
-        if rtype == b"exec" && self.state == ChannelState::Idle {
-            let Ok(cmd_bytes) = r.string(COMMAND_BOUND) else {
-                return Err(session.protocol_disconnect("malformed-exec-request").await);
-            };
-            let Ok(command) = std::str::from_utf8(cmd_bytes) else {
-                return Err(session.protocol_disconnect("non-utf8-command").await);
-            };
-            self.accept_exec(session, command, want_reply).await
-        } else {
-            // Any other request (pty-req, shell, env, subsystem, signal,
-            // window-change, or a second exec) is refused.
-            if want_reply {
-                session
-                    .write_packet(&build_channel_msg(SSH_MSG_CHANNEL_FAILURE, self.peer_chan))
-                    .await?;
+        match rtype {
+            b"exec" if self.state == ChannelState::Idle => {
+                let Ok(cmd_bytes) = r.string(COMMAND_BOUND) else {
+                    return Err(session.protocol_disconnect("malformed-exec-request").await);
+                };
+                let Ok(command) = std::str::from_utf8(cmd_bytes) else {
+                    return Err(session.protocol_disconnect("non-utf8-command").await);
+                };
+                self.start(session, Program::Exec(command), want_reply)
+                    .await
             }
-            Ok(())
+            b"shell" if self.state == ChannelState::Idle => {
+                self.start(session, Program::Shell, want_reply).await
+            }
+            b"pty-req" => self.on_pty_req(session, r, want_reply).await,
+            b"window-change" => self.on_window_change(session, r, want_reply).await,
+            // Any other request (env, subsystem, x11-req, agent forwarding,
+            // signal, break, or a second exec/shell) is refused.
+            _ => self.reply(session, want_reply, false).await,
         }
     }
 
-    async fn accept_exec<S>(
+    /// Replies `SSH_MSG_CHANNEL_SUCCESS` or `_FAILURE`, only when
+    /// `want_reply` is set (RFC 4254 §5.4).
+    async fn reply<S>(
+        &self,
+        session: &mut Expect<S, Session>,
+        want_reply: bool,
+        success: bool,
+    ) -> Result<(), TransportError>
+    where
+        S: AsyncRead + AsyncWrite + Unpin + Send,
+    {
+        if want_reply {
+            let msg = if success {
+                SSH_MSG_CHANNEL_SUCCESS
+            } else {
+                SSH_MSG_CHANNEL_FAILURE
+            };
+            session
+                .write_packet(&build_channel_msg(msg, self.peer_chan))
+                .await?;
+        }
+        Ok(())
+    }
+
+    /// `pty-req` (RFC 4254 §6.2, ADR-0038 §2): every field is bounded, and
+    /// a malformed one disconnects. A request in the wrong state, a second
+    /// one, a refused `TERM`, no helper, or a failed allocation is refused
+    /// and leaves no PTY state behind.
+    async fn on_pty_req<S>(
         &mut self,
         session: &mut Expect<S, Session>,
-        command: &str,
+        r: &mut Reader<'_>,
         want_reply: bool,
     ) -> Result<(), TransportError>
     where
         S: AsyncRead + AsyncWrite + Unpin + Send,
     {
+        let (Ok(term), Ok(cols), Ok(rows), Ok(width_px), Ok(height_px), Ok(blob)) = (
+            r.string(pty::TERM_BOUND),
+            r.uint32(),
+            r.uint32(),
+            r.uint32(),
+            r.uint32(),
+            r.string(pty::MODES_BOUND),
+        ) else {
+            return Err(session.protocol_disconnect("malformed-pty-req").await);
+        };
+        let Ok(modes) = pty::Modes::parse(blob) else {
+            return Err(session.protocol_disconnect("truncated-terminal-mode").await);
+        };
+        let size = Size {
+            cols,
+            rows,
+            width_px,
+            height_px,
+        };
+        let allowed = self.state == ChannelState::Idle
+            && self.pty.is_none()
+            && self.children.pty_helper().is_some()
+            && pty::valid_term(term);
+        // `valid_term` admits ASCII only, so the conversion cannot fail.
+        let pending = allowed
+            .then(|| {
+                let term = std::str::from_utf8(term).ok()?.to_string();
+                let pair = pty::allocate(&modes, size).ok()?;
+                Some(PendingPty { pair, term })
+            })
+            .flatten();
+        // A refusal leaves an already granted PTY in place.
+        let granted = pending.is_some();
+        if granted {
+            self.pty = pending;
+        }
+        self.reply(session, want_reply, granted).await
+    }
+
+    /// `window-change` (RFC 4254 §6.7): applied to the master while a PTY
+    /// is allocated, with `pty-req`'s dimension rule; refused otherwise.
+    async fn on_window_change<S>(
+        &self,
+        session: &mut Expect<S, Session>,
+        r: &mut Reader<'_>,
+        want_reply: bool,
+    ) -> Result<(), TransportError>
+    where
+        S: AsyncRead + AsyncWrite + Unpin + Send,
+    {
+        let (Ok(cols), Ok(rows), Ok(width_px), Ok(height_px)) =
+            (r.uint32(), r.uint32(), r.uint32(), r.uint32())
+        else {
+            return Err(session.protocol_disconnect("malformed-window-change").await);
+        };
+        let size = Size {
+            cols,
+            rows,
+            width_px,
+            height_px,
+        };
+        let applied = match (&self.pty, &self.child) {
+            (Some(pending), _) => pty::resize(&pending.pair.master, size).is_ok(),
+            (None, Some(child)) if self.on_pty => child.resize(size).is_ok(),
+            _ => false,
+        };
+        self.reply(session, want_reply, applied).await
+    }
+
+    /// Starts the channel's one child: on the PTY a `pty-req` allocated,
+    /// or on pipes. Every start emits `exec.started` (ADR-0038 §9).
+    async fn start<S>(
+        &mut self,
+        session: &mut Expect<S, Session>,
+        program: Program<'_>,
+        want_reply: bool,
+    ) -> Result<(), TransportError>
+    where
+        S: AsyncRead + AsyncWrite + Unpin + Send,
+    {
+        let (command, request_type) = match program {
+            Program::Exec(command) => (command, "exec"),
+            Program::Shell => ("", "shell"),
+        };
+        let pending = self.pty.take();
         self.command = Some(command.to_string());
+        self.request_type = request_type;
+        self.on_pty = pending.is_some();
         info!(
             target: "audit",
             authenticated_identity = %self.identity,
             executing_uid = self.uid,
             command = %command,
+            request_type,
+            pty = self.on_pty,
             "exec.started"
         );
-        if want_reply {
-            session
-                .write_packet(&build_channel_msg(SSH_MSG_CHANNEL_SUCCESS, self.peer_chan))
-                .await?;
-        }
-        if let Ok(child) = exec::spawn(command) {
+        self.reply(session, want_reply, true).await?;
+        let spawned = match pending {
+            Some(pending) => exec::spawn_pty(program, pending.pair, &pending.term, self.children),
+            None => exec::spawn(program, self.children),
+        };
+        if let Ok(child) = spawned {
             self.child = Some(child);
             self.state = ChannelState::Running;
             // Any stdin buffered before the exec stays in `pre_exec_stdin`
@@ -884,11 +1040,15 @@ impl Driver {
             self.state = ChannelState::Closed;
             return Ok(());
         }
-        // Client closed first: relinquish exit-status, kill + reap the
-        // child, then reply with our CLOSE once it drains.
+        // Client closed first: relinquish exit-status, drop the output it
+        // can no longer receive, kill + reap the child, then reply with our
+        // CLOSE once the reap reports the exit — not once the pipes reach
+        // EOF, which a process the leader left behind can delay (#190).
         self.early_close = true;
+        self.pending_out = None;
         if let Some(child) = self.child.as_mut() {
             child.close_stdin();
+            child.discard_output();
             child.kill();
         } else {
             // No child running (Idle or already draining): close now.
@@ -897,6 +1057,13 @@ impl Driver {
         self.state = ChannelState::Draining;
         Ok(())
     }
+}
+
+/// A pair allocated by `pty-req`, with its validated `TERM` (empty means
+/// no `TERM` in the child's environment).
+struct PendingPty {
+    pair: PtyPair,
+    term: String,
 }
 
 // ---- pure frame builders (unit-tested) ----
@@ -954,6 +1121,21 @@ fn build_exit_status(peer_chan: u32, status: u32) -> Vec<u8> {
     w.put_string(b"exit-status");
     w.put_boolean(false);
     w.put_uint32(status);
+    w.into_bytes()
+}
+
+/// RFC 4254 §6.10 `exit-signal`: the name without `SIG`, the core-dumped
+/// flag, and an empty message and language tag, as sshd sends.
+fn build_exit_signal(peer_chan: u32, name: &str, core_dumped: bool) -> Vec<u8> {
+    let mut w = Writer::new();
+    w.put_byte(SSH_MSG_CHANNEL_REQUEST);
+    w.put_uint32(peer_chan);
+    w.put_string(b"exit-signal");
+    w.put_boolean(false);
+    w.put_string(name.as_bytes());
+    w.put_boolean(core_dumped);
+    w.put_string(b"");
+    w.put_string(b"");
     w.into_bytes()
 }
 
@@ -1022,6 +1204,21 @@ mod tests {
         assert_eq!(r.string(32).unwrap(), b"exit-status");
         assert!(!r.boolean().unwrap());
         assert_eq!(r.uint32().unwrap(), 0);
+    }
+
+    #[test]
+    fn exit_signal_request_carries_name_core_flag_and_empty_strings() {
+        let frame = build_exit_signal(7, "SEGV", true);
+        let (msg, mut r) = read_msg(&frame);
+        assert_eq!(msg, SSH_MSG_CHANNEL_REQUEST);
+        assert_eq!(r.uint32().unwrap(), 7);
+        assert_eq!(r.string(32).unwrap(), b"exit-signal");
+        assert!(!r.boolean().unwrap());
+        assert_eq!(r.string(32).unwrap(), b"SEGV");
+        assert!(r.boolean().unwrap());
+        assert_eq!(r.string(32).unwrap(), b"");
+        assert_eq!(r.string(32).unwrap(), b"");
+        r.finish().unwrap();
     }
 
     #[test]
@@ -1101,6 +1298,79 @@ mod tests {
         fn exit(&self, _: &tracing::span::Id) {}
     }
 
+    /// Scoped subscriber that records every field of each event as
+    /// `(name, value)` pairs.
+    #[derive(Clone, Default)]
+    struct Fields(std::sync::Arc<std::sync::Mutex<Vec<EventFields>>>);
+    type EventFields = Vec<(String, String)>;
+
+    impl tracing::Subscriber for Fields {
+        fn enabled(&self, _: &tracing::Metadata<'_>) -> bool {
+            true
+        }
+        fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+            tracing::span::Id::from_u64(1)
+        }
+        fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+        fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+        fn event(&self, event: &tracing::Event<'_>) {
+            struct All(Vec<(String, String)>);
+            impl tracing::field::Visit for All {
+                fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+                    self.0.push((field.name().to_string(), value.to_string()));
+                }
+                fn record_debug(
+                    &mut self,
+                    field: &tracing::field::Field,
+                    value: &dyn std::fmt::Debug,
+                ) {
+                    self.0
+                        .push((field.name().to_string(), format!("{value:?}")));
+                }
+            }
+            let mut all = All(Vec::new());
+            event.record(&mut all);
+            self.0.lock().unwrap().push(all.0);
+        }
+        fn enter(&self, _: &tracing::span::Id) {}
+        fn exit(&self, _: &tracing::span::Id) {}
+    }
+
+    #[test]
+    fn exec_finished_carries_request_type_and_pty() {
+        // ADR-0038 §9: a shell is an `exec` event, with the two added fields.
+        let scope = ChildScope::default();
+        let capture = Fields::default();
+        let seen = capture.0.clone();
+        tracing::subscriber::with_default(capture, || {
+            let mut d = Driver::new("SHA256:test".to_string(), &scope);
+            d.command = Some(String::new());
+            d.request_type = "shell";
+            d.on_pty = true;
+            d.exit_status = Some(0);
+            d.emit_finished();
+        });
+        let events = seen.lock().unwrap().clone();
+        let finished = events
+            .iter()
+            .find(|e| {
+                e.iter()
+                    .any(|(k, v)| k == "message" && v == "exec.finished")
+            })
+            .expect("exec.finished emitted");
+        let field = |name: &str| {
+            finished
+                .iter()
+                .find(|(k, _)| k == name)
+                .map(|(_, v)| v.as_str())
+        };
+        assert_eq!(field("request_type"), Some("shell"));
+        assert_eq!(field("pty"), Some("true"));
+        assert_eq!(field("command"), Some(""));
+        assert!(field("authenticated_identity").is_some());
+        assert!(field("executing_uid").is_some());
+    }
+
     fn finished_count(seen: &std::sync::Mutex<Vec<String>>) -> usize {
         seen.lock()
             .unwrap()
@@ -1111,13 +1381,14 @@ mod tests {
 
     #[test]
     fn drop_emits_owed_exec_finished_on_unwind() {
+        let scope = ChildScope::default();
         let capture = Capture::default();
         let seen = capture.0.clone();
         tracing::subscriber::with_default(capture, || {
             // AssertUnwindSafe: the Driver is owned by the closure and fully
             // dropped by the unwind; no state observable after the panic.
             let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                let mut d = Driver::new("SHA256:test".to_string());
+                let mut d = Driver::new("SHA256:test".to_string(), &scope);
                 d.command = Some("true".to_string());
                 panic!("mid-exec panic");
             }));
@@ -1128,10 +1399,11 @@ mod tests {
 
     #[test]
     fn drop_after_normal_emission_does_not_duplicate() {
+        let scope = ChildScope::default();
         let capture = Capture::default();
         let seen = capture.0.clone();
         tracing::subscriber::with_default(capture, || {
-            let mut d = Driver::new("SHA256:test".to_string());
+            let mut d = Driver::new("SHA256:test".to_string(), &scope);
             d.command = Some("true".to_string());
             d.exit_status = Some(0);
             d.emit_finished();
@@ -1142,10 +1414,11 @@ mod tests {
 
     #[test]
     fn drop_without_exec_emits_nothing() {
+        let scope = ChildScope::default();
         let capture = Capture::default();
         let seen = capture.0.clone();
         tracing::subscriber::with_default(capture, || {
-            drop(Driver::new("SHA256:test".to_string()));
+            drop(Driver::new("SHA256:test".to_string(), &scope));
         });
         assert_eq!(finished_count(&seen), 0);
     }

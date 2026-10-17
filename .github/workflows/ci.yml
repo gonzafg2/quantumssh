@@ -86,11 +86,27 @@ jobs:
             echo "::notice::Workspace has no members yet; skipping fmt/clippy/test/build until the first crate lands."
           fi
 
+      # ADR-0039: rust-toolchain.toml is the only place a Rust version is
+      # named. Pass its exact `channel` to the installer; anything but
+      # MAJOR.MINOR.PATCH fails here, so the pin cannot float again
+      # silently, and the input is digits and dots only.
+      - name: Read pinned toolchain
+        if: steps.members.outputs.count != '0'
+        id: toolchain
+        shell: bash
+        run: |
+          channel=$(sed -n 's/^channel[[:space:]]*=[[:space:]]*"\([^"]*\)".*$/\1/p' rust-toolchain.toml)
+          if ! [[ "$channel" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error file=rust-toolchain.toml::channel must be an exact MAJOR.MINOR.PATCH release (ADR-0039), found '${channel}'"
+            exit 1
+          fi
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+
       - name: Install Rust toolchain
         if: steps.members.outputs.count != '0'
-        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
+        uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # v1
         with:
-          toolchain: stable
+          toolchain: ${{ steps.toolchain.outputs.channel }}
           components: rustfmt, clippy
 
       - name: Cache cargo registry, index and target
@@ -112,3 +128,21 @@ jobs:
       - name: Build (release)
         if: steps.members.outputs.count != '0'
         run: cargo build --workspace --release
+
+      # ADR-0043 §7: the reference unit under a real systemd. The runner's
+      # OpenSSH 9.6 lacks the hybrid KEX, so systemd (as PID 1) and the
+      # client run in a disposable container built from the interop gate's
+      # pinned image; the script installs the release binary built above.
+      - name: systemd reference unit
+        if: steps.members.outputs.count != '0' && runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          docker build -t quantumssh-systemd tests/systemd
+          docker run -d --name quantumssh-systemd --privileged --cgroupns=host \
+            -v /sys/fs/cgroup:/sys/fs/cgroup:rw -v "$PWD":/src:ro quantumssh-systemd
+          for _ in $(seq 1 150); do
+            state="$(docker exec quantumssh-systemd systemctl is-system-running 2>/dev/null || true)"
+            case "$state" in running|degraded) break ;; esac
+            sleep 0.2
+          done
+          docker exec quantumssh-systemd bash /src/tests/systemd/run_reference_unit.sh

@@ -11,7 +11,8 @@
 //! - **One key type**: `ssh-ed25519`. A different key algorithm is
 //!   refused with `SSH_MSG_USERAUTH_FAILURE`.
 //! - **`authorized_keys`** is read once at startup (`std::fs`, per
-//!   ADR-0022). Options are ignored (Phase 1 — ADR-0023 scope cut).
+//!   ADR-0022). A line carrying an options field is refused (ADR-0040):
+//!   no option is enforced, so loading it would drop the restriction.
 
 use std::fmt;
 use std::path::Path;
@@ -20,7 +21,7 @@ use zeroize::Zeroizing;
 
 use crate::host_key;
 use crate::wire::{Reader, Writer};
-use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use ed25519_dalek::{Signature, VerifyingKey};
 use sha2::{Digest, Sha256};
 
 /// `SSH_MSG_USERAUTH_REQUEST` (RFC 4252 §8).
@@ -58,7 +59,8 @@ pub(crate) const SIGNATURE_BOUND: usize = 256;
 pub enum AuthError {
     /// File cannot be read or is completely invalid.
     Io(String),
-    /// A line does not contain a parsable `ssh-ed25519` key.
+    /// A line does not contain a parsable `ssh-ed25519` key, or the key
+    /// is small-order (weak) and would accept forged signatures.
     MalformedLine {
         /// 1-indexed line number.
         line: usize,
@@ -71,6 +73,11 @@ pub enum AuthError {
         line: usize,
         /// The algorithm name found.
         found: String,
+    },
+    /// The line carries an options field, which is not enforced (ADR-0040).
+    KeyOptions {
+        /// 1-indexed line number.
+        line: usize,
     },
     /// No valid key entries were found.
     Empty,
@@ -89,6 +96,10 @@ impl fmt::Display for AuthError {
                     "authorized_keys line {line}: unsupported key type '{found}' (need ssh-ed25519)"
                 )
             }
+            Self::KeyOptions { line } => write!(
+                f,
+                "authorized_keys line {line}: key options are not enforced, so the line is refused (ADR-0040)"
+            ),
             Self::Empty => write!(f, "authorized_keys file contains no keys"),
         }
     }
@@ -136,42 +147,22 @@ fn looks_like_key_type(field: &str) -> bool {
     field.starts_with("ssh-") || field.starts_with("ecdsa-") || field.starts_with("sk-")
 }
 
-/// Skips the leading options field of an `authorized_keys` line:
-/// comma-separated, where double-quoted values may hold whitespace and
-/// `\"` escapes a quote inside them (sshd(8) `AUTHORIZED_KEYS FILE
-/// FORMAT`). Returns the remainder after the field's trailing
-/// whitespace — empty if the line holds nothing but options.
-fn skip_options(line: &str) -> &str {
-    let mut in_quotes = false;
-    let mut escaped = false;
-    for (i, c) in line.char_indices() {
-        if escaped {
-            escaped = false;
-        } else if c == '\\' && in_quotes {
-            escaped = true;
-        } else if c == '"' {
-            in_quotes = !in_quotes;
-        } else if c.is_whitespace() && !in_quotes {
-            return line[i..].trim_start();
-        }
-    }
-    ""
-}
-
 impl AuthorizedKeys {
     /// Loads and parses the `authorized_keys` file at `path`.
     ///
     /// Only `ssh-ed25519` keys are accepted. Lines starting with `#`
-    /// and empty lines are ignored. Options preceding the key type are
-    /// skipped (Phase 1 ignores options).
+    /// and empty lines are ignored. A line with an options field before
+    /// the key type fails the whole load (ADR-0040).
     ///
     /// # Errors
     ///
     /// [`AuthError::Io`] when the file cannot be read;
     /// [`AuthError::MalformedLine`] when a line's base64 blob cannot be
-    /// decoded or its wire format is invalid;
+    /// decoded, its wire format is invalid, or its key is small-order
+    /// (weak);
     /// [`AuthError::UnsupportedKeyType`] when a non-Ed25519 key is
     /// encountered;
+    /// [`AuthError::KeyOptions`] when a line carries an options field;
     /// [`AuthError::Empty`] when the file contains zero valid keys.
     #[must_use]
     #[allow(clippy::double_must_use)]
@@ -187,19 +178,14 @@ impl AuthorizedKeys {
             }
 
             // sshd(8) line format: `[options] keytype base64 [comment]`.
-            // The options field may hold double-quoted values with
-            // embedded whitespace (`command="echo hi"`), so the key
-            // type is either the first field or the field right after
-            // a quote-aware options skip — never found by scanning
-            // arbitrary tokens, which would match key-type-shaped
-            // words inside a quoted option value.
+            // A first field not shaped like a key type is an options
+            // field. No option is enforced, so the line is refused
+            // rather than loaded without its restriction (ADR-0040).
             let first = trimmed.split_whitespace().next().unwrap_or("");
-            let rest = if looks_like_key_type(first) {
-                trimmed
-            } else {
-                skip_options(trimmed)
-            };
-            let mut tokens = rest.split_whitespace();
+            if !looks_like_key_type(first) {
+                return Err(AuthError::KeyOptions { line: line_no });
+            }
+            let mut tokens = trimmed.split_whitespace();
             let algo = tokens.next().ok_or_else(|| AuthError::MalformedLine {
                 line: line_no,
                 reason: "no key type found".into(),
@@ -265,6 +251,16 @@ impl AuthorizedKeys {
                     line: line_no,
                     reason: "invalid Ed25519 key bytes".into(),
                 })?;
+            // A small-order key accepts forged signatures under the
+            // non-strict check; `verify_auth_signature` already uses
+            // `verify_strict`, and refusing the key here as well fails a
+            // bad `authorized_keys` loudly instead of keeping it loaded.
+            if verifying_key.is_weak() {
+                return Err(AuthError::MalformedLine {
+                    line: line_no,
+                    reason: "small-order (weak) Ed25519 key".into(),
+                });
+            }
 
             let digest = Sha256::digest(&blob);
             let fingerprint = format!("SHA256:{}", host_key::base64_encode_nopad(&digest));
@@ -315,10 +311,16 @@ pub fn auth_signed_data(session_id: &[u8; 32], payload_without_sig: &[u8]) -> Ze
 
 /// Verifies an Ed25519 signature over the `publickey` auth request.
 ///
+/// Uses `verify_strict`, not `verify`: the non-strict check accepts
+/// signatures under a small-order ("weak") public key that anyone can
+/// forge, so a weak key in `authorized_keys` would let any peer
+/// authenticate as that user. `verify_strict` rejects weak keys and a
+/// non-canonical or small-order `R`.
+///
 /// # Errors
 ///
 /// Returns `Err(())` when the signature is invalid (forged, tampered,
-/// wrong key, or non-canonical).
+/// wrong key, non-canonical, or under a weak key).
 #[must_use]
 #[allow(clippy::double_must_use, clippy::result_unit_err)]
 pub fn verify_auth_signature(
@@ -329,7 +331,7 @@ pub fn verify_auth_signature(
 ) -> Result<(), ()> {
     let signed = auth_signed_data(session_id, payload_without_sig);
     let sig = Signature::from_slice(signature_bytes).map_err(|_| ())?;
-    verifying_key.verify(&signed, &sig).map_err(|_| ())
+    verifying_key.verify_strict(&signed, &sig).map_err(|_| ())
 }
 
 /// Builds the `SSH_MSG_USERAUTH_FAILURE` payload naming the only
@@ -364,6 +366,7 @@ mod tests {
     use super::*;
     use ed25519_dalek::Signer;
     use ed25519_dalek::SigningKey;
+    use ed25519_dalek::Verifier;
     use std::io::Write;
     use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -408,52 +411,30 @@ mod tests {
     }
 
     #[test]
-    fn ignore_options_before_key() {
+    fn reject_restricted_key_line() {
+        // #183: the restriction was dropped and the key loaded unrestricted.
         let signing = SigningKey::from_bytes(&[44u8; 32]);
-        let verifying = signing.verifying_key();
-        let blob = build_ed25519_blob(&verifying);
-        let b64 = host_key::base64_encode_nopad(&blob);
-        let content = format!("command=\"dump\",no-agent-forwarding ssh-ed25519 {b64} test\n");
+        let b64 = host_key::base64_encode_nopad(&build_ed25519_blob(&signing.verifying_key()));
+        let content = format!(
+            "restrict,from=\"10.0.0.0/8\",command=\"/usr/local/bin/backup\" ssh-ed25519 {b64} backup@host\n"
+        );
         let path = temp_authorized_keys(&content);
-        let keys = AuthorizedKeys::load(&path).expect("load");
-        assert_eq!(keys.keys.len(), 1);
-        assert_eq!(keys.keys[0].blob, blob);
+        let err = AuthorizedKeys::load(&path).unwrap_err();
+        assert!(matches!(err, AuthError::KeyOptions { line: 1 }));
     }
 
     #[test]
-    fn ignore_option_value_containing_ssh_prefix() {
-        let signing = SigningKey::from_bytes(&[50u8; 32]);
-        let blob = build_ed25519_blob(&signing.verifying_key());
-        let b64 = host_key::base64_encode_nopad(&blob);
-        let content = format!("command=\"/usr/bin/ssh-agent\" ssh-ed25519 {b64} test\n");
-        let path = temp_authorized_keys(&content);
-        let keys = AuthorizedKeys::load(&path).expect("load");
-        assert_eq!(keys.keys.len(), 1);
-    }
-
-    #[test]
-    fn quoted_option_with_spaces_and_key_type_lookalike() {
-        // The sshd(8) case that broke whitespace tokenisation: a quoted
-        // option value containing whitespace and a key-type-shaped word.
-        let signing = SigningKey::from_bytes(&[51u8; 32]);
-        let blob = build_ed25519_blob(&signing.verifying_key());
-        let b64 = host_key::base64_encode_nopad(&blob);
-        let content = format!("command=\"echo ssh-rsa x\",no-pty ssh-ed25519 {b64} test\n");
-        let path = temp_authorized_keys(&content);
-        let keys = AuthorizedKeys::load(&path).expect("load");
-        assert_eq!(keys.keys.len(), 1);
-        assert_eq!(keys.keys[0].blob, blob);
-    }
-
-    #[test]
-    fn quoted_option_with_escaped_quotes() {
-        let signing = SigningKey::from_bytes(&[52u8; 32]);
-        let blob = build_ed25519_blob(&signing.verifying_key());
-        let b64 = host_key::base64_encode_nopad(&blob);
-        let content = format!("command=\"say \\\"ssh-rsa\\\" now\" ssh-ed25519 {b64} test\n");
-        let path = temp_authorized_keys(&content);
-        let keys = AuthorizedKeys::load(&path).expect("load");
-        assert_eq!(keys.keys.len(), 1);
+    fn options_line_fails_the_whole_file() {
+        // Refused at load, not skipped: valid lines do not carry the file.
+        let s1 = SigningKey::from_bytes(&[50u8; 32]);
+        let s2 = SigningKey::from_bytes(&[51u8; 32]);
+        let b64_1 = host_key::base64_encode_nopad(&build_ed25519_blob(&s1.verifying_key()));
+        let b64_2 = host_key::base64_encode_nopad(&build_ed25519_blob(&s2.verifying_key()));
+        let path = temp_authorized_keys(&format!(
+            "ssh-ed25519 {b64_1} user1\nno-pty ssh-ed25519 {b64_2} user2\n"
+        ));
+        let err = AuthorizedKeys::load(&path).unwrap_err();
+        assert!(matches!(err, AuthError::KeyOptions { line: 2 }));
     }
 
     #[test]
@@ -505,6 +486,17 @@ mod tests {
         let path = temp_authorized_keys("ssh-ed25519 aGVsbG8= comment\n");
         let err = AuthorizedKeys::load(&path).unwrap_err();
         assert!(matches!(err, AuthError::MalformedLine { .. }));
+    }
+
+    #[test]
+    fn reject_small_order_key() {
+        let mut identity = [0u8; 32];
+        identity[0] = 1;
+        let weak = VerifyingKey::from_bytes(&identity).expect("the identity point decodes");
+        let b64 = host_key::base64_encode_nopad(&build_ed25519_blob(&weak));
+        let path = temp_authorized_keys(&format!("ssh-ed25519 {b64} weak@host\n"));
+        let err = AuthorizedKeys::load(&path).unwrap_err();
+        assert!(matches!(err, AuthError::MalformedLine { line: 1, .. }));
     }
 
     #[test]
@@ -768,6 +760,36 @@ mod tests {
 
         let result = verify_auth_signature(&session_id, payload, sig.to_bytes().as_ref(), &other);
         assert!(result.is_err());
+    }
+
+    /// A small-order public key lets anyone forge a signature that the
+    /// non-strict `verify` accepts for every message. With `A` the
+    /// identity point, `R' = [S]B - [k]A = [S]B`, so `R = B` and `S = 1`
+    /// verify whatever `k` (and hence the message) is. A key like this in
+    /// `authorized_keys` must not authenticate anyone.
+    #[test]
+    fn small_order_key_forgery_is_rejected() {
+        let mut identity = [0u8; 32];
+        identity[0] = 1;
+        let weak = VerifyingKey::from_bytes(&identity).expect("the identity point decodes");
+        assert!(weak.is_weak());
+
+        // R = the compressed Ed25519 basepoint (0x58, then 0x66 x 31); S = 1.
+        let mut forged = [0x66u8; 64];
+        forged[0] = 0x58;
+        forged[32..].fill(0);
+        forged[32] = 1;
+
+        let session_id = [0x42u8; 32];
+        let payload = b"any SSH_MSG_USERAUTH_REQUEST payload";
+        let signed = auth_signed_data(&session_id, payload);
+
+        // The bug class this guards against: the non-strict check accepts it.
+        assert!(
+            weak.verify(&signed, &Signature::from_bytes(&forged))
+                .is_ok()
+        );
+        assert!(verify_auth_signature(&session_id, payload, &forged, &weak).is_err());
     }
 
     #[test]
