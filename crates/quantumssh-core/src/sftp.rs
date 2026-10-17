@@ -6,8 +6,9 @@
 //! attacker-controlled length is bounded (OpenSSH's 256 KiB packet, the
 //! read clamp, the handle cap), malformed input ends the session, and
 //! every request gets exactly one response. File operations run as the
-//! service account through `std::fs`, plus `rustix::fs::utimensat` for
-//! path times; no first-party `unsafe` (ADR-0018).
+//! service account through `std::fs`, plus `rustix` where `std` cannot
+//! express the semantics: OPEN's flag mapping, SETSTAT's non-blocking size
+//! change and path times. No first-party `unsafe` (ADR-0018).
 
 // `pub(crate)` items are the surface the tests and the channel layer
 // use; only the helper entry point is public API.
