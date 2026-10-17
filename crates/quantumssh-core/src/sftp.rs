@@ -18,9 +18,7 @@ use std::fs::{self, DirBuilder, File, FileTimes, Metadata, OpenOptions, ReadDir}
 use std::io::{self, BufWriter, ErrorKind, Read, Write};
 use std::iter::Peekable;
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
-use std::os::unix::fs::{
-    DirBuilderExt, FileExt, MetadataExt, OpenOptionsExt, PermissionsExt, fchown,
-};
+use std::os::unix::fs::{DirBuilderExt, FileExt, MetadataExt, PermissionsExt, fchown};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -115,7 +113,10 @@ pub fn run_server_if_requested() {
     if !in_home {
         let _ = std::env::set_current_dir("/");
     }
-    let code = serve(io::stdin().lock(), io::stdout().lock(), home);
+    // `~` and relative REALPATHs resolve against the working directory,
+    // as OpenSSH's `getcwd` (ADR-0041 §4).
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
+    let code = serve(io::stdin().lock(), io::stdout().lock(), cwd);
     std::process::exit(code);
 }
 
@@ -129,12 +130,13 @@ impl From<WireError> for Violation {
     }
 }
 
-/// Serves one SFTP session until EOF on `input`. Returns the helper's
-/// exit status: 0 at EOF, [`EXIT_VIOLATION`] on a protocol violation or
-/// when reading or writing fails.
-pub(crate) fn serve(mut input: impl Read, output: impl Write, home: Option<PathBuf>) -> i32 {
+/// Serves one SFTP session until EOF on `input`, resolving `~` and
+/// relative REALPATHs against `cwd`. Returns the helper's exit status: 0
+/// at EOF, [`EXIT_VIOLATION`] on a protocol violation or when reading or
+/// writing fails.
+pub(crate) fn serve(mut input: impl Read, output: impl Write, cwd: PathBuf) -> i32 {
     let mut out = BufWriter::new(output);
-    let mut server = Server::new(home);
+    let mut server = Server::new(cwd);
     let mut packet = Vec::new();
     let mut first = true;
     loop {
@@ -145,7 +147,10 @@ pub(crate) fn serve(mut input: impl Read, output: impl Write, home: Option<PathB
         }
         let reply = if first {
             first = false;
-            if packet.first() != Some(&FXP_INIT) {
+            // INIT's version is read and ignored; a truncated INIT is a
+            // violation like any truncated field (ADR-0041 §3).
+            let mut r = Reader::new(&packet);
+            if r.byte() != Ok(FXP_INIT) || r.uint32().is_err() {
                 return EXIT_VIOLATION;
             }
             version_reply()
@@ -214,7 +219,6 @@ enum Handle {
         written: bool,
     },
     Dir {
-        path: PathBuf,
         entries: Peekable<ReadDir>,
     },
 }
@@ -231,14 +235,14 @@ struct SetAttrs {
 /// One session's state.
 struct Server {
     handles: Vec<Option<Handle>>,
-    home: Option<PathBuf>,
+    cwd: PathBuf,
 }
 
 impl Server {
-    const fn new(home: Option<PathBuf>) -> Self {
+    const fn new(cwd: PathBuf) -> Self {
         Self {
             handles: Vec::new(),
-            home,
+            cwd,
         }
     }
 
@@ -272,7 +276,7 @@ impl Server {
                 status_of(id, DirBuilder::new().mode(mode).create(path))
             }
             FXP_RMDIR => status_of(id, fs::remove_dir(path_arg(&mut r)?)),
-            FXP_REALPATH => match realpath(&path_arg(&mut r)?) {
+            FXP_REALPATH => match realpath(&path_arg(&mut r)?, &self.cwd) {
                 Ok(path) => name_reply(id, &path),
                 Err(e) => status_reply(id, error_code(&e)),
             },
@@ -301,16 +305,14 @@ impl Server {
         let path = path_arg(r)?;
         let pflags = r.uint32()?;
         let attrs = read_attrs(r)?;
-        let mut options = OpenOptions::new();
-        options
-            .read(pflags & OPEN_READ != 0)
-            .write(pflags & OPEN_WRITE != 0)
-            .append(pflags & OPEN_APPEND != 0)
-            .create(pflags & OPEN_CREAT != 0)
-            .truncate(pflags & OPEN_TRUNC != 0)
-            .create_new(pflags & OPEN_CREAT != 0 && pflags & OPEN_EXCL != 0)
-            .mode(attrs.perm.map_or(0o666, |p| p & 0o777));
-        Ok(match options.open(path) {
+        // `p & 0o777` fits `mode_t` everywhere (u16 on macOS, u32 on Linux).
+        let bits = attrs.perm.map_or(0o666, |p| p & 0o777);
+        let mode =
+            rustix::fs::Mode::from_raw_mode(rustix::fs::RawMode::try_from(bits).unwrap_or(0o666));
+        let opened = rustix::fs::open(&path, open_flags(pflags), mode)
+            .map(File::from)
+            .map_err(io::Error::from);
+        Ok(match opened {
             Ok(file) => self.insert(
                 id,
                 Handle::File {
@@ -329,7 +331,6 @@ impl Server {
             Ok(entries) => self.insert(
                 id,
                 Handle::Dir {
-                    path,
                     entries: entries.peekable(),
                 },
             ),
@@ -381,13 +382,23 @@ impl Server {
             return Ok(status_reply(id, FX_FAILURE));
         };
         Ok(match self.handles[index].take() {
-            // A written file is synced first: the only safe way to see a
-            // deferred write error (ADR-0041 §4).
+            // A written regular file is synced first: the only safe way to
+            // see a deferred write error. A FIFO, socket or device is not:
+            // `fdatasync` fails there with EINVAL (ADR-0041 §4).
             Some(Handle::File {
                 file,
                 written: true,
                 ..
-            }) => status_of(id, file.sync_data()),
+            }) => status_of(
+                id,
+                file.metadata().and_then(|m| {
+                    if m.is_file() {
+                        file.sync_data()
+                    } else {
+                        Ok(())
+                    }
+                }),
+            ),
             Some(_) => status_reply(id, FX_OK),
             None => status_reply(id, FX_FAILURE),
         })
@@ -459,8 +470,7 @@ impl Server {
     }
 
     fn readdir(&mut self, id: u32, r: &mut Reader<'_>) -> Result<Vec<u8>, Violation> {
-        let Some(Some(Handle::Dir { path, entries })) =
-            self.index(r)?.map(|i| self.handles[i].as_mut())
+        let Some(Some(Handle::Dir { entries })) = self.index(r)?.map(|i| self.handles[i].as_mut())
         else {
             return Ok(status_reply(id, FX_FAILURE));
         };
@@ -476,7 +486,9 @@ impl Server {
                 entries.next();
                 continue;
             };
-            let Ok(meta) = fs::symlink_metadata(path.join(entry.file_name())) else {
+            // Through the open directory, not a rebuilt path that a rename
+            // may have changed; it does not follow symlinks.
+            let Ok(meta) = entry.metadata() else {
                 entries.next();
                 continue;
             };
@@ -529,7 +541,7 @@ impl Server {
             }
             b"expand-path@openssh.com" => {
                 let path = r.string(MAX_PACKET)?;
-                match self.expand(path).and_then(|p| realpath(&p)) {
+                match self.expand(path).and_then(|p| realpath(&p, &self.cwd)) {
                     Ok(path) => name_reply(id, &path),
                     Err(e) => status_reply(id, error_code(&e)),
                 }
@@ -538,19 +550,18 @@ impl Server {
         })
     }
 
-    /// `~` and `~/…` relative to the service account's home; `~user` is
+    /// `~` and `~/…` relative to the working directory, which is the
+    /// service account's home or `/`, as OpenSSH's `getcwd`; `~user` is
     /// not resolved (ADR-0041 §4).
     fn expand(&self, path: &[u8]) -> io::Result<PathBuf> {
-        let not_found = || io::Error::from(ErrorKind::NotFound);
         if path == b"~" {
-            return self.home.clone().ok_or_else(not_found);
+            return Ok(self.cwd.clone());
         }
         if let Some(rest) = path.strip_prefix(b"~/") {
-            let home = self.home.as_ref().ok_or_else(not_found)?;
-            return Ok(home.join(OsStr::from_bytes(rest)));
+            return Ok(self.cwd.join(OsStr::from_bytes(rest)));
         }
         if path.first() == Some(&b'~') {
-            return Err(not_found());
+            return Err(io::Error::from(ErrorKind::NotFound));
         }
         Ok(PathBuf::from(OsString::from_vec(path.to_vec())))
     }
@@ -665,29 +676,115 @@ fn fsetstat(file: &File, attrs: &SetAttrs) -> io::Result<()> {
     Ok(())
 }
 
-/// REALPATH: the canonical path, or, when only the last component is
-/// missing, the canonical parent joined with it (as OpenSSH's
-/// `sftp-realpath.c`). An empty path means the working directory.
-fn realpath(path: &Path) -> io::Result<PathBuf> {
-    let path = if path.as_os_str().is_empty() {
-        Path::new(".")
-    } else {
-        path
-    };
-    match fs::canonicalize(path) {
-        Err(e) if e.kind() == ErrorKind::NotFound => {
-            let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
-                return Err(e);
-            };
-            let parent = if parent.as_os_str().is_empty() {
-                Path::new(".")
-            } else {
-                parent
-            };
-            Ok(fs::canonicalize(parent)?.join(name))
+/// OpenSSH's flags for an SFTP OPEN (`flags_from_portable`): READ and
+/// WRITE choose the access mode, and APPEND, CREAT, TRUNC and EXCL each
+/// add their own flag, so READ|APPEND stays read-only and READ|CREAT is
+/// valid — combinations `OpenOptions` cannot express (ADR-0041 §4).
+fn open_flags(pflags: u32) -> rustix::fs::OFlags {
+    use rustix::fs::OFlags;
+    let mut flags = match (pflags & OPEN_READ != 0, pflags & OPEN_WRITE != 0) {
+        (true, true) => OFlags::RDWR,
+        (false, true) => OFlags::WRONLY,
+        _ => OFlags::RDONLY,
+    } | OFlags::CLOEXEC;
+    for (bit, flag) in [
+        (OPEN_APPEND, OFlags::APPEND),
+        (OPEN_CREAT, OFlags::CREATE),
+        (OPEN_TRUNC, OFlags::TRUNC),
+        (OPEN_EXCL, OFlags::EXCL),
+    ] {
+        if pflags & bit != 0 {
+            flags |= flag;
         }
-        other => other,
     }
+    flags
+}
+
+/// Symlinks REALPATH follows before it fails (OpenSSH's `SYMLOOP_MAX`).
+const SYMLOOP_MAX: u32 = 32;
+
+/// REALPATH by OpenSSH's algorithm (`sftp-realpath.c`): components are
+/// resolved left to right, every symlink is followed (the last
+/// component's included), and only a missing **last** component is
+/// accepted, so a dangling final symlink resolves to its target's path.
+/// A relative path starts from `cwd`; an empty path means `.`.
+fn realpath(path: &Path, cwd: &Path) -> io::Result<PathBuf> {
+    let path = path.as_os_str().as_bytes();
+    let (mut resolved, mut left) = match path {
+        [] => (cwd.as_os_str().as_bytes().to_vec(), b".".to_vec()),
+        [b'/', rest @ ..] => (b"/".to_vec(), rest.to_vec()),
+        _ => (cwd.as_os_str().as_bytes().to_vec(), path.to_vec()),
+    };
+    let mut links = 0;
+    while !left.is_empty() {
+        let (token, last) = match left.iter().position(|&b| b == b'/') {
+            Some(i) => {
+                let token = left[..i].to_vec();
+                left.drain(..=i);
+                (token, false)
+            }
+            None => (std::mem::take(&mut left), true),
+        };
+        if resolved.last() != Some(&b'/') {
+            resolved.push(b'/');
+        }
+        match token.as_slice() {
+            b"" | b"." => continue,
+            b".." => {
+                pop_component(&mut resolved);
+                continue;
+            }
+            _ => {}
+        }
+        resolved.extend_from_slice(&token);
+        let meta = match fs::symlink_metadata(OsStr::from_bytes(&resolved)) {
+            Err(e) if e.kind() == ErrorKind::NotFound && last => break,
+            other => other?,
+        };
+        if meta.file_type().is_symlink() {
+            links += 1;
+            if links > SYMLOOP_MAX {
+                return Err(rustix::io::Errno::LOOP.into());
+            }
+            let mut target = fs::read_link(OsStr::from_bytes(&resolved))?
+                .into_os_string()
+                .into_vec();
+            if target.first() == Some(&b'/') {
+                resolved.truncate(1);
+            } else {
+                pop_component(&mut resolved);
+            }
+            // The link's target, then whatever followed the link.
+            if !last {
+                if target.last() != Some(&b'/') {
+                    target.push(b'/');
+                }
+                target.extend_from_slice(&left);
+            }
+            left = target;
+        }
+    }
+    if resolved.len() > 1 && resolved.last() == Some(&b'/') {
+        resolved.pop();
+    }
+    Ok(PathBuf::from(OsString::from_vec(resolved)))
+}
+
+/// Drops the last component of `resolved`, keeping the root.
+fn pop_component(resolved: &mut Vec<u8>) {
+    if resolved.len() <= 1 {
+        return;
+    }
+    let end = if resolved.last() == Some(&b'/') {
+        resolved.len() - 1
+    } else {
+        resolved.len()
+    };
+    let cut = resolved[..end]
+        .iter()
+        .rposition(|&b| b == b'/')
+        .map_or(1, |i| i + 1);
+    resolved.truncate(cut.max(1));
 }
 
 /// RENAME with OpenSSH's no-overwrite semantics (`sftp-server.c:1274-1314`).
@@ -711,20 +808,27 @@ fn rename_no_overwrite(old: &Path, new: &Path) -> io::Result<()> {
     }
 }
 
+/// An existence check that does not follow a symlink, so an existing
+/// dangling symlink at `new` is never replaced (ADR-0041 §4).
 fn rename_if_absent(old: &Path, new: &Path) -> io::Result<()> {
-    if fs::metadata(new).is_ok() {
+    if fs::symlink_metadata(new).is_ok() {
         return Err(io::Error::from(ErrorKind::AlreadyExists));
     }
     fs::rename(old, new)
 }
 
+/// `link()` errors that mean "no hard link here": OpenSSH's list, with
+/// Linux's `EPERM` (its `LINK_OPNOTSUPP_ERRNO`, `configure.ac:974`).
 fn is_link_unsupported(error: &io::Error) -> bool {
     use rustix::io::Errno;
-    error.raw_os_error().is_some_and(|code| {
-        [Errno::OPNOTSUPP, Errno::NOSYS, Errno::XDEV]
-            .iter()
-            .any(|e| e.raw_os_error() == code)
-    })
+    let unsupported: &[Errno] = if cfg!(target_os = "linux") {
+        &[Errno::OPNOTSUPP, Errno::NOSYS, Errno::XDEV, Errno::PERM]
+    } else {
+        &[Errno::OPNOTSUPP, Errno::NOSYS, Errno::XDEV]
+    };
+    error
+        .raw_os_error()
+        .is_some_and(|code| unsupported.iter().any(|e| e.raw_os_error() == code))
 }
 
 fn error_code(error: &io::Error) -> u32 {
@@ -784,20 +888,7 @@ fn name_reply(id: u32, path: &Path) -> Vec<u8> {
 /// OpenSSH's `ls -l` longname with numeric owner and group and the mtime
 /// in UTC (ADR-0041 §5).
 fn longname(name: &[u8], m: &Metadata, now: i64) -> Vec<u8> {
-    let mtime = m.mtime();
-    let date = if now.saturating_sub(mtime) < 365 * 24 * 60 * 60 / 2 {
-        let (_, month, day) = civil_from_days(mtime.div_euclid(86_400));
-        let secs = mtime.rem_euclid(86_400);
-        format!(
-            "{} {day:>2} {:02}:{:02}",
-            MONTHS[month],
-            secs / 3600,
-            secs % 3600 / 60
-        )
-    } else {
-        let (year, month, day) = civil_from_days(mtime.div_euclid(86_400));
-        format!("{} {day:>2}  {year}", MONTHS[month])
-    };
+    let date = ls_date(m.mtime(), now);
     let mut line = format!(
         "{} {:>3} {:<8} {:<8} {:>8} {date} ",
         mode_string(m.mode()),
@@ -809,6 +900,24 @@ fn longname(name: &[u8], m: &Metadata, now: i64) -> Vec<u8> {
     .into_bytes();
     line.extend_from_slice(name);
     line
+}
+
+/// The `ls -l` date in UTC: `%b %e %H:%M` for an mtime in the six months
+/// up to now, `%b %e  %Y` otherwise, a future mtime included (OpenSSH's
+/// `sftp-common.c:242-246`).
+fn ls_date(mtime: i64, now: i64) -> String {
+    let (year, month, day) = civil_from_days(mtime.div_euclid(86_400));
+    if mtime <= now && now.saturating_sub(mtime) < 365 * 24 * 60 * 60 / 2 {
+        let secs = mtime.rem_euclid(86_400);
+        format!(
+            "{} {day:>2} {:02}:{:02}",
+            MONTHS[month],
+            secs / 3600,
+            secs % 3600 / 60
+        )
+    } else {
+        format!("{} {day:>2}  {year}", MONTHS[month])
+    }
 }
 
 const MONTHS: [&str; 12] = [
@@ -908,11 +1017,7 @@ mod tests {
     /// reply payloads.
     fn run(input: &[u8]) -> (i32, Vec<Vec<u8>>) {
         let mut out = Vec::new();
-        let code = serve(
-            Cursor::new(input.to_vec()),
-            &mut out,
-            Some(PathBuf::from("/")),
-        );
+        let code = serve(Cursor::new(input.to_vec()), &mut out, PathBuf::from("/"));
         let mut replies = Vec::new();
         let mut rest = &out[..];
         while rest.len() >= 4 {
@@ -1117,9 +1222,41 @@ mod tests {
     #[test]
     fn realpath_resolves_a_missing_last_component() {
         let dir = temp_dir();
-        let resolved = realpath(&dir.join("missing")).unwrap();
+        let root = Path::new("/");
+        let resolved = realpath(&dir.join("missing"), root).unwrap();
         assert_eq!(resolved, dir.join("missing"));
-        assert!(realpath(&dir.join("no/such")).is_err());
+        assert!(realpath(&dir.join("no/such"), root).is_err());
+        // Relative paths and an empty path start from the working directory.
+        assert_eq!(realpath(Path::new("x"), &dir).unwrap(), dir.join("x"));
+        assert_eq!(realpath(Path::new(""), &dir).unwrap(), dir);
+        assert_eq!(
+            realpath(&dir.join("a/../b/./c"), root).unwrap_err().kind(),
+            ErrorKind::NotFound,
+            "`a` is missing and not last"
+        );
+        fs::create_dir(dir.join("a")).unwrap();
+        assert_eq!(realpath(&dir.join("a/../b"), root).unwrap(), dir.join("b"));
+    }
+
+    /// OpenSSH follows the final symlink too: a dangling one resolves to
+    /// its missing target, not to the link's own path (`sftp-realpath.c`).
+    #[test]
+    fn realpath_follows_symlinks_the_final_one_included() {
+        let dir = temp_dir();
+        let root = Path::new("/");
+        std::os::unix::fs::symlink("gone", dir.join("dangling")).unwrap();
+        assert_eq!(
+            realpath(&dir.join("dangling"), root).unwrap(),
+            dir.join("gone")
+        );
+        fs::create_dir(dir.join("real")).unwrap();
+        std::os::unix::fs::symlink(dir.join("real"), dir.join("abs")).unwrap();
+        assert_eq!(
+            realpath(&dir.join("abs/f"), root).unwrap(),
+            dir.join("real/f")
+        );
+        std::os::unix::fs::symlink("loop", dir.join("loop")).unwrap();
+        assert!(realpath(&dir.join("loop"), root).is_err());
     }
 
     #[test]
@@ -1170,12 +1307,14 @@ mod tests {
         assert!(!new.exists(), "the spare link is removed");
     }
 
+    /// `~` is the working directory, as OpenSSH's `getcwd`: the home, or
+    /// `/` when the home was unusable.
     #[test]
     fn expand_path_handles_tilde_forms() {
-        let home = temp_dir();
-        let server = Server::new(Some(home.clone()));
-        assert_eq!(server.expand(b"~").unwrap(), home);
-        assert_eq!(server.expand(b"~/x").unwrap(), home.join("x"));
+        let cwd = temp_dir();
+        let server = Server::new(cwd.clone());
+        assert_eq!(server.expand(b"~").unwrap(), cwd);
+        assert_eq!(server.expand(b"~/x").unwrap(), cwd.join("x"));
         assert_eq!(
             server.expand(b"~root/x").unwrap_err().kind(),
             ErrorKind::NotFound
@@ -1217,6 +1356,109 @@ mod tests {
             error_code(&io::Error::from(ErrorKind::AlreadyExists)),
             FX_FAILURE
         );
+    }
+
+    /// INIT's version must be there: a truncated INIT ends the session.
+    #[test]
+    fn init_without_a_version_ends_the_session() {
+        assert_eq!(run(&frame(&[FXP_INIT])).0, 2);
+        assert_eq!(run(&frame(&[FXP_INIT, 0, 0])).0, 2);
+        assert_eq!(run(&init()).0, 0);
+    }
+
+    /// OpenSSH's flag mapping: READ|CREAT creates a file and opens it
+    /// read-only; READ|APPEND does not grant write access. Handles are the
+    /// 4-byte indices 0 and 1.
+    #[test]
+    fn open_maps_flags_independently() {
+        let dir = temp_dir();
+        let created = dir.join("created");
+        let appended = dir.join("appended");
+        fs::write(&appended, b"x").unwrap();
+        let mut input = init();
+        for (id, file, flags) in [
+            (1, &created, OPEN_READ | OPEN_CREAT),
+            (2, &appended, OPEN_READ | OPEN_APPEND),
+        ] {
+            input.extend_from_slice(&request(FXP_OPEN, id, |w| {
+                w.put_string(path(file));
+                w.put_uint32(flags);
+                w.put_uint32(0);
+            }));
+        }
+        for (id, index) in [(3, 0u32), (4, 1)] {
+            input.extend_from_slice(&request(FXP_WRITE, id, |w| {
+                w.put_string(&index.to_be_bytes());
+                w.put_uint64(0);
+                w.put_string(b"y");
+            }));
+        }
+        let (_, replies) = run(&input);
+        assert_eq!(handle_of(&replies[1]), 0u32.to_be_bytes());
+        assert_eq!(handle_of(&replies[2]), 1u32.to_be_bytes());
+        assert!(created.is_file(), "READ|CREAT created the file");
+        assert_eq!(
+            status_code(&replies[3]),
+            FX_FAILURE,
+            "READ|CREAT is read-only"
+        );
+        assert_eq!(
+            status_code(&replies[4]),
+            FX_FAILURE,
+            "READ|APPEND is read-only"
+        );
+        assert_eq!(fs::read(&appended).unwrap(), b"x");
+    }
+
+    /// CLOSE syncs written regular files only: writing to a device and
+    /// closing it succeeds, as under OpenSSH.
+    #[test]
+    fn close_of_a_written_device_succeeds() {
+        let handle = 0u32.to_be_bytes();
+        let mut input = init();
+        input.extend_from_slice(&request(FXP_OPEN, 1, |w| {
+            w.put_string(b"/dev/null");
+            w.put_uint32(OPEN_WRITE);
+            w.put_uint32(0);
+        }));
+        input.extend_from_slice(&request(FXP_WRITE, 2, |w| {
+            w.put_string(&handle);
+            w.put_uint64(0);
+            w.put_string(b"data");
+        }));
+        input.extend_from_slice(&request(FXP_CLOSE, 3, |w| w.put_string(&handle)));
+        let (_, replies) = run(&input);
+        assert_eq!(handle_of(&replies[1]), handle);
+        assert_eq!(status_code(&replies[2]), FX_OK);
+        assert_eq!(status_code(&replies[3]), FX_OK);
+    }
+
+    /// An existing dangling symlink at the destination counts as existing:
+    /// RENAME never replaces it.
+    #[test]
+    fn rename_does_not_replace_a_dangling_symlink() {
+        let dir = temp_dir();
+        let (src, dst) = (dir.join("dir"), dir.join("link"));
+        fs::create_dir(&src).unwrap();
+        std::os::unix::fs::symlink("gone", &dst).unwrap();
+        assert_eq!(
+            rename_no_overwrite(&src, &dst).unwrap_err().kind(),
+            ErrorKind::AlreadyExists
+        );
+        assert!(src.is_dir());
+        assert!(fs::symlink_metadata(&dst).unwrap().file_type().is_symlink());
+    }
+
+    /// The time form only for an mtime in the six months up to now; a
+    /// future mtime gets the year (OpenSSH's rule).
+    #[test]
+    fn ls_dates_follow_openssh() {
+        // 2026-10-12 12:34 UTC.
+        let now = 20_738 * 86_400 + 12 * 3600 + 34 * 60;
+        assert_eq!(ls_date(now - 3600, now), "Oct 12 11:34");
+        assert_eq!(ls_date(now - 200 * 86_400, now), "Mar 26  2026");
+        assert_eq!(ls_date(now + 60, now), "Oct 12  2026");
+        assert_eq!(ls_date(now + 10 * 365 * 86_400, now), "Oct  9  2036");
     }
 
     #[test]
