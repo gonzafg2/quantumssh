@@ -397,6 +397,21 @@ async fn pty_req_without_a_helper_is_refused() {
 }
 
 #[tokio::test]
+async fn subsystem_without_a_helper_is_refused() {
+    // ADR-0041 §1: with no helper executable, `subsystem` is refused.
+    let (addr, host_key) = start_server(Duration::from_secs(30)).await;
+    let (mut stream, mut client) = authenticate(addr, &host_key).await;
+
+    client.write_sealed(&mut stream, &channel_open(0)).await;
+    let server_chan = expect_open_confirmation(&mut client, &mut stream).await;
+    client
+        .write_sealed(&mut stream, &channel_subsystem(server_chan, b"sftp"))
+        .await;
+    let reply = client.read_sealed(&mut stream).await;
+    assert_eq!(reply.first(), Some(&CH_FAILURE));
+}
+
+#[tokio::test]
 async fn malformed_pty_req_disconnects() {
     // ADR-0038 §2: a field that fails to parse is a protocol error.
     let (addr, host_key) = start_server(Duration::from_secs(30)).await;

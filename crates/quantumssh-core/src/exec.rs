@@ -251,22 +251,23 @@ pub(crate) struct ChildScope {
     tasks: Mutex<JoinSet<()>>,
     /// PIDs of the connection's unreaped children, running or zombie.
     live: Arc<Mutex<Vec<Pid>>>,
-    /// The executable whose re-exec helper starts PTY children
-    /// (ADR-0038 §5); `None` refuses `pty-req`.
-    pty_helper: Option<Arc<Path>>,
+    /// The executable whose helper modes start PTY and SFTP children
+    /// (ADR-0038 §5, ADR-0041 §2); `None` refuses `pty-req` and
+    /// `subsystem`.
+    helper: Option<Arc<Path>>,
 }
 
 impl ChildScope {
-    pub(crate) fn new(pty_helper: Option<Arc<Path>>) -> Self {
+    pub(crate) fn new(helper: Option<Arc<Path>>) -> Self {
         Self {
             tasks: Mutex::default(),
             live: Arc::default(),
-            pty_helper,
+            helper,
         }
     }
 
-    pub(crate) fn pty_helper(&self) -> Option<&Path> {
-        self.pty_helper.as_deref()
+    pub(crate) fn helper(&self) -> Option<&Path> {
+        self.helper.as_deref()
     }
 
     fn spawn<F>(&self, task: F) -> AbortHandle
@@ -533,6 +534,28 @@ pub(crate) fn spawn(program: Program<'_>, scope: &ChildScope) -> io::Result<Chil
     let mut cmd = Command::new(SHELL);
     cmd.arg0(program.argv0());
     program.push_args(&mut cmd);
+    spawn_piped(cmd, scope)
+}
+
+/// Spawns the binary's SFTP helper on pipes (ADR-0041 §1), the ordinary
+/// pipe child of [`spawn`].
+///
+/// # Errors
+///
+/// [`std::io::Error`] if no helper is configured or the child cannot be
+/// spawned.
+pub(crate) fn spawn_sftp(scope: &ChildScope) -> io::Result<ChildIo> {
+    let helper = scope
+        .helper()
+        .ok_or_else(|| io::Error::other("no helper"))?;
+    let mut cmd = Command::new(helper);
+    cmd.arg(crate::sftp::HELPER_ARG);
+    spawn_piped(cmd, scope)
+}
+
+/// Spawns `cmd` with the sanitised environment, its stdio on pipes and
+/// its own process group, and supervises it in `scope`.
+fn spawn_piped(mut cmd: Command, scope: &ChildScope) -> io::Result<ChildIo> {
     sanitise_env(&mut cmd);
     cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -598,7 +621,7 @@ pub(crate) fn spawn_pty(
     scope: &ChildScope,
 ) -> io::Result<ChildIo> {
     let helper = scope
-        .pty_helper()
+        .helper()
         .ok_or_else(|| io::Error::other("no pty helper"))?;
     let PtyPair { master, slave } = pair;
     let master = Arc::new(AsyncFd::with_interest(
@@ -804,22 +827,34 @@ where
     }
 }
 
-/// Writes stdin chunks to the child. `write_all` waits until the child
+/// Writes stdin chunks to the child. Each write waits until the child
 /// reads, which backpressures the wire through the gated inbound window;
-/// each consumed chunk's length lets the driver replenish that window
-/// (ADR-0023). Dropping the pipe at the end closes the child's stdin.
+/// the length of each successful write, partial ones included, lets the
+/// driver replenish that window (ADR-0023) and count the bytes the child
+/// received (ADR-0042). Dropping the pipe at the end closes the child's
+/// stdin.
 async fn pump_stdin(
     mut pipe: ChildStdin,
     mut rx: mpsc::Receiver<Vec<u8>>,
     consumed: mpsc::UnboundedSender<u32>,
 ) {
     while let Some(chunk) = rx.recv().await {
-        if pipe.write_all(&chunk).await.is_err() || pipe.flush().await.is_err() {
-            break;
+        // Each successful write is credited as it happens: a child that
+        // reads a prefix and exits still received those bytes (ADR-0042),
+        // and they refill the window.
+        let mut rest = chunk.as_slice();
+        while !rest.is_empty() {
+            let n = match pipe.write(rest).await {
+                Ok(0) | Err(_) => return,
+                Ok(n) => n,
+            };
+            if u32::try_from(n).map_or(true, |n| consumed.send(n).is_err()) {
+                return;
+            }
+            rest = &rest[n..];
         }
-        match u32::try_from(chunk.len()) {
-            Ok(n) if consumed.send(n).is_ok() => {}
-            _ => break,
+        if pipe.flush().await.is_err() {
+            break;
         }
     }
 }
@@ -1046,5 +1081,31 @@ mod tests {
         drop(pair.master);
         consumer.await.expect("consumer");
         writer.join().expect("writer");
+    }
+
+    /// A child that reads a prefix of a large chunk and exits still
+    /// received that prefix: `pump_stdin` credits each partial write
+    /// (ADR-0042). Before, the chunk was credited only after `write_all`,
+    /// so the `EPIPE` that follows the child's exit left nothing credited.
+    #[tokio::test]
+    async fn pump_stdin_credits_partial_writes() {
+        let mut child = Command::new(SHELL)
+            .args(["-c", "head -c 1 >/dev/null"])
+            .stdin(Stdio::piped())
+            .spawn()
+            .expect("spawn");
+        let stdin = child.stdin.take().expect("stdin piped");
+        let (tx, rx) = mpsc::channel(1);
+        let (consumed_tx, mut consumed_rx) = mpsc::unbounded_channel();
+        tx.send(vec![0u8; 4 * 1024 * 1024]).await.expect("queue");
+        drop(tx);
+        pump_stdin(stdin, rx, consumed_tx).await;
+        child.wait().await.expect("wait");
+        let mut credited = 0u64;
+        while let Ok(n) = consumed_rx.try_recv() {
+            credited += u64::from(n);
+        }
+        assert!(credited > 0, "the bytes the child read were not credited");
+        assert!(credited < 4 * 1024 * 1024, "the child did not read it all");
     }
 }
