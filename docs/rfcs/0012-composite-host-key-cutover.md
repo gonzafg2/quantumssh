@@ -270,9 +270,10 @@ line 112 ("✅ Ed25519 host key"); `README.md` line 53, whose "Signatures
 true of user authentication only; and `docs/threat-model.md` §1 (the
 "Ed25519 host keys (RFC 8709)" line of the default profile), §2.3 ("Ed25519
 by default"), and §6.1, the "Ed25519 host keys" bullet and the host-key
-half of "Signatures are classical, by deliberate sequencing". The migration-window example in
-`CLAUDE.md` hard rule 3 and `AGENTS.md` (`ssh-ed25519` under RFC-0006)
-stays valid: `ssh-ed25519` remains the user-authentication algorithm.
+half of "Signatures are classical, by deliberate sequencing". The
+migration-window example in `CLAUDE.md` hard rule 3 and `AGENTS.md`
+(`ssh-ed25519` under RFC-0006) stays valid: `ssh-ed25519` remains the
+user-authentication algorithm.
 
 ## Drawbacks
 
