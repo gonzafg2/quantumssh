@@ -145,7 +145,7 @@ only.
 | OPENDIR / READDIR | `read_dir`. Each NAME carries the entry name, the longname (§5) and `symlink_metadata` ATTRS. `SSH_FX_EOF` once exhausted. |
 | REMOVE / MKDIR / RMDIR | `remove_file` / `DirBuilder` with mode `perm & 0o777` (`0o777` if absent) / `remove_dir`. |
 | REALPATH | OpenSSH's algorithm (`sftp-realpath.c:106-211`), not `canonicalize`. It resolves components left to right with `symlink_metadata` and follows every symlink, the last component's included, up to 32 links (`SYMLOOP_MAX`). Only a missing **last** component is accepted, and it is checked after any symlink before it was followed. A dangling final symlink therefore resolves to its target's path, not the link's. A relative path starts from the working directory, and an empty path means `.`. |
-| RENAME | Refuses to overwrite, with OpenSSH's semantics (`sftp-server.c:1274-1314`). For a regular file (`symlink_metadata`): `hard_link(old, new)`, then `remove_file(old)`. If the link fails with `EOPNOTSUPP`, `ENOSYS` or `EXDEV` (a filesystem without hard links, or another device), or with `EPERM` on Linux, it falls back to an existence check of `new`, then `rename`. `EPERM` is OpenSSH's `LINK_OPNOTSUPP_ERRNO` for Linux (`configure.ac:974`), where a filesystem without hard links reports it. If the link succeeds but removing `old` fails, it removes the spare `new` link and replies with the removal's error. Anything else gets an existence check, then `rename`. |
+| RENAME | Refuses to overwrite, with OpenSSH's semantics (`sftp-server.c:1274-1314`). For a regular file (`symlink_metadata`): `hard_link(old, new)`, then `remove_file(old)`. If the link fails with `EOPNOTSUPP`, `ENOSYS` or `EXDEV` (a filesystem without hard links, or another device), or with `EPERM` on Linux, it falls back to an existence check of `new`, then `rename`. `EPERM` is OpenSSH's `LINK_OPNOTSUPP_ERRNO` for Linux (`configure.ac:974`), where a filesystem without hard links reports it. If the link succeeds but removing `old` fails, it removes the spare `new` link and replies with the removal's error. Anything else gets an existence check, then `rename`. Every existence check uses `symlink_metadata`, so it does not follow a symlink: an existing dangling symlink at `new` counts as existing and is never replaced. That is stricter than OpenSSH's `stat`, which would replace it. |
 | READLINK | `read_link`. |
 | SYMLINK | OpenSSH's order: the first string is the target, the second the link path (`PROTOCOL` §4.1). |
 | `posix-rename@openssh.com` | `rename` (overwrites). |
@@ -169,8 +169,10 @@ The longname follows OpenSSH's `ls -l` layout: mode string, link count,
 **numeric** uid and gid, size, date and name. Resolving names needs the
 platform's account database, which `std` and `rustix` do not expose
 without `unsafe`. The date is the mtime in **UTC**:
-- `%b %e %H:%M` within six months of now;
-- `%b %e  %Y` otherwise.
+- `%b %e %H:%M` when the mtime is in the six months up to now;
+- `%b %e  %Y` otherwise, a future mtime included.
+
+This is OpenSSH's rule (`sftp-common.c:242-246`).
 
 It is produced by a pure function, with no time-zone database. Clients
 show it only when `users-groups-by-id` is absent, which it is
