@@ -1055,7 +1055,7 @@ Phase 2 grants no confinement to escape.
 
 - The helper is first-party Rust with no `unsafe`. It runs in its own
   single-threaded process, outside the server process that holds the
-  host key ([RFC-0013](rfcs/0013-sftp-subsystem.md)).
+  host key ([RFC-0013](/docs/rfcs/0013-sftp-subsystem.md)).
 - Every attacker-controlled length is bounded (a packet ≤ 256 KiB, the
   read clamp, the handle cap), and malformed input ends the session.
   The parser is a pure function, shaped for §6.2's Phase-3 fuzzing
