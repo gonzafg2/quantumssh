@@ -612,6 +612,13 @@ impl Driver<'_> {
             && !self.finished_emitted
         {
             self.finished_emitted = true;
+            // Credits still queued when the channel closes are bytes the
+            // child received before it did: count them (ADR-0042).
+            if let Some(child) = self.child.as_mut() {
+                while let Ok(n) = child.consumed_rx.try_recv() {
+                    self.bytes_received = self.bytes_received.saturating_add(u64::from(n));
+                }
+            }
             let exit_status = self.exit_status.unwrap_or(EXIT_SPAWN_FAILED);
             info!(
                 target: "audit",

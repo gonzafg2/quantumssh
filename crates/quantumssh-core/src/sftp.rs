@@ -14,7 +14,7 @@
 #![allow(clippy::redundant_pub_crate)]
 
 use std::ffi::{OsStr, OsString};
-use std::fs::{self, DirBuilder, File, FileTimes, Metadata, OpenOptions, ReadDir};
+use std::fs::{self, DirBuilder, File, FileTimes, Metadata, ReadDir};
 use std::io::{self, BufWriter, ErrorKind, Read, Write};
 use std::iter::Peekable;
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
@@ -305,6 +305,11 @@ impl Server {
         let path = path_arg(r)?;
         let pflags = r.uint32()?;
         let attrs = read_attrs(r)?;
+        // Before the open: a refused OPEN must not have created or
+        // truncated the file (ADR-0041 §3).
+        if !self.has_free_slot() {
+            return Ok(status_reply(id, FX_FAILURE));
+        }
         // `p & 0o777` fits `mode_t` everywhere (u16 on macOS, u32 on Linux).
         let bits = attrs.perm.map_or(0o666, |p| p & 0o777);
         let mode =
@@ -327,6 +332,9 @@ impl Server {
 
     fn opendir(&mut self, id: u32, r: &mut Reader<'_>) -> Result<Vec<u8>, Violation> {
         let path = path_arg(r)?;
+        if !self.has_free_slot() {
+            return Ok(status_reply(id, FX_FAILURE));
+        }
         Ok(match fs::read_dir(&path) {
             Ok(entries) => self.insert(
                 id,
@@ -336,6 +344,11 @@ impl Server {
             ),
             Err(e) => status_reply(id, error_code(&e)),
         })
+    }
+
+    /// Whether a new handle fits under [`MAX_HANDLES`].
+    fn has_free_slot(&self) -> bool {
+        self.handles.len() < MAX_HANDLES || self.handles.iter().any(Option::is_none)
     }
 
     /// Stores a handle under the cap and replies HANDLE, or FAILURE when
@@ -439,15 +452,8 @@ impl Server {
         };
         // APPEND writes sequentially: `pwrite` ignores `O_APPEND` on
         // POSIX systems such as macOS (ADR-0041 §4).
-        let result = if *append {
-            file.write_all(data)
-        } else {
-            file.write_all_at(data, offset)
-        };
-        if result.is_ok() {
-            *written = true;
-        }
-        Ok(status_of(id, result))
+        let at = (!*append).then_some(offset);
+        Ok(status_of(id, write_tracked(file, data, at, written)))
     }
 
     fn fstat(&mut self, id: u32, r: &mut Reader<'_>) -> Result<Vec<u8>, Violation> {
@@ -482,9 +488,16 @@ impl Server {
         let mut size = 1 + 4 + 4;
         while names.len() < MAX_NAMES {
             let Some(next) = entries.peek() else { break };
-            let Ok(entry) = next else {
-                entries.next();
-                continue;
+            let entry = match next {
+                Ok(entry) => entry,
+                // A failed directory read is not the end of the listing: it
+                // is reported, after any names already gathered.
+                Err(_) if !names.is_empty() => break,
+                Err(e) => {
+                    let code = error_code(e);
+                    entries.next();
+                    return Ok(status_reply(id, code));
+                }
             };
             // Through the open directory, not a rebuilt path that a rename
             // may have changed; it does not follow symlinks.
@@ -633,7 +646,13 @@ fn stat(id: u32, path: &Path, follow: bool) -> Vec<u8> {
 /// SETSTAT, in ADR-0041 §4's order; the first failure ends it.
 fn setstat(path: &Path, attrs: &SetAttrs) -> io::Result<()> {
     if let Some(size) = attrs.size {
-        OpenOptions::new().write(true).open(path)?.set_len(size)?;
+        // `truncate(2)` by path, as OpenSSH does: a non-blocking write-only
+        // open fails at once on a FIFO with no reader instead of hanging
+        // this single-threaded helper, and `ftruncate` refuses the rest.
+        use rustix::fs::{Mode, OFlags};
+        let flags = OFlags::WRONLY | OFlags::NONBLOCK | OFlags::CLOEXEC;
+        let fd = rustix::fs::open(path, flags, Mode::empty())?;
+        rustix::fs::ftruncate(&fd, size)?;
     }
     if let Some((uid, gid)) = attrs.owner {
         std::os::unix::fs::chown(path, Some(uid), Some(gid))?;
@@ -672,6 +691,41 @@ fn fsetstat(file: &File, attrs: &SetAttrs) -> io::Result<()> {
                 .set_accessed(at(atime))
                 .set_modified(at(mtime)),
         )?;
+    }
+    Ok(())
+}
+
+/// Writes all of `data`, at `offset` or appending when `None`, and sets
+/// `*written` as soon as any byte reaches the file: a write that fails
+/// part-way has still changed the file, so CLOSE must sync it
+/// (ADR-0041 §4).
+fn write_tracked(
+    file: &mut File,
+    data: &[u8],
+    offset: Option<u64>,
+    written: &mut bool,
+) -> io::Result<()> {
+    let mut done = 0;
+    while done < data.len() {
+        let rest = &data[done..];
+        let n = match offset {
+            Some(start) => {
+                let at = start
+                    .checked_add(u64::try_from(done).map_err(io::Error::other)?)
+                    .ok_or_else(|| io::Error::from(ErrorKind::InvalidInput))?;
+                file.write_at(rest, at)
+            }
+            None => file.write(rest),
+        };
+        match n {
+            Ok(0) => return Err(io::Error::from(ErrorKind::WriteZero)),
+            Ok(n) => {
+                done += n;
+                *written = true;
+            }
+            Err(e) if e.kind() == ErrorKind::Interrupted => {}
+            Err(e) => return Err(e),
+        }
     }
     Ok(())
 }
@@ -1182,6 +1236,54 @@ mod tests {
         assert_eq!(status_code(&replies[2]), FX_FAILURE);
         assert_eq!(handle_of(&replies[3 + MAX_HANDLES - 1]).len(), 4);
         assert_eq!(status_code(&replies[3 + MAX_HANDLES]), FX_FAILURE);
+    }
+
+    /// The cap is checked before the open: an OPEN refused at the cap has
+    /// not truncated the file.
+    #[test]
+    fn a_refused_open_leaves_the_file_untouched() {
+        let dir = temp_dir();
+        let kept = dir.join("kept");
+        fs::write(&kept, b"content").unwrap();
+        let mut input = init();
+        for i in 0..MAX_HANDLES {
+            input.extend_from_slice(&request(FXP_OPENDIR, u32::try_from(i).unwrap(), |w| {
+                w.put_string(path(&dir));
+            }));
+        }
+        input.extend_from_slice(&request(FXP_OPEN, 9999, |w| {
+            w.put_string(path(&kept));
+            w.put_uint32(OPEN_WRITE | OPEN_CREAT | OPEN_TRUNC);
+            w.put_uint32(0);
+        }));
+        let (_, replies) = run(&input);
+        assert_eq!(status_code(replies.last().unwrap()), FX_FAILURE);
+        assert_eq!(fs::read(&kept).unwrap(), b"content");
+    }
+
+    /// SETSTAT's size on a FIFO with no reader fails at once instead of
+    /// blocking the single-threaded helper in `open(2)`.
+    #[test]
+    fn setstat_size_on_a_fifo_does_not_block() {
+        let dir = temp_dir();
+        let fifo = dir.join("fifo");
+        let made = std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .unwrap();
+        assert!(made.success(), "mkfifo");
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let attrs = SetAttrs {
+                size: Some(0),
+                ..SetAttrs::default()
+            };
+            let _ = tx.send(setstat(&fifo, &attrs).is_err());
+        });
+        let failed = rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("SETSTAT blocked on the FIFO");
+        assert!(failed, "truncating a FIFO is an error");
     }
 
     #[test]
