@@ -84,8 +84,9 @@ mapping and extension set below.
 - **Serving.** It reads framed requests from fd 0 through a buffered
   reader. It writes each response to fd 1 and flushes it before reading
   the next request. It never writes to fd 2, which belongs to the client.
-- **Exit status.** 0 at EOF on stdin. 2 on a protocol violation, or when
-  reading stdin or writing stdout fails. Open handles are closed on either
+- **Exit status.** 0 at EOF on stdin at a packet boundary. 2 on a
+  protocol violation, EOF inside a packet included, or when reading stdin
+  or writing stdout fails. Open handles are closed on either
   path.
 
 ### 3. Framing and bounds

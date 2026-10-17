@@ -104,8 +104,9 @@ What an operator should know:
   the client, so it never writes there.
 - **Lifetime.** It changes to `$HOME` from the sanitised environment, as
   sshd's session child does (`session.c:1586`), or to `/` if `$HOME` is
-  missing or unusable. It serves until EOF on stdin, then closes every
-  handle and exits 0.
+  missing or unusable. It serves until EOF on stdin at a packet boundary,
+  then closes every handle and exits 0. EOF inside a packet is truncated
+  input, and it takes the fail-closed path of §3's framing rule.
 - **Library boundary.** The protocol, its parser and the request handlers
   live in a new `quantumssh-core` module, `sftp`. The parser is a pure
   function over a bounded byte slice, so it can be fuzzed (threat model
@@ -244,7 +245,7 @@ implementation PR adds it verbatim after §5.4.4:
 >
 > - The helper is first-party Rust with no `unsafe`. It runs in its own
 >   single-threaded process, outside the server process that holds the
->   host key ([RFC-0013](rfcs/0013-sftp-subsystem.md)).
+>   host key ([RFC-0013](/docs/rfcs/0013-sftp-subsystem.md)).
 > - Every attacker-controlled length is bounded (a packet ≤ 256 KiB, the
 >   read clamp, the handle cap), and malformed input ends the session.
 >   The parser is a pure function, shaped for §6.2's Phase-3 fuzzing
