@@ -147,7 +147,7 @@ filter is compiled in, and no `RUST_LOG` directive reaches it
 | Event | Level | `peer_addr` | Fields |
 |---|---|---|---|
 | `server.started` | INFO | no | `listen_addr` (string), `host_key_fingerprint` (string), `config_file` (string) |
-| `server.config_override` | INFO | no | `key` (enumeration: the config key a command-line flag overrode) |
+| `server.config_override` | INFO | no | `key` (enumeration: `server.listen`, `server.host_key`, `auth.authorized_keys`, `server.handshake_timeout`, `logging.format`) |
 | `server.config_error` | ERROR | no | `class` (enumeration, §4), `error` (string, free text), `config_file` (string) |
 | `connection.accepted` | INFO | yes | — |
 | `connection.refused` | INFO | yes | `limit` (enumeration: `max_connections`, `max_half_open`, `max_per_source`, `accept_rate`) |
@@ -179,6 +179,14 @@ filter is compiled in, and no `RUST_LOG` directive reaches it
   base64 SHA-256 of the public key the client proved possession of
   (ADR-0024). The field and `executing_uid` stay separate first-class
   fields (§2.7, §8.12).
+- **`host_key_fingerprint`** uses the same representation:
+  - `SHA256:` followed by the SHA-256 of the host key's public-key blob;
+  - the digest is encoded in standard base64 with no padding.
+
+  That is OpenSSH's fingerprint format, so the value compares directly
+  with `ssh-keygen -lf` and with a client's known-hosts prompt. The key
+  type changes with RFC-0012's cut-over, but the representation stays
+  the same.
 - **`failure_count`** counts failed authentication requests within one
   connection, and it starts again at 1 on a new connection.
   - **Every failure emits `auth.failed`,** the one that exhausts the
@@ -200,6 +208,11 @@ filter is compiled in, and no `RUST_LOG` directive reaches it
   that overrides a value the config file set (RFC-0010's precedence).
   Together with `config_file`, it records which configuration the
   server loaded (§2.7).
+  - **The format of `key`.** It is the overridden key's TOML path,
+    section and key joined by a dot. In version 1 a flag can override
+    five keys, so the values are the five listed in §3.
+  - **New keys.** A key added to the config file later uses the same
+    form, which keeps it an additive enumeration value.
 - **Free-text fields** are `connection.closed`'s `reason` and
   `server.config_error`'s `error`. They carry detail for people, and
   consumers must not match on them.
@@ -241,8 +254,10 @@ contract by `event`, never by `message`.
 
 ### 6. Changes to accepted decisions
 
-When this RFC is accepted, each affected document gains a Status
-pointer to it.
+When this RFC is accepted, the affected ADRs (ADR-0024 and ADR-0028)
+gain a Status pointer to it. Accepted RFCs are not edited in place, so
+RFC-0010 and RFC-0008 keep their text. This RFC links them and states
+what it supersedes ([`README.md`](README.md), "After acceptance").
 
 - **[ADR-0024](../adr/0024-phase-1-log-event-schema.md):**
   - the JSON layout becomes §2;
@@ -290,8 +305,11 @@ This RFC needs no separate ADR. Its implementing PR does six things:
   `server.config_error` gains `class`, `error` and `config_file`.
 - **Golden tests:** one per catalogue event, each pinning the exact key
   set of its line, plus one diagnostic line.
-- **The flip:** the PR flips this RFC to Accepted and adds the Status
-  pointers of §6.
+- **The flip:** the PR flips this RFC to Accepted and adds the two ADR
+  Status pointers of §6.
+- **Override keys:** the override labels become the TOML paths of §4.
+  Today they are the internal names `listen`, `host_key`,
+  `authorized_keys`, `handshake_timeout` and `log_format`.
 - **Docs:** the operator guide's log section, the CHANGELOG, and the
   threat-model §6.2 wording, which then names the version.
 
