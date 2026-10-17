@@ -33,11 +33,27 @@ jobs:
             echo "::notice::Cargo.lock not present yet; skipping cargo-audit until the workspace has its first lockfile-bearing crate."
           fi
 
+      # ADR-0039: rust-toolchain.toml is the only place a Rust version is
+      # named. Pass its exact `channel` to the installer; anything but
+      # MAJOR.MINOR.PATCH fails here, so the pin cannot float again
+      # silently, and the input is digits and dots only.
+      - name: Read pinned toolchain
+        if: steps.lockfile.outputs.present == '1'
+        id: toolchain
+        shell: bash
+        run: |
+          channel=$(sed -n 's/^channel[[:space:]]*=[[:space:]]*"\([^"]*\)".*$/\1/p' rust-toolchain.toml)
+          if ! [[ "$channel" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error file=rust-toolchain.toml::channel must be an exact MAJOR.MINOR.PATCH release (ADR-0039), found '${channel}'"
+            exit 1
+          fi
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+
       - name: Install Rust toolchain
         if: steps.lockfile.outputs.present == '1'
-        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # v1
+        uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # v1
         with:
-          toolchain: stable
+          toolchain: ${{ steps.toolchain.outputs.channel }}
 
       - name: Cache cargo registry, index and target
         if: steps.lockfile.outputs.present == '1'

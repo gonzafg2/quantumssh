@@ -898,8 +898,10 @@ short-lived certificates (a Phase 2 feature designed in
 [RFC-0008](rfcs/0008-ssh-certificate-authentication.md)), audit-
 record fidelity, and configurable per-key restrictions
 (`from=`, `command=`, `no-port-forwarding`, equivalents in
-QuantumSSH's own syntax) — but the primary defence lives in the
-user's endpoint hygiene.
+QuantumSSH's own syntax; not yet implemented, and until they are,
+a key line carrying options is refused at startup per
+[ADR-0040](adr/0040-refuse-authorized-keys-options-until-enforced.md))
+— but the primary defence lives in the user's endpoint hygiene.
 
 #### 5.3.3 `authorized_keys` injection
 
@@ -1264,9 +1266,12 @@ repeating it.
   §5.3.3 post-hoc detection.
 - **No `authorized_keys` writes from the server.** Defends §5.3.3
   in-band.
-- **Per-key restrictions.** `from=`, `command=`, forwarding
+- **Per-key restrictions (planned).** `from=`, `command=`, forwarding
   restrictions expressible in configuration. Defends §5.4.1, §5.4.2
-  selectively.
+  selectively once implemented. Until then, an `authorized_keys` line
+  that carries options is refused at startup instead of loading
+  unrestricted
+  ([ADR-0040](adr/0040-refuse-authorized-keys-options-until-enforced.md)).
 
 ### 6.4 Operational posture (project-side)
 

@@ -26,6 +26,7 @@
 use std::collections::HashMap;
 use std::io;
 use std::net::SocketAddr;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -38,6 +39,7 @@ use tracing::{Instrument, Span, debug, info, info_span, warn};
 
 use crate::admission::{Admission, ConnectionGuard, Limits};
 use crate::auth::AuthorizedKeys;
+use crate::exec::ChildScope;
 use crate::host_key::HostKey;
 use crate::transport::{self, RekeyThresholds, TransportError};
 
@@ -45,6 +47,49 @@ use crate::transport::{self, RekeyThresholds, TransportError};
 /// the loop aborts the remainder this much later, so the abort is the
 /// last resort for stuck tasks, not the routine path (ADR-0028).
 const ABORT_GRACE: Duration = Duration::from_secs(2);
+
+/// How long the loop stops accepting after an `accept()` error that did
+/// not dispose of the pending connection (#200). The listener stays
+/// readable while that connection waits, so retrying at once would spin;
+/// hyper and axum pause for the same second. Live connections are served
+/// meanwhile; closing them is what frees descriptors.
+const ACCEPT_BACKOFF: Duration = Duration::from_secs(1);
+
+/// What an `accept()` error means for the loop (#200).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AcceptFailure {
+    /// The listening socket itself is unusable: end the loop, so that
+    /// the service manager restarts the server.
+    Listener,
+    /// One pending connection failed and left the queue (reset, aborted,
+    /// or a network error accept(2) passes on): retry at once, so that a
+    /// peer cannot stall the loop.
+    Connection,
+    /// Anything else: out of descriptors or buffers, a security-module
+    /// denial on the listener (`EACCES`, `EPERM`), or an error not known
+    /// to concern one connection. The connection may still be queued, so
+    /// pause for [`ACCEPT_BACKOFF`] rather than spin.
+    Pause,
+}
+
+fn classify_accept_error(error: &io::Error) -> AcceptFailure {
+    use rustix::io::Errno;
+    match Errno::from_io_error(error) {
+        Some(Errno::BADF | Errno::NOTSOCK | Errno::INVAL) => AcceptFailure::Listener,
+        Some(
+            Errno::CONNABORTED
+            | Errno::CONNRESET
+            | Errno::PROTO
+            | Errno::NOPROTOOPT
+            | Errno::OPNOTSUPP
+            | Errno::NETDOWN
+            | Errno::NETUNREACH
+            | Errno::HOSTDOWN
+            | Errno::HOSTUNREACH,
+        ) => AcceptFailure::Connection,
+        _ => AcceptFailure::Pause,
+    }
+}
 
 /// Server configuration assembled by the binary from its CLI and the
 /// RFC-0010 config file.
@@ -63,6 +108,10 @@ pub struct Config {
     pub rekey: RekeyThresholds,
     /// The ADR-0028 admission caps and per-source rate limit.
     pub limits: Limits,
+    /// The executable to re-exec for PTY children: a binary whose `main`
+    /// first calls [`crate::pty::run_helper_if_requested`]. `None` refuses
+    /// every `pty-req` (ADR-0038 §5).
+    pub pty_helper: Option<PathBuf>,
 }
 
 /// A bound, not-yet-serving server.
@@ -74,6 +123,7 @@ pub struct Server {
     authorized_keys: Arc<AuthorizedKeys>,
     rekey: RekeyThresholds,
     limits: Limits,
+    pty_helper: Option<Arc<Path>>,
 }
 
 impl Server {
@@ -99,6 +149,7 @@ impl Server {
             authorized_keys: Arc::clone(&config.authorized_keys),
             rekey: config.rekey,
             limits: config.limits,
+            pty_helper: config.pty_helper.as_deref().map(Arc::from),
         })
     }
 
@@ -112,8 +163,8 @@ impl Server {
         self.listener.local_addr()
     }
 
-    /// Runs the concurrent accept loop (ADR-0028) until the listener
-    /// fails or a shutdown signal drains it.
+    /// Runs the concurrent accept loop (ADR-0028) until the listening
+    /// socket fails or a shutdown signal drains it.
     ///
     /// `shutdown` is the broadcast the OS-signal listener (or a test)
     /// sends the **drain deadline** on: on the first value the loop
@@ -122,12 +173,27 @@ impl Server {
     /// deadline; a second value skips the remaining deadline. Dropping
     /// every sender simply means no shutdown ever arrives.
     ///
+    /// `loop_rx` is the loop's own receiver of `shutdown`: the one
+    /// `broadcast::channel` returns, so it exists before any signal can
+    /// be sent. A broadcast reaches only the receivers that exist when it
+    /// is sent, so a receiver subscribed here, when the future first
+    /// runs, would miss a signal that arrives just after `READY=1`
+    /// (ADR-0043 §2).
+    ///
     /// # Errors
     ///
-    /// Returns the underlying I/O error when accepting a connection
-    /// fails at the listener level. A drained shutdown returns
-    /// `Ok(())`.
-    pub async fn serve(self, shutdown: broadcast::Sender<Instant>) -> io::Result<()> {
+    /// Returns the underlying I/O error when the listening socket
+    /// itself is unusable (`EBADF`, `ENOTSOCK`, `EINVAL`), so that the
+    /// service manager can restart the server. A pending connection that
+    /// failed is skipped at once; any other error, running out of
+    /// descriptors first among them, pauses accepting for
+    /// [`ACCEPT_BACKOFF`]. Neither ends the loop (#200). A drained
+    /// shutdown returns `Ok(())`.
+    pub async fn serve(
+        self,
+        shutdown: broadcast::Sender<Instant>,
+        mut loop_rx: broadcast::Receiver<Instant>,
+    ) -> io::Result<()> {
         let budget = self.handshake_timeout;
         let rekey = self.rekey;
         let admission = Admission::new(self.limits);
@@ -136,15 +202,35 @@ impl Server {
         // `connection.closed` inherits `peer_addr` (ADR-0024) without
         // repeating it as an event field.
         let mut connection_spans: HashMap<tokio::task::Id, Span> = HashMap::new();
-        let mut loop_rx = shutdown.subscribe();
         // Set on the first shutdown signal: when the remainder is
         // aborted. Accepting stops the moment it is `Some`.
         let mut abort_at: Option<Instant> = None;
+        // Set when an `accept()` error paused accepting: it resumes
+        // then (#200).
+        let mut resume_at: Option<Instant> = None;
 
         loop {
             tokio::select! {
-                accepted = self.listener.accept(), if abort_at.is_none() => {
-                    let (stream, peer_addr) = accepted?;
+                accepted = self.listener.accept(), if abort_at.is_none() && resume_at.is_none() => {
+                    let (stream, peer_addr) = match accepted {
+                        Ok(accepted) => accepted,
+                        Err(e) => match classify_accept_error(&e) {
+                            AcceptFailure::Listener => return Err(e),
+                            AcceptFailure::Pause => {
+                                warn!(
+                                    error = %e,
+                                    pause_seconds = ACCEPT_BACKOFF.as_secs(),
+                                    "accept failed; pausing accepts"
+                                );
+                                resume_at = Some(Instant::now() + ACCEPT_BACKOFF);
+                                continue;
+                            }
+                            AcceptFailure::Connection => {
+                                debug!(error = %e, "accept failed for one pending connection");
+                                continue;
+                            }
+                        },
+                    };
                     let span = info_span!("connection", peer_addr = %peer_addr);
                     match admission.try_admit(peer_addr.ip(), std::time::Instant::now()) {
                         Err(refusal) => {
@@ -158,11 +244,21 @@ impl Server {
                         Ok(guard) => {
                             let host_key = Arc::clone(&self.host_key);
                             let authorized_keys = Arc::clone(&self.authorized_keys);
+                            let pty_helper = self.pty_helper.clone();
                             let conn_rx = shutdown.subscribe();
                             let connection = async move {
                                 info!("connection.accepted");
-                                handle(stream, host_key, authorized_keys, budget, rekey, guard, conn_rx)
-                                    .await;
+                                handle(
+                                    stream,
+                                    host_key,
+                                    authorized_keys,
+                                    budget,
+                                    rekey,
+                                    guard,
+                                    conn_rx,
+                                    pty_helper,
+                                )
+                                .await;
                             };
                             let handle = tasks.spawn(connection.instrument(span.clone()));
                             connection_spans.insert(handle.id(), span);
@@ -185,6 +281,11 @@ impl Server {
                     } else {
                         abort_at = Some(deadline + ABORT_GRACE);
                     }
+                }
+                () = tokio::time::sleep_until(resume_at.unwrap_or_else(Instant::now)),
+                    if resume_at.is_some() =>
+                {
+                    resume_at = None;
                 }
                 () = tokio::time::sleep_until(abort_at.unwrap_or_else(Instant::now)),
                     if abort_at.is_some() =>
@@ -254,6 +355,9 @@ async fn next_shutdown(rx: &mut broadcast::Receiver<Instant>) -> Instant {
 /// Handles one connection: the handshake under the budget, the channel
 /// phase un-timed — until a shutdown signal bounds what remains
 /// (ADR-0028).
+// Each argument is a distinct input the accept loop hands the connection
+// task; bundling them would only move the list into a struct literal.
+#[allow(clippy::too_many_arguments)]
 async fn handle(
     mut stream: TcpStream,
     host_key: Arc<HostKey>,
@@ -262,7 +366,12 @@ async fn handle(
     rekey: RekeyThresholds,
     guard: ConnectionGuard,
     mut shutdown: broadcast::Receiver<Instant>,
+    pty_helper: Option<Arc<Path>>,
 ) {
+    // Outlives the connection future: a deadline that cancels the future
+    // leaves the children's teardown running, and an abort of this task
+    // runs the scope's synchronous kill guard (ADR-0038 §6).
+    let children = ChildScope::new(pty_helper);
     // The block scopes the (possibly cancelled) connection future: at
     // its end the `&mut stream` borrow is released and the channel
     // driver's drop-side effects (child kill, owed `exec.finished`)
@@ -275,6 +384,7 @@ async fn handle(
             budget,
             rekey,
             &guard,
+            &children,
         );
         tokio::pin!(conn);
         tokio::select! {
@@ -306,6 +416,9 @@ async fn handle(
     if let Err(e) = stream.shutdown().await {
         debug!(error = %e, "tcp shutdown failed");
     }
+    // The connection leaves the server's `JoinSet` only once its child is
+    // reaped (ADR-0038 §6).
+    children.join().await;
     info!(reason = %reason, "connection.closed");
 }
 
@@ -323,6 +436,7 @@ async fn run_connection(
     budget: Duration,
     rekey: RekeyThresholds,
     guard: &ConnectionGuard,
+    children: &ChildScope,
 ) -> Result<(), TransportError> {
     let auth_phase = async {
         let t = transport::version_exchange(stream).await?;
@@ -360,7 +474,7 @@ async fn run_connection(
         // the channel layer un-timed.
         Some(t) => {
             guard.mark_authenticated();
-            t.serve(host_key, rekey).await
+            t.serve(host_key, rekey, children).await
         }
         // `responder.deny()` already returned `Err`, so this arm is
         // unreachable; kept total for the type.
@@ -562,6 +676,43 @@ mod tests {
             all.iter()
                 .any(|r| r.message == "join error without connection span"),
             "expected diagnostic warn: {all:?}"
+        );
+    }
+
+    /// #200: only a broken listening socket ends the loop; only errors
+    /// known to concern one dequeued connection retry at once; anything
+    /// else, which may leave the connection queued, pauses.
+    #[test]
+    fn accept_errors_are_classified() {
+        use rustix::io::Errno;
+        let class = |errno: Errno| classify_accept_error(&io::Error::from(errno));
+        for errno in [Errno::BADF, Errno::NOTSOCK, Errno::INVAL] {
+            assert_eq!(class(errno), AcceptFailure::Listener, "{errno:?}");
+        }
+        for errno in [
+            Errno::CONNABORTED,
+            Errno::CONNRESET,
+            Errno::PROTO,
+            Errno::NETUNREACH,
+            Errno::HOSTUNREACH,
+        ] {
+            assert_eq!(class(errno), AcceptFailure::Connection, "{errno:?}");
+        }
+        // Resources, and the SELinux/AppArmor denials that leave the
+        // connection queued (a retry at once would spin).
+        for errno in [
+            Errno::MFILE,
+            Errno::NFILE,
+            Errno::NOBUFS,
+            Errno::NOMEM,
+            Errno::ACCESS,
+            Errno::PERM,
+        ] {
+            assert_eq!(class(errno), AcceptFailure::Pause, "{errno:?}");
+        }
+        assert_eq!(
+            classify_accept_error(&io::Error::other("not an OS error")),
+            AcceptFailure::Pause
         );
     }
 }

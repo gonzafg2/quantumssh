@@ -1,6 +1,6 @@
 # ADR 0010: Pin workspace to resolver 3, edition 2024, MSRV 1.92
 
-- **Status:** Accepted
+- **Status:** Accepted; the `channel = "stable"` (current stable) part of the fourth §Decision bullet is superseded by [ADR-0039](0039-rust-toolchain-pinned-to-exact-release.md), which pins `rust-toolchain.toml` to an exact stable release; the `components` list in that bullet and every other bullet stand
 - **Date:** 2026-05-10
 - **Deciders:** Project lead
 - **Related:** [ADR-0009](0009-workspace-no-members-during-phase-0.md), `Cargo.toml`, `rust-toolchain.toml`, `clippy.toml`

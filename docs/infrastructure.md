@@ -347,8 +347,10 @@ Decision rationale (shipping the virtual manifest in Phase 0): see
 ### Toolchain and edition
 
 The workspace pins `resolver = "3"`, `edition = "2024"`, and
-`rust-version = "1.92"`. The `rust-toolchain.toml` pins the channel to
-current stable. Workspace lints set `unsafe_code = "forbid"`
+`rust-version = "1.92"`. The `rust-toolchain.toml` pins an exact stable
+release, which every CI job reads
+([ADR-0039](./adr/0039-rust-toolchain-pinned-to-exact-release.md)).
+Workspace lints set `unsafe_code = "forbid"`
 ([ADR-0018](./adr/0018-phase-1-unsafe-code-forbid-workspace.md)),
 inherited by both crates: there is no per-block opt-in, `#[allow]`
 cannot override it, and first-party `unsafe` would need a superseding ADR — per

@@ -1,7 +1,11 @@
-# Pinned toolchain. rustup honours this file automatically when the
-# directory is entered, so contributors do not need to remember which
-# channel the project uses.
+# Pinned toolchain: an exact stable release, and the only place a Rust
+# version is named (ADR-0039). rustup honours this file automatically
+# when the directory is entered, so contributors do not need to remember
+# which toolchain the project uses, and every CI job reads `channel` from
+# here. A bump is one reviewed PR that changes `channel` and fixes what
+# the new release flags. The MSRV is separate: `rust-version` in
+# Cargo.toml (ADR-0010).
 [toolchain]
-channel    = "stable"
+channel    = "1.99.0"
 components = ["rustfmt", "clippy", "rust-src"]
 profile    = "minimal"

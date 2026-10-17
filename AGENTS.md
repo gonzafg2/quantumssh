@@ -95,7 +95,7 @@ warnings.
   `commit-lint` check rejects subjects that are not Conventional Commits;
   the sign-off is checked by reviewers, not by automation.
 - Spanish and English are both first-class in issues, PRs, and commits.
-- Automated reviewers (`opencode`, `Claude Code Review`, `codex`) only run on PRs from `OWNER`/`MEMBER`/`COLLABORATOR`. Dependabot and other bots are excluded.
+- The workflow reviewers (`opencode`, `Claude Code Review`) only run on PRs from `OWNER`/`MEMBER`/`COLLABORATOR`; Dependabot and other bots are excluded from them. Codex reviews through the Codex cloud GitHub App (ADR-0037), following `## Code Review Rules` below. The App has no author gate and may review bot and fork PRs too.
 
 ## Dependencies
 
@@ -115,8 +115,25 @@ warnings.
 | `docs/threat-model.md` | Defensive posture |
 | `docs/adr/` | Architecture Decision Records |
 | `docs/rfcs/` | RFCs (shape-determining decisions) |
-| `.github/REVIEW-FORMAT.md` | Report contract all three automated reviewers follow |
+| `.github/REVIEW-FORMAT.md` | Report contract the two workflow reviewers follow |
 | `deny.toml` | `cargo deny` configuration |
 | `clippy.toml` | Clippy tuning |
 | `rust-toolchain.toml` | Pinned toolchain (stable, MSRV 1.92) |
 | `rustfmt.toml` | Formatting rules (100 cols, module imports) |
+
+## Code Review Rules
+
+Read by the Codex cloud GitHub App when it reviews a pull request
+([ADR-0037](docs/adr/0037-codex-reviews-via-chatgpt-github-app.md)).
+
+- The review criteria are in `CLAUDE.md`: the five commitments as review
+  rules, the hard security rules, and the RFC/ADR/plan lanes.
+  `docs/threat-model.md` is authoritative for security. Apply them; this
+  section does not restate them.
+- Report a finding only when it breaks one of those rules, and name the
+  file and line and the rule it breaks.
+- An accepted ADR changes only by supersession, apart from its Status
+  field and annotated errata (ADR-0015). Do not ask for one to be edited
+  in place.
+- Never push commits or open fix tasks on this repository. Only the
+  maintainer's signed, signed-off commits enter it.

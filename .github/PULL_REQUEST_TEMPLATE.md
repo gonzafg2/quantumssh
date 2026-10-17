@@ -48,5 +48,5 @@ about? Trade-offs you considered? -->
 
 ## Automated reviews
 
-PRs authored by `dependabot[bot]` (and other bots) do not trigger opencode, Claude Code Review or codex.
+PRs authored by `dependabot[bot]` (and other bots) do not trigger opencode or Claude Code Review. Codex reviews through the Codex cloud GitHub App (ADR-0037).
 They are covered by CI (`commit-lint`, `build (ubuntu-latest)` and `build (macos-latest)` — fmt, clippy, tests, release build —, `cargo deny`, `openssh-interop`; `cargo audit` runs weekly, not per PR) and manual review when needed.
