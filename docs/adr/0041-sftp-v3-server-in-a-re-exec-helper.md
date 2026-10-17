@@ -254,9 +254,12 @@ show it only when `users-groups-by-id` is absent, which it is
 ### Alternative 1: `rustix` for every file operation
 
 This would give one consistent API. It was not chosen: `std` already
-covers OPEN, READ, WRITE, STAT, DIR and the rest safely, and it is what the
-rest of the codebase uses. `rustix` is used only where `std` has no
-equivalent: `utimensat` on a path.
+covers READ, WRITE, STAT, DIR and the rest safely, and it is what the rest
+of the codebase uses. `rustix` is used only where `std` cannot express the
+semantics:
+- OPEN with OpenSSH's flag mapping (READ|APPEND, READ|CREAT);
+- SETSTAT's non-blocking size change on a path (`open` plus `ftruncate`);
+- `utimensat` on a path.
 
 ### Alternative 2: `renameat2(RENAME_NOREPLACE)` for RENAME
 
