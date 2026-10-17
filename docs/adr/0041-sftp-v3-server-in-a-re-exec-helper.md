@@ -109,7 +109,8 @@ these cases:
 
 A handle that is not 4 bytes, or names no open handle, gets
 `SSH_FX_FAILURE`, and the session continues. An OPEN or OPENDIR beyond the
-cap also gets `SSH_FX_FAILURE`.
+cap also gets `SSH_FX_FAILURE`. The cap is checked before the open, so a
+refused OPEN has not created or truncated a file.
 
 **Every request gets exactly one response.** An unknown request type and
 an unknown EXTENDED name get `SSH_FX_OP_UNSUPPORTED`. The server never
@@ -141,8 +142,8 @@ only.
 | READ | `read_at(offset)`: `SSH_FX_EOF` at end of file, otherwise DATA of ≤ min(len, 261 120) bytes. |
 | WRITE | On a handle opened with APPEND, `write_all`: the kernel appends and the offset is ignored, as OpenSSH's `process_write` does by skipping `lseek` for `O_APPEND` (`sftp-server.c:865-872`). On any other handle, `write_all_at(offset)`. A positional write is never used with APPEND, because POSIX gives `O_APPEND` no effect on `pwrite`, and macOS follows POSIX: only Linux appends regardless (pwrite(2), BUGS). |
 | STAT / LSTAT / FSTAT | `metadata` / `symlink_metadata` / `File::metadata`. |
-| SETSTAT / FSETSTAT | Applied in this order, each only if its flag is set: size, `set_len` (on the handle, or after opening the path for write); uid/gid, `chown`/`fchown`; permissions, `set_permissions(perm & 0o7777)`; times, `File::set_times` on a handle, or `rustix::fs::utimensat` on a path. The first failure ends the request with its status. |
-| OPENDIR / READDIR | `read_dir`. Each NAME carries the entry name, the longname (§5) and `symlink_metadata` ATTRS. `SSH_FX_EOF` once exhausted. |
+| SETSTAT / FSETSTAT | Applied in this order, each only if its flag is set: size, `set_len` on a handle, or on a path a write-only, **non-blocking** open, then `ftruncate`. OpenSSH uses `truncate(2)`, and like it, a FIFO with no reader fails at once instead of blocking the single-threaded helper; uid/gid, `chown`/`fchown`; permissions, `set_permissions(perm & 0o7777)`; times, `File::set_times` on a handle, or `rustix::fs::utimensat` on a path. The first failure ends the request with its status. |
+| OPENDIR / READDIR | `read_dir`. Each NAME carries the entry name, the longname (§5) and ATTRS from the entry's metadata. That metadata is read through the open directory, without following a symlink; an entry whose metadata cannot be read is skipped, as OpenSSH skips a failed `lstat`. A failed directory read is the reply's status, sent after any names already gathered. `SSH_FX_EOF` comes only once the directory is exhausted. |
 | REMOVE / MKDIR / RMDIR | `remove_file` / `DirBuilder` with mode `perm & 0o777` (`0o777` if absent) / `remove_dir`. |
 | REALPATH | OpenSSH's algorithm (`sftp-realpath.c:106-211`), not `canonicalize`. It resolves components left to right with `symlink_metadata` and follows every symlink, the last component's included, up to 32 links (`SYMLOOP_MAX`). Only a missing **last** component is accepted, and it is checked after any symlink before it was followed. A dangling final symlink therefore resolves to its target's path, not the link's. A relative path starts from the working directory, and an empty path means `.`. |
 | RENAME | Refuses to overwrite, with OpenSSH's semantics (`sftp-server.c:1274-1314`). For a regular file (`symlink_metadata`): `hard_link(old, new)`, then `remove_file(old)`. If the link fails with `EOPNOTSUPP`, `ENOSYS` or `EXDEV` (a filesystem without hard links, or another device), or with `EPERM` on Linux, it falls back to an existence check of `new`, then `rename`. `EPERM` is OpenSSH's `LINK_OPNOTSUPP_ERRNO` for Linux (`configure.ac:974`), where a filesystem without hard links reports it. If the link succeeds but removing `old` fails, it removes the spare `new` link and replies with the removal's error. Anything else gets an existence check, then `rename`. Every existence check uses `symlink_metadata`, so it does not follow a symlink: an existing dangling symlink at `new` counts as existing and is never replaced. That is stricter than OpenSSH's `stat`, which would replace it. |
