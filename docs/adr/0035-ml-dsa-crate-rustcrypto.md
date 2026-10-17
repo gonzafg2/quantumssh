@@ -150,7 +150,7 @@ composite host key.
 - One vendor family for both post-quantum primitives (`ml-kem`,
   `ml-dsa`). The `ml-dsa` dependencies already in `Cargo.lock`
   (`module-lattice`, `hybrid-array`, `ctutils`, `crypto-common`) resolve
-  to the existing versions; nothing there is duplicated.
+  to the versions already locked, so they add no duplicate.
 - The version rule ties the pin to a concrete, verifiable fix rather
   than to a date.
 
