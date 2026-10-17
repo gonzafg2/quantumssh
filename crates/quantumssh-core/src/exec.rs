@@ -840,22 +840,34 @@ where
     }
 }
 
-/// Writes stdin chunks to the child. `write_all` waits until the child
+/// Writes stdin chunks to the child. Each write waits until the child
 /// reads, which backpressures the wire through the gated inbound window;
-/// each consumed chunk's length lets the driver replenish that window
-/// (ADR-0023). Dropping the pipe at the end closes the child's stdin.
+/// the length of each successful write, partial ones included, lets the
+/// driver replenish that window (ADR-0023) and count the bytes the child
+/// received (ADR-0042). Dropping the pipe at the end closes the child's
+/// stdin.
 async fn pump_stdin(
     mut pipe: ChildStdin,
     mut rx: mpsc::Receiver<Vec<u8>>,
     consumed: mpsc::UnboundedSender<u32>,
 ) {
     while let Some(chunk) = rx.recv().await {
-        if pipe.write_all(&chunk).await.is_err() || pipe.flush().await.is_err() {
-            break;
+        // Each successful write is credited as it happens: a child that
+        // reads a prefix and exits still received those bytes (ADR-0042),
+        // and they refill the window.
+        let mut rest = chunk.as_slice();
+        while !rest.is_empty() {
+            let n = match pipe.write(rest).await {
+                Ok(0) | Err(_) => return,
+                Ok(n) => n,
+            };
+            if u32::try_from(n).map_or(true, |n| consumed.send(n).is_err()) {
+                return;
+            }
+            rest = &rest[n..];
         }
-        match u32::try_from(chunk.len()) {
-            Ok(n) if consumed.send(n).is_ok() => {}
-            _ => break,
+        if pipe.flush().await.is_err() {
+            break;
         }
     }
 }
@@ -1094,5 +1106,31 @@ mod tests {
         drop(pair.master);
         consumer.await.expect("consumer");
         writer.join().expect("writer");
+    }
+
+    /// A child that reads a prefix of a large chunk and exits still
+    /// received that prefix: `pump_stdin` credits each partial write
+    /// (ADR-0042). Before, the chunk was credited only after `write_all`,
+    /// so the `EPIPE` that follows the child's exit left nothing credited.
+    #[tokio::test]
+    async fn pump_stdin_credits_partial_writes() {
+        let mut child = Command::new(SHELL)
+            .args(["-c", "head -c 1 >/dev/null"])
+            .stdin(Stdio::piped())
+            .spawn()
+            .expect("spawn");
+        let stdin = child.stdin.take().expect("stdin piped");
+        let (tx, rx) = mpsc::channel(1);
+        let (consumed_tx, mut consumed_rx) = mpsc::unbounded_channel();
+        tx.send(vec![0u8; 4 * 1024 * 1024]).await.expect("queue");
+        drop(tx);
+        pump_stdin(stdin, rx, consumed_tx).await;
+        child.wait().await.expect("wait");
+        let mut credited = 0u64;
+        while let Ok(n) = consumed_rx.try_recv() {
+            credited += u64::from(n);
+        }
+        assert!(credited > 0, "the bytes the child read were not credited");
+        assert!(credited < 4 * 1024 * 1024, "the child did not read it all");
     }
 }
