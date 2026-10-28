@@ -272,8 +272,11 @@ true of user authentication only; and `docs/threat-model.md` §1 (the
 by default"), and §6.1, the "Ed25519 host keys" bullet and the host-key
 half of "Signatures are classical, by deliberate sequencing". The
 migration-window example in `CLAUDE.md` hard rule 3 and `AGENTS.md`
-(`ssh-ed25519` under RFC-0006) stays valid: `ssh-ed25519` remains the
-user-authentication algorithm.
+(`ssh-ed25519` under RFC-0006) changes too: RFC-0006 opened that window
+for host-key signatures only, and this cut-over closes it. User
+authentication staying on `ssh-ed25519` is not a migration window, so
+the implementation PR replaces the example with a window still open at
+that time, or drops it if none is.
 
 ## Drawbacks
 
