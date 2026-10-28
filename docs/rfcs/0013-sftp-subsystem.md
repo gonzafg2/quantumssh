@@ -162,7 +162,9 @@ implemented by OpenSSH ("Newer versions … will not be supported",
   - **The NAME longname** uses numeric uid and gid. Resolving names needs
     the platform's account database, which `std` and `rustix` do not
     expose without `unsafe`.
-- **Extensions advertised:**
+- **Extensions advertised**, each with version string `"1"`. The 10.6
+  client compares that exact value and otherwise treats the extension
+  as unsupported (`sftp-client.c:499-536`).
 
   | Extension | Why |
   |---|---|
@@ -183,6 +185,10 @@ implemented by OpenSSH ("Newer versions … will not be supported",
 - **Who and where.** Operations run as the service account, on paths
   resolved by the kernel relative to the helper's working directory. There
   is no confinement in Phase 2 (see the guide-level explanation).
+- **Empty paths.** An empty path names the working directory, as SFTP v3
+  defines (`draft-ietf-secsh-filexfer-02` §6.2), so the helper reads it as
+  `.`. SYMLINK's target is the exception: it is link content, stored as
+  sent.
 - **Symlinks.** OPEN, STAT, OPENDIR and SETSTAT follow them; LSTAT does
   not. REALPATH resolves them with a bounded depth and succeeds when only
   the last component is missing, as OpenSSH's does
