@@ -292,7 +292,7 @@ impl Server {
             },
             // OpenSSH's order: the target first, then the link path.
             FXP_SYMLINK => {
-                let target = path_arg(&mut r)?;
+                let target = raw_path_arg(&mut r)?;
                 let link = path_arg(&mut r)?;
                 status_of(id, std::os::unix::fs::symlink(target, link))
             }
@@ -581,8 +581,20 @@ impl Server {
     }
 }
 
-/// A path argument: raw bytes, as SFTP v3 carries them.
+/// A path argument: raw bytes, as SFTP v3 carries them. An empty path
+/// names the working directory (draft-02 §6.2, ADR-0041 §4).
 fn path_arg(r: &mut Reader<'_>) -> Result<PathBuf, Violation> {
+    let raw = raw_path_arg(r)?;
+    Ok(if raw.as_os_str().is_empty() {
+        PathBuf::from(".")
+    } else {
+        raw
+    })
+}
+
+/// A path argument taken as sent, for SYMLINK's target: link content,
+/// which the helper stores and does not resolve.
+fn raw_path_arg(r: &mut Reader<'_>) -> Result<PathBuf, Violation> {
     Ok(PathBuf::from(OsString::from_vec(
         r.string(MAX_PACKET)?.to_vec(),
     )))
@@ -1285,6 +1297,16 @@ mod tests {
             .recv_timeout(Duration::from_secs(5))
             .expect("SETSTAT blocked on the FIFO");
         assert!(failed, "truncating a FIFO is an error");
+    }
+
+    #[test]
+    fn empty_path_names_the_working_directory() {
+        let mut input = init();
+        input.extend_from_slice(&request(FXP_STAT, 1, |w| w.put_string(b"")));
+        input.extend_from_slice(&request(FXP_OPENDIR, 2, |w| w.put_string(b"")));
+        let (_, replies) = run(&input);
+        assert_eq!(replies[1][0], FXP_ATTRS, "STAT \"\": {:?}", replies[1]);
+        assert_eq!(handle_of(&replies[2]), 0u32.to_be_bytes());
     }
 
     #[test]
