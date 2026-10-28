@@ -136,6 +136,12 @@ with version `"1"`: `posix-rename@openssh.com`, `fsync@openssh.com`,
 Operations use `std::fs`, `std::os::unix::fs` and `rustix` safe functions
 only.
 
+**Paths.** A path argument is the bytes as sent, resolved by the kernel
+against the working directory (§2). An empty path is read as `.`, as
+RFC-0013 §4 requires; OpenSSH's `sftp-server` does this only for
+REALPATH and `expand-path` (`sftp-server.c:1243-1246`, `:1559-1562`).
+SYMLINK's target is link content and is stored as sent.
+
 | Request | Operation |
 |---|---|
 | OPEN | `rustix::fs::open` with the flags OpenSSH's `flags_from_portable` builds (`sftp-server.c:247-268`). READ and WRITE give `O_RDWR`, READ alone `O_RDONLY`, WRITE alone `O_WRONLY`. APPEND, CREAT, TRUNC and EXCL each add their own flag, so READ\|APPEND opens read-only and READ\|CREAT is valid. `O_CLOEXEC` is always set. `OpenOptions` cannot express this, because `append(true)` grants write access and `create(true)` requires it. The descriptor becomes a `File` through the safe `From<OwnedFd>`. The create mode is the ATTRS permissions `& 0o777`, or `0o666` if absent; the umask applies. |
