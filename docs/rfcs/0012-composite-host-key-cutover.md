@@ -1,6 +1,6 @@
 # RFC 0012: Cut host authentication over to `ssh-mldsa44-ed25519` before `0.1.0`
 
-- **Status:** Draft
+- **Status:** Accepted (2026-10-28)
 - **Authors:** Gonzalo Fleming Garrido
 - **Created:** 2026-10-08
 - **Roadmap issue:** [`#109`](https://github.com/gonzafg2/quantumssh/issues/109) (Phase 2; the `0.1.0` freeze checklist)
