@@ -22,10 +22,10 @@ contract. This RFC defines that contract as **schema version 1**:
 
 The RFC refines three accepted decisions so that they fit one contract:
 
-- ADR-0024's log format and audit-tier membership, and ADR-0028's
-  refusal field name;
+- ADR-0024's log format and audit-tier membership, ADR-0028's refusal
+  field name, and ADR-0029's info-level override diagnostic;
 - RFC-0010's statement that configuration-error classes are values of
-  the `message` field;
+  the `message` field, and its "no new audit event names" clause;
 - RFC-0008's statement about what `authenticated_identity` records for
   certificates.
 
@@ -185,8 +185,9 @@ filter is compiled in, and no `RUST_LOG` directive reaches it
 
   That is OpenSSH's fingerprint format, so the value compares directly
   with `ssh-keygen -lf` and with a client's known-hosts prompt. The key
-  type changes with RFC-0012's cut-over, but the representation stays
-  the same.
+  type changes with the cut-over RFC-0012 proposes
+  ([#172](https://github.com/gonzafg2/quantumssh/pull/172), TBD), but
+  the representation stays the same.
 - **`failure_count`** counts failed authentication requests within one
   connection, and it starts again at 1 on a new connection.
   - **Every failure emits `auth.failed`,** the one that exhausts the
@@ -254,9 +255,12 @@ contract by `event`, never by `message`.
 
 ### 6. Changes to accepted decisions
 
-When this RFC is accepted, the affected ADRs (ADR-0024 and ADR-0028)
-gain a Status pointer to it. Accepted RFCs are not edited in place, so
-RFC-0010 and RFC-0008 keep their text. This RFC links them and states
+An accepted ADR changes only through a superseding ADR
+([`docs/adr/README.md`](../adr/README.md)). The implementing PR
+therefore adds one ADR that supersedes the parts of ADR-0024, ADR-0028
+and ADR-0029 listed below, and their Status fields point at it, as
+ADR-0008's points at ADR-0031. Accepted RFCs are not edited in place,
+so RFC-0010 and RFC-0008 keep their text. This RFC links them and states
 what it supersedes ([`README.md`](README.md), "After acceptance").
 
 - **[ADR-0024](../adr/0024-phase-1-log-event-schema.md):**
@@ -274,9 +278,13 @@ what it supersedes ([`README.md`](README.md), "After acceptance").
   calls the `connection.refused` field `reason`. The code has always
   emitted `limit`, whose values match the `[limits]` config keys
   (`admission.rs`). Version 1 keeps `limit`.
+- **[ADR-0029](../adr/0029-phase-2-config-file-v1-schema-parser-strictmodes.md)**
+  logs a flag that overrides a set config key at info, as a diagnostic.
+  It becomes the `server.config_override` audit event.
 - **[RFC-0010](0010-configuration-file.md)** §"Failure modes" calls its
   four classes "values of the `message` field". They become values of
-  `class`, with the same names and meanings.
+  `class`, with the same names and meanings. Its "no new audit event
+  names" clause gives way for one event: `server.config_override`.
 - **[RFC-0008](0008-ssh-certificate-authentication.md)** §"Type-state
   and audit" says `authenticated_identity` "must record the certificate
   identity".
@@ -291,7 +299,8 @@ what it supersedes ([`README.md`](README.md), "After acceptance").
 
 ### 7. Implementation outline (non-normative)
 
-This RFC needs no separate ADR. Its implementing PR does six things:
+Besides §6's superseding ADR, this RFC needs no ADR of its own. Its
+implementing PR does seven things:
 
 - **The formatter:** a `FormatEvent` for `tracing-subscriber`'s `fmt`
   layer, in the binary, that writes §2's envelope.
@@ -305,8 +314,9 @@ This RFC needs no separate ADR. Its implementing PR does six things:
   `server.config_error` gains `class`, `error` and `config_file`.
 - **Golden tests:** one per catalogue event, each pinning the exact key
   set of its line, plus one diagnostic line.
-- **The flip:** the PR flips this RFC to Accepted and adds the two ADR
-  Status pointers of §6.
+- **The flip:** the PR flips this RFC to Accepted, adds §6's
+  superseding ADR, and points the Status fields of ADR-0024, ADR-0028
+  and ADR-0029 at it.
 - **Override keys:** the override labels become the TOML paths of §4.
   Today they are the internal names `listen`, `host_key`,
   `authorized_keys`, `handshake_timeout` and `log_format`.
