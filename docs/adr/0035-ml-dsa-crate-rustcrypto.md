@@ -3,7 +3,7 @@
 - **Status:** Proposed
 - **Date:** — (set on acceptance; drafted 2026-10-11)
 - **Deciders:** Project lead
-- **Related:** Subsidiary ADR 1 ("the ML-DSA primitive crate") of [RFC-0012](../rfcs/0012-composite-host-key-cutover.md) §Subsidiary decisions, which implements [RFC-0006](../rfcs/0006-post-quantum-host-key-signatures.md); the dependency layer of [RFC-0007](../rfcs/0007-cryptographic-primitive-migration-procedure.md) §2 ("a crate-selection ADR paralleling ADR-0019"); parallels [ADR-0019](0019-phase-1-ml-kem-crate-rustcrypto.md) (`ml-kem`); constrained by [ADR-0010](0010-toolchain-pinning-resolver-3-edition-2024-msrv-1-92.md) (MSRV 1.92) and [ADR-0018](0018-phase-1-unsafe-code-forbid-workspace.md) (`unsafe_code = "forbid"`).
+- **Related:** Subsidiary ADR 1 ("the ML-DSA primitive crate") of [RFC-0012](../rfcs/0012-composite-host-key-cutover.md) §Subsidiary decisions, which implements [RFC-0006](../rfcs/0006-post-quantum-host-key-signatures.md); the dependency layer of [RFC-0007](../rfcs/0007-cryptographic-primitive-migration-procedure.md) §2 ("a crate-selection ADR paralleling ADR-0019"); parallels [ADR-0019](0019-phase-1-ml-kem-crate-rustcrypto.md) (`ml-kem`); builds on [ADR-0036](0036-dalek-3x-coordinated-bump.md) (`ed25519-dalek` 3.x, which already locks `signature` 3.0.0); constrained by [ADR-0010](0010-toolchain-pinning-resolver-3-edition-2024-msrv-1-92.md) (MSRV 1.92) and [ADR-0018](0018-phase-1-unsafe-code-forbid-workspace.md) (`unsafe_code = "forbid"`).
 
 ## Context
 
@@ -149,8 +149,10 @@ composite host key.
   toolchain, mirroring ADR-0019.
 - One vendor family for both post-quantum primitives (`ml-kem`,
   `ml-dsa`). The `ml-dsa` dependencies already in `Cargo.lock`
-  (`module-lattice`, `hybrid-array`, `ctutils`, `crypto-common`) resolve
-  to the versions already locked, so they add no duplicate.
+  (`module-lattice`, `hybrid-array`, `ctutils`, `crypto-common`, and
+  `signature` 3.0.0, which `ed25519-dalek` 3.0.0 brought in under
+  ADR-0036) resolve to the versions already locked, so they add no
+  duplicate.
 - The version rule ties the pin to a concrete, verifiable fix rather
   than to a date.
 
@@ -164,10 +166,10 @@ composite host key.
   publish a release with #1386, the cut-over and with it `0.1.0` wait
   (RFC-0012 §Ordering). A git dependency is not an escape hatch:
   `deny.toml` sets `allow-git = []`.
-- **Four new crates in `Cargo.lock`** with 0.1.1: `ml-dsa`, `shake`
-  0.1.0, `signature` 3.0.0 and `sponge-cursor` 0.1.0. All four are
-  RustCrypto crates licensed Apache-2.0 OR MIT, which `deny.toml`
-  allows. The exact set is re-checked against the pinned release.
+- **Three new crates in `Cargo.lock`** with 0.1.1: `ml-dsa`, `shake`
+  0.1.0 and `sponge-cursor` 0.1.0. All three are RustCrypto crates
+  licensed Apache-2.0 OR MIT, which `deny.toml` allows. The exact set is
+  re-checked against the pinned release.
 - **Crate-internal secret state is not erased.** This ADR records it as
   the residual RFC-0012 §Key material asks for. Two sources:
   - **Signing temporaries.** The `zeroize` feature erases only the key
@@ -191,12 +193,6 @@ composite host key.
 - **One feature added to an existing dependency.** The workspace's
   `getrandom` gains `sys_rng` (item 3). No new crate, since `rand_core`
   0.10.1 is already resolved.
-- **Two `signature` majors.** `ml-dsa` uses `signature` 3.x while
-  `ed25519-dalek` 2.x uses 2.x. `deny.toml` only warns on duplicates
-  (`multiple-versions = "warn"`). The duplication ends with the
-  coordinated dalek 3.x bump planned on
-  [#109](https://github.com/gonzafg2/quantumssh/issues/109); that bump
-  is its own ADR (subsidiary to RFC-0003) and is not decided here.
 
 ### Neutral
 
