@@ -46,6 +46,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   layer filtered out the `connection` span along with every other
   non-audit record, so those records had no source address
   ([ADR-0024](docs/adr/0024-phase-1-log-event-schema.md)).
+- The authentication request that exhausts the attempt budget now
+  emits `auth.failed` like every other failure, before the disconnect.
+  Before, the twelfth failure, which is the one that ends the
+  connection, left no audit record, only a diagnostic line that
+  `RUST_LOG` could suppress
+  ([ADR-0024](docs/adr/0024-phase-1-log-event-schema.md)).
 - `exec` and `shell` commands, on pipes or on a PTY, now start in the
   service account's `$HOME`, as RFC-0002's execution contract states.
   Before, they inherited the directory the server was started from,
