@@ -37,9 +37,14 @@ What the parser must keep doing, unchanged from ADR-0029:
 - serde derive, with `deny_unknown_fields` on the root document struct
   and every section struct, so that the RFC-0010 fail-closed rule comes
   from the deserializer and not from hand-written key checks;
-- a `schema_error` that names the line and column;
-- no allocation or recursion that the file's contents can grow without
-  bound.
+- a `schema_error` that names the line and column.
+
+RFC-0010 §"The parser and its dependency" exempts the config from the
+pre-authentication surface's bounded-allocation rule, because the file is
+the operator's own. This ADR adds one property and claims no more:
+recursion depth stays bounded (Decision 1). Allocation stays bounded only
+by the file's size, which the operator controls, because `config::load`
+still reads the whole file with `read_to_string`.
 
 ## Decision
 
