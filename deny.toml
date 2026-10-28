@@ -16,9 +16,9 @@ ignore              = [
     # `basic-toml` (the ADR-0029 config parser) is archived and
     # unmaintained: an informational advisory, no known vulnerability. It
     # parses only the operator's config file, after the StrictModes
-    # checks, never peer input. The migration to `toml`, under an ADR
-    # superseding ADR-0029's parser choice, removes this entry.
-    { id = "RUSTSEC-2026-0374", reason = "basic-toml unmaintained; config-file parser only, replaced under an ADR superseding ADR-0029's parser choice" },
+    # checks, never peer input. TBD: ADR-0044 (#213, Proposed) would move
+    # the parser to `toml`, and its implementing PR removes this entry.
+    { id = "RUSTSEC-2026-0374", reason = "basic-toml unmaintained; config-file parser only; replacement TBD in ADR-0044 (#213, Proposed)" },
 ]
 
 [licenses]
