@@ -572,7 +572,13 @@ impl Server {
             return Ok(self.cwd.clone());
         }
         if let Some(rest) = path.strip_prefix(b"~/") {
-            return Ok(self.cwd.join(OsStr::from_bytes(rest)));
+            // Concatenated as OpenSSH's `"%s/%s"` does
+            // (`sftp-server.c:1569-1572`): `join` would drop the working
+            // directory for `~//x`, whose suffix is absolute.
+            let mut joined = self.cwd.as_os_str().as_bytes().to_vec();
+            joined.push(b'/');
+            joined.extend_from_slice(rest);
+            return Ok(PathBuf::from(OsString::from_vec(joined)));
         }
         if path.first() == Some(&b'~') {
             return Err(io::Error::from(ErrorKind::NotFound));
@@ -1440,6 +1446,7 @@ mod tests {
         let server = Server::new(cwd.clone());
         assert_eq!(server.expand(b"~").unwrap(), cwd);
         assert_eq!(server.expand(b"~/x").unwrap(), cwd.join("x"));
+        assert_eq!(server.expand(b"~//x").unwrap(), cwd.join("x"));
         assert_eq!(
             server.expand(b"~root/x").unwrap_err().kind(),
             ErrorKind::NotFound
