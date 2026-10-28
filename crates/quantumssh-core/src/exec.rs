@@ -481,7 +481,14 @@ fn kill_group(child: &mut Child, pid: Pid) {
 /// exit; elsewhere, or if that fails, by a `waitid` peek woken by
 /// `SIGCHLD`.
 async fn wait_exit(pid: Pid) {
+    // ponytail: tokio 1.51.6 deprecates the safe `AsyncFd` constructors
+    // (RUSTSEC-2026-0386) in favour of `unsafe` ones, which the workspace
+    // forbids (ADR-0018). This use is sound: the `AsyncFd` owns the
+    // `OwnedFd`, which is never duplicated or closed underneath it.
+    // Upgrade path: a safe constructor for owned descriptors, if tokio
+    // adds one.
     #[cfg(target_os = "linux")]
+    #[allow(deprecated)]
     if let Ok(fd) = rustix::process::pidfd_open(pid, rustix::process::PidfdFlags::NONBLOCK)
         && let Ok(fd) = tokio::io::unix::AsyncFd::with_interest(fd, tokio::io::Interest::READABLE)
         && fd.readable().await.is_ok()
@@ -603,6 +610,9 @@ pub(crate) fn spawn_pty(
         .pty_helper()
         .ok_or_else(|| io::Error::other("no pty helper"))?;
     let PtyPair { master, slave } = pair;
+    // ponytail: the deprecated constructor, sound as in `wait_exit`: the
+    // master is moved in and never duplicated (only the slave is).
+    #[allow(deprecated)]
     let master = Arc::new(AsyncFd::with_interest(
         master,
         Interest::READABLE | Interest::WRITABLE,
