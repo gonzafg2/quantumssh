@@ -74,6 +74,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   remove its options to grant the key unrestricted access on purpose
   ([ADR-0040](docs/adr/0040-refuse-authorized-keys-options-until-enforced.md),
   [#183](https://github.com/gonzafg2/quantumssh/issues/183)).
+- `ctutils` 0.4.6, which `aes-gcm` and the ML-KEM stack use: before
+  0.4.4, mask generation and `u128` comparisons were not constant-time
+  ([RUSTSEC-2026-0385](https://rustsec.org/advisories/RUSTSEC-2026-0385.html)).
+- `tokio` 1.51.6
+  ([RUSTSEC-2026-0386](https://rustsec.org/advisories/RUSTSEC-2026-0386.html),
+  `AsyncFd` I/O safety). The server's uses were already sound, because
+  each `AsyncFd` owns its descriptor.
 
 ## [0.0.1] - 2026-07-20
 
