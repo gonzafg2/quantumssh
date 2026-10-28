@@ -67,8 +67,12 @@ What the parser must keep doing, unchanged from ADR-0029:
    comes from `toml::de::Error::message()`, and the line and column are
    computed from the start of `Error::span()` over the input. The
    crate's `Display` adds a multi-line excerpt of the file, and that
-   excerpt is not used, so no config text reaches stderr or the log. An
-   error without a span carries the message alone.
+   excerpt is not used, so no file excerpt reaches stderr or the log.
+   The message may still quote the offending key or value, as serde's
+   messages do (``unknown field `x` ``), as `basic-toml`'s did. The
+   config holds paths, addresses and limits, never key material
+   (threat model §4.3). An error without a span carries the message
+   alone.
 4. **Everything else in ADR-0029 is unchanged:** the keys and value
    grammars, `deny_unknown_fields` placement, `schema_version`
    handling, zero rejection, StrictModes, and the retained flags. The
