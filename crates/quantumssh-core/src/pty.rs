@@ -528,6 +528,9 @@ mod tests {
     #[tokio::test]
     async fn the_master_is_driven_through_asyncfd() {
         let pair = allocate(&Modes::parse(&[]).unwrap(), Size::default()).expect("allocate");
+        // ponytail: the deprecated constructor, sound as in
+        // `exec::wait_exit`: the master is moved in and never duplicated.
+        #[allow(deprecated)]
         let master = tokio::io::unix::AsyncFd::new(pair.master).expect("AsyncFd takes the master");
         rustix::io::write(&pair.slave, b"probe").expect("write to the slave");
         let mut guard = tokio::time::timeout(std::time::Duration::from_secs(5), master.readable())
