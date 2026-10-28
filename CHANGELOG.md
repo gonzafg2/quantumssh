@@ -41,6 +41,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Audit events (`auth.*`, `exec.*`, `kex.failed`, `rekey.completed`) now
+  carry the connection's `peer_addr`, as ADR-0024 states. The audit
+  layer filtered out the `connection` span along with every other
+  non-audit record, so those records had no source address
+  ([ADR-0024](docs/adr/0024-phase-1-log-event-schema.md)).
 - `exec` and `shell` commands, on pipes or on a PTY, now start in the
   service account's `$HOME`, as RFC-0002's execution contract states.
   Before, they inherited the directory the server was started from,
