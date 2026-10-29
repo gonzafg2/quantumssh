@@ -86,6 +86,12 @@ choices came up while implementing it:
 
 ### Negative
 
+- **Unicode format characters are not escaped.** `char::is_control`
+  leaves out `Cf` characters such as the bidi override U+202E and the
+  separators U+2028 and U+2029, as in the human formatter. The JSON stays
+  valid, and the set is the one RFC-0014 §2 fixes. Widening it to
+  harden against visual log spoofing would be a version-1-compatible
+  change, since a consumer decodes either form to the same string.
 - The project maintains the encoder, about 170 lines of code with the
   span layer. Golden tests cover every catalogue event, and an
   end-to-end test runs the built binary.

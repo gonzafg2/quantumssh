@@ -90,10 +90,12 @@ where
     }
 }
 
-/// Records the `connection` span's `peer_addr`, so every record emitted
-/// inside a connection carries it as an envelope key (RFC-0014 §2).
-/// Installed unfiltered, before the formatting layers, so it sees every
-/// `connection` span whatever `RUST_LOG` says.
+/// Records the `connection` span's `peer_addr` as an envelope key
+/// (RFC-0014 §2). Installed unfiltered, before the formatting layers, so
+/// it sees every `connection` span whatever `RUST_LOG` says. A formatting
+/// layer only finds the spans its own filter admits: the audit layer
+/// admits them all, so every catalogue record inside a connection carries
+/// `peer_addr`; a diagnostic does only while `RUST_LOG` enables the span.
 pub struct ConnectionPeer;
 
 /// A `connection` span's `peer_addr`, in the span's extensions.
