@@ -1,0 +1,435 @@
+# RFC 0014: Audit-log schema version 1 — a project-owned, versioned JSON contract
+
+- **Status:** Draft
+- **Authors:** Gonzalo Fleming Garrido
+- **Created:** 2026-10-13 (drafted as ADR-0044; moved to the RFC lane on 2026-10-14)
+- **Roadmap issue:** [#109](https://github.com/gonzafg2/quantumssh/issues/109)
+- **Implementation PR:** TBD
+
+## Summary
+
+Cutting `0.1.0` turns the audit log into a public compatibility
+contract. This RFC defines that contract as **schema version 1**:
+
+- **The envelope.** Each record is one flat JSON object per line that
+  carries `schema_version`. The project owns the layout, not
+  `tracing-subscriber`.
+- **The catalogue.** It lists every event and its fields, and it puts
+  every catalogue event on the audit tier, which `RUST_LOG` cannot
+  reach.
+- **The rules.** They say which changes keep version 1 and which need
+  version 2.
+
+The RFC refines accepted decisions in five documents so that they fit one
+contract:
+
+- ADR-0024's log format and audit-tier membership, ADR-0028's refusal
+  field name, and ADR-0029's info-level override diagnostic;
+- RFC-0010's statement that configuration-error classes are values of
+  the `message` field, and its "no new audit event names" clause;
+- RFC-0008's statement about what `authenticated_identity` records for
+  certificates.
+
+It is the first item of the `0.1.0` freeze checklist
+([`docs/plans/phase2-scoping.md`](../plans/phase2-scoping.md)).
+
+## Motivation
+
+Threat model §5.5.1 makes the format stability of the log schema "part
+of the public interface from Phase 2 onward", so that log-shipping
+configurations do not silently break. §6.2 restates it as
+"schema-versioned". [ADR-0024](../adr/0024-phase-1-log-event-schema.md)
+fixed the Phase-1 events and deferred the version: "the JSON output
+gains an explicit `schema_version` field when Phase 2 cuts `0.1.0`".
+
+An inventory of what the server emits on `main` at `312598c`, checked
+with a real OpenSSH 10.3 session against the release binary, shows that
+today's JSON cannot be frozen as it is:
+
+- **The layout belongs to a dependency.** Each line is
+  `tracing-subscriber` 0.3's JSON format:
+  `{"timestamp","level","fields":{"message":<event>,…},"target","span","spans"}`.
+  Freezing it would freeze another crate's output, and that format
+  offers no hook to add a key to every record. Its only options are
+  `flatten_event`, `with_current_span` and `with_span_list`.
+- **Internal names leak.** `target` is a Rust module path
+  (`quantumssh_core::server`) for every event outside the audit tier,
+  so renaming a module would change the contract.
+- **One record holds the same key twice.** `server.config_error` has a
+  field named `message`, which collides with the key `tracing` uses for
+  the event name:
+  `{"fields":{"message":"server.config_error","message":"file_unavailable: …"}}`.
+  The common parsers keep the last value, so the event name is lost.
+- **`RUST_LOG=warn` drops whole parts of the audit record.** ADR-0024's
+  audit tier holds `auth.*`, `exec.*` and `kex.failed`
+  (`rekey.completed` joined it later). `connection.*`, `kex.completed`,
+  `server.started` and `server.config_error` go through `RUST_LOG`, but
+  threat model §2.7 lists "connection acceptance … session lifecycle
+  events … configuration load" as audit content.
+- **A successful configuration load leaves no record.** `server.started`
+  looks the same with or without `--config`.
+- **Two audit gaps, both bugs against ADR-0024, were fixed separately:**
+  - audit events carried no `peer_addr`, fixed in
+    [#202](https://github.com/gonzafg2/quantumssh/pull/202);
+  - the failed attempt that exhausts the authentication budget emitted
+    no `auth.failed`, fixed in
+    [#204](https://github.com/gonzafg2/quantumssh/pull/204).
+
+Freezing is one-way. Every gap left now becomes a version-2 change
+later.
+
+## Guide-level explanation
+
+A shipper or SIEM reads one JSON object per line. A catalogue record
+looks like this:
+
+```json
+{"schema_version":1,"timestamp":"2026-10-13T06:19:29.010619Z","level":"INFO","event":"exec.started","peer_addr":"192.0.2.7:50022","authenticated_identity":"SHA256:cp4BNirSzGclLcIrv4GSoYcZD47+bqGl0GdHc/vPJE8","executing_uid":993,"command":"echo hi","request_type":"exec","pty":false}
+```
+
+A diagnostic record, which is not part of the contract, carries
+`message` instead of `event`:
+
+```json
+{"schema_version":1,"timestamp":"2026-10-13T06:20:01.000000Z","level":"INFO","message":"shutdown signal received; draining","drain_seconds":30}
+```
+
+A consumer selects the contract with `has("event")`, ignores keys and
+events it does not know, and checks `schema_version` before it
+interprets fields. The events, their fields and the rules for change
+are below. Every catalogue event is always written, whatever
+`RUST_LOG` says. `RUST_LOG` governs diagnostics only.
+
+## Reference-level explanation
+
+### 1. Scope of the contract
+
+- **The contract covers the JSON output.** That is the default whenever
+  stderr is not a terminal, and it is the format threat model §5.5.1
+  ships.
+- **The human-readable format is not part of the contract.** It is for
+  terminals, and its control-byte escaping (ADR-0024) stays.
+- **Diagnostic records share the envelope but are not part of the
+  contract.** Their text and fields may change in any release.
+
+### 2. The envelope
+
+Each record is one JSON object on one line:
+
+| Key | Type | Present | Meaning |
+|---|---|---|---|
+| `schema_version` | integer | always | `1` |
+| `timestamp` | string | always | RFC 3339, UTC, microseconds, `Z` suffix |
+| `level` | string | always | `ERROR`, `WARN`, `INFO`, `DEBUG` or `TRACE` |
+| `event` | string | catalogue records only | the event name (§3) |
+| `message` | string | diagnostic records only | free text |
+| `peer_addr` | string | records emitted inside a connection | the client's address, `IP:port`, or `[IPv6]:port` |
+| *event fields* | per §3 | per §3 | at the top level, next to the keys above |
+
+Five rules govern the envelope:
+
+- **`event` and `message` are exclusive.** A record carries exactly
+  one of them.
+- **Event fields sit at the top level.** No event field may reuse an
+  envelope key name.
+- **No internal names.** There is no `target`, no span name and no
+  span list.
+- **Control characters are escaped.** In string values, every
+  character `char::is_control` reports (C0, DEL and C1: U+0000–U+001F
+  and U+007F–U+009F) is written as a `\u00XX` escape. That is the set
+  the human formatter escapes (threat model §5.4.3). `serde_json` alone
+  escapes only C0, so the binary's formatter escapes DEL and C1 too
+  (§7).
+- **One encoder.** The binary owns the encoder (§7). The library keeps
+  emitting through the `tracing` facade only (ADR-0024).
+
+### 3. The version-1 catalogue
+
+Every catalogue event is emitted on the `audit` target. That tier's
+filter is compiled in, and no `RUST_LOG` directive reaches it
+(ADR-0024).
+
+| Event | Level | `peer_addr` | Fields |
+|---|---|---|---|
+| `server.started` | INFO | no | `listen_addr` (string), `host_key_fingerprint` (string), `config_file` (string) |
+| `server.config_override` | INFO | no | `key` (enumeration: `server.listen`, `server.host_key`, `auth.authorized_keys`, `server.handshake_timeout`, `logging.format`) |
+| `server.config_error` | ERROR | no | `class` (enumeration, §4), `error` (string, free text), `config_file` (string) |
+| `connection.accepted` | INFO | yes | — |
+| `connection.refused` | INFO | yes | `limit` (enumeration: `max_connections`, `max_half_open`, `max_per_source`, `accept_rate`) |
+| `connection.closed` | INFO | yes | `reason` (string, free text) |
+| `kex.completed` | INFO | yes | `kex_algorithm`, `host_key_algorithm` (strings) |
+| `kex.failed` | WARN | yes | `reason` (enumeration, §4), `disconnect_code` (integer) |
+| `rekey.completed` | INFO | yes | `kex_algorithm`, `host_key_algorithm` (strings), `initiator` (enumeration: `server`, `peer`), `trigger` (enumeration: `time`, `bytes`, `peer`), `bytes_rx`, `bytes_tx`, `seconds` (integers) |
+| `auth.succeeded` | INFO | yes | `authenticated_identity` (string), `auth_method` (string) |
+| `auth.failed` | WARN | yes | `auth_method` (string), `failure_count` (integer) |
+| `exec.started` | INFO | yes | `authenticated_identity` (string), `executing_uid` (integer), `command` (string), `request_type` (enumeration: `exec`, `shell`, `subsystem`), `pty` (boolean) |
+| `exec.finished` | INFO | yes | the five `exec.started` fields, plus `exit_status`, `bytes_received` and `bytes_sent` (integers) |
+
+### 4. Field semantics
+
+- **Presence.** Every field listed in §3 is always present on its
+  event. `command` is `""` for a shell (ADR-0038 §9) and `sftp` for the
+  SFTP subsystem (ADR-0041). `bytes_received` and `bytes_sent` count the
+  channel payload bytes in each direction (ADR-0042). Only a field added
+  after version 1 may be conditional, and only if the change that adds
+  it says so (§5).
+- **`exit_status`** is the child's exit code on a normal exit, and
+  128 + the signal number when a signal killed it, also when
+  `exit-signal` went on the wire (ADR-0038 §8). It is 127 when the
+  child could not be started or waited on, or when no status was
+  recorded. A real exit code of 127 or 128 + n reads the same, so a
+  consumer must not treat 127 alone as a start failure.
+- **`config_file`** names the configuration file the server was started
+  with: its canonical path once StrictModes resolved it, the path as
+  given when that failed, or `""` without `--config`. It is on
+  `server.started` and on every `server.config_error`. A failure after a
+  successful load, such as a bad host key or a taken port, therefore
+  still names the configuration that produced it, with no
+  `server.started` to pair it with.
+- **Enumerations are open.** A consumer must accept values it does not
+  know.
+- **`authenticated_identity`** is `SHA256:` followed by the unpadded
+  base64 SHA-256 of the public key the client proved possession of
+  (ADR-0024). The field and `executing_uid` stay separate first-class
+  fields (threat model §2.7, §8.12).
+- **`host_key_fingerprint`** uses the same representation:
+  - `SHA256:` followed by the SHA-256 of the host key's public-key blob;
+  - the digest is encoded in standard base64 with no padding.
+
+  That is OpenSSH's fingerprint format, so the value compares directly
+  with `ssh-keygen -lf` and with a client's known-hosts prompt. The key
+  type changes with [RFC-0012](0012-composite-host-key-cutover.md)'s
+  cut-over (accepted; implementation TBD), but the representation stays
+  the same.
+- **`failure_count`** counts failed authentication requests within one
+  connection, and it starts again at 1 on a new connection.
+  - **Every failure emits `auth.failed`,** the one that exhausts the
+    attempt budget included (#204).
+  - **Detecting repeated attempts across connections** means grouping
+    `auth.failed` by the IP part of `peer_addr`.
+- **`server.config_error`'s `class`** is one of these values:
+  - RFC-0010's four classes: `file_unavailable`, `schema_error`,
+    `version_unsupported` and `insecure_permissions`;
+  - `missing_setting`: the host key or `authorized_keys` was not
+    given;
+  - `invalid_host_key` and `invalid_authorized_keys`: the file was
+    read but could not be loaded;
+  - `bind_failed`, `runtime_failed` and `listener_failed`.
+
+  `error` carries the detail for people, naming the file and predicate
+  as RFC-0010 requires.
+- **`server.config_override`** is emitted once per command-line flag
+  that overrides a value the config file set (RFC-0010's precedence).
+  Together with `config_file`, it records which configuration the
+  server loaded (threat model §2.7).
+  - **The format of `key`.** It is the overridden key's TOML path,
+    section and key joined by a dot. In version 1 a flag can override
+    five keys, so the values are the five listed in §3.
+  - **New keys.** A key added to the config file later uses the same
+    form, which keeps it an additive enumeration value.
+- **`kex.failed`'s `reason`** is a kebab-case token, one per cause the
+  transport rejects with `SSH_DISCONNECT_KEY_EXCHANGE_FAILED` (3). In
+  version 1 the values are:
+  - **negotiation:** `no-hybrid-kex`, `no-strict-kex`,
+    `no-host-key-algorithm`, `no-cipher-c2s`, `no-cipher-s2c`,
+    `no-compression`;
+  - **the hybrid exchange:** `bad-hybrid-init-length`,
+    `invalid-mlkem-key`, `invalid-x25519-key`, `rng-failure`;
+  - **re-key:** `rekey-timeout`.
+
+  A malformed packet is a protocol violation (code 2), not a
+  `kex.failed`, and `connection.closed` carries its reason. A new
+  rejection cause is a new token, which keeps it an additive enumeration
+  value.
+- **Free-text fields** are `connection.closed`'s `reason` and
+  `server.config_error`'s `error`. They carry detail for people, and
+  consumers must not match on them.
+
+### 5. Compatibility rules for version 1
+
+**Additive changes keep `schema_version` 1.** Consumers must accept
+them:
+
+- a new catalogue event;
+- a new field on an existing event, conditional only if the change
+  that adds it says so;
+- a new value of an enumeration;
+- any change to diagnostic records.
+
+One planned change falls in this class:
+
+- **Certificate authentication** (RFC-0008, TBD). It adds the
+  certificate fields, which are present on certificate authentications
+  only (§6).
+
+The SFTP stack (RFC-0013) is not a planned change. It landed with
+[#196](https://github.com/gonzafg2/quantumssh/pull/196) before the
+freeze, so its `request_type` `subsystem` and byte counts are version 1
+(§3).
+
+**Breaking changes require `schema_version` 2.** Each one needs its own
+RFC, and a migration note in the CHANGELOG:
+
+- removing or renaming an event or a field;
+- changing a field's type, unit or meaning;
+- making a version-1 field conditional;
+- changing an event's `level`;
+- changing an envelope key or the timestamp format;
+- moving an event off the audit tier.
+
+**Consumers** ignore keys and events they do not know, and select the
+contract by `event`, never by `message`.
+
+### 6. Changes to accepted decisions
+
+An accepted ADR changes only through a superseding ADR
+([`docs/adr/README.md`](../adr/README.md)). The implementing PR
+therefore adds one ADR that supersedes the parts of ADR-0024, ADR-0028
+and ADR-0029 listed below, and their Status fields point at it, as
+ADR-0008's points at ADR-0031. Accepted RFCs are not edited in place,
+so RFC-0010 and RFC-0008 keep their text. This RFC links them and states
+what it supersedes ([`README.md`](README.md), "After acceptance").
+
+- **[ADR-0024](../adr/0024-phase-1-log-event-schema.md):**
+  - the JSON layout becomes §2;
+  - the six events `server.started`, `server.config_error`,
+    `connection.accepted`, `connection.refused`, `connection.closed`
+    and `kex.completed` join the audit tier;
+  - `server.config_error`'s `message` becomes `class` plus `error`;
+  - `server.started` and `server.config_error` gain `config_file`, and
+    `server.config_override` joins the catalogue;
+  - `exec.finished` lists `command`, which the code has emitted since
+    `a3921d5` but ADR-0024's row omitted. ADR-0024 carries an erratum
+    for it since [#196](https://github.com/gonzafg2/quantumssh/pull/196).
+- **[ADR-0028](../adr/0028-phase-2-concurrent-connections-limits-graceful-shutdown.md)**
+  calls the `connection.refused` field `reason`. The code has always
+  emitted `limit`, whose values match the `[limits]` config keys
+  (`admission.rs`). Version 1 keeps `limit`.
+- **[ADR-0029](../adr/0029-phase-2-config-file-v1-schema-parser-strictmodes.md)**
+  logs a flag that overrides a set config key at info, as a diagnostic.
+  It becomes the `server.config_override` audit event.
+- **[RFC-0010](0010-configuration-file.md)** §"Failure modes" calls its
+  four classes "values of the `message` field". They become values of
+  `class`, with the same names and meanings. Its "no new audit event
+  names" clause gives way for one event: `server.config_override`.
+- **[RFC-0008](0008-ssh-certificate-authentication.md)** §"Type-state
+  and audit" says `authenticated_identity` "must record the certificate
+  identity".
+  - **`authenticated_identity` stays the fingerprint of the key whose
+    possession was proven.** For a certificate, that is the certified
+    key.
+  - **Certificate fields are additive.** The certificate's identity
+    (key ID, serial, CA fingerprint and principal) is recorded by
+    those fields, which RFC-0008's implementing ADR names.
+  - **Consumers keep one format.** A consumer keyed on
+    `authenticated_identity` sees one format for every authentication.
+
+### 7. Implementation outline (non-normative)
+
+Besides §6's superseding ADR, this RFC needs no ADR of its own. Its
+implementing PR does seven things:
+
+- **The formatter:** a `FormatEvent` for `tracing-subscriber`'s `fmt`
+  layer, in the binary, that writes §2's envelope.
+  - **Encoding:** `serde_json`, already in the build through
+    `tracing-subscriber`'s `json` feature, becomes a direct dependency
+    with no new crate in the tree. String values go through the
+    `char::is_control` escape of §2 first, since `serde_json` leaves DEL
+    and C1 as they are.
+  - **`peer_addr`:** taken from the `connection` span's recorded fields.
+- **The tier moves:** the six events move to the audit target.
+- **The new fields:** `server.started` gains `config_file`;
+  `server.config_override` replaces the override diagnostic; and
+  `server.config_error` gains `class`, `error` and `config_file`.
+- **Golden tests:** one per catalogue event, each pinning the exact key
+  set of its line, plus one diagnostic line.
+- **The flip:** the PR flips this RFC to Accepted, adds §6's
+  superseding ADR, and points the Status fields of ADR-0024, ADR-0028
+  and ADR-0029 at it.
+- **Override keys:** the override labels become the TOML paths of §4.
+  Today they are the internal names `listen`, `host_key`,
+  `authorized_keys`, `handshake_timeout` and `log_format`.
+- **Docs:** the operator guide's log section, the CHANGELOG, and the
+  threat-model §6.2 wording, which then names the version.
+
+## Drawbacks
+
+- **The project maintains a formatter,** about a hundred lines with
+  their tests, instead of using the library's.
+- **Existing JSON consumers must adapt once.** `fields.message` becomes
+  `event`, `span.peer_addr` becomes `peer_addr`, and
+  `server.config_error` splits into `class` and `error`. Pre-alpha has
+  no known consumers, and this is the reason to do it before the tag.
+- **More events are always on.** Each connection writes three more
+  lines that `RUST_LOG` cannot turn off: `connection.accepted`,
+  `kex.completed` and `connection.closed`. Startup writes
+  `server.config_override` once per overridden key.
+- **Two fields stay free text.** A stable cause enumeration for
+  `connection.closed`, or a `protocol.violation` event for post-KEX
+  protocol errors, would be a later additive change.
+
+## Rationale and alternatives
+
+### Alternative 1: freeze `tracing-subscriber`'s JSON layout as it is
+
+This would need the least code. But it freezes a dependency's output
+and the Rust module paths in `target`. It keeps the duplicate
+`message` key unless the field is renamed anyway. It also offers no
+per-record hook for `schema_version`, short of repeating the field in
+every event macro.
+
+### Alternative 2: `flatten_event`, with the version in `server.started` only
+
+A version recorded once per process does not travel with records that
+a shipper splits, samples or reorders. `target` and the span list
+would remain as well.
+
+### Alternative 3: a `major.minor` version
+
+The minor number would count additive changes, which consumers must
+tolerate anyway under §5. A single integer that moves only on breaking
+changes says what a consumer needs to know.
+
+### Alternative 4: keep ADR-0024's two tiers
+
+`RUST_LOG=warn` would keep dropping the connection and configuration
+records that threat model §2.7 counts as audit content.
+
+### Alternative 5: make `authenticated_identity` the certificate identity
+
+This is RFC-0008's literal wording. The field would then change format
+with the authentication method, and a consumer keyed on it would break
+when certificates arrive. Separate, additive certificate fields record
+the same information and keep one format.
+
+### Alternative 6: keep the configuration-error class inside a free-text field
+
+This is RFC-0010's `class: detail` prefix. Consumers would have to
+parse a string to get a value the contract can carry as its own field.
+
+## Prior art
+
+- **Kubernetes audit events** carry `apiVersion` (`audit.k8s.io/v1`)
+  on every event.
+- **AWS CloudTrail records** carry `eventVersion` on every record.
+- **The Elastic Common Schema** carries `ecs.version` per document.
+
+In all three the version travels with each record, as in §2, because
+shippers handle records one at a time. OpenSSH writes unstructured
+syslog text, which is the situation a contract avoids.
+
+## Unresolved questions
+
+- **The certificate field names** are left to RFC-0008's implementing
+  ADR. They are additive under §5.
+- **Post-KEX protocol violations** stay diagnostics in version 1. A
+  `protocol.violation` catalogue event is a possible additive change.
+- **`connection.closed`'s `reason`** stays free text. A stable cause
+  enumeration is a possible additive field.
+
+## Future possibilities
+
+- **New catalogue events**, all additive: `server.stopping` and
+  `server.stopped` for the server lifecycle, and `protocol.violation`.
+- **Other sinks,** such as journald-native or OTLP. They would be
+  binary concerns that encode the same catalogue.
