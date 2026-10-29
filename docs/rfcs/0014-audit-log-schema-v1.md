@@ -67,7 +67,7 @@ today's JSON cannot be frozen as it is:
   events … configuration load" as audit content.
 - **A successful configuration load leaves no record.** `server.started`
   looks the same with or without `--config`.
-- **Two audit gaps, both bugs against ADR-0024, are fixed separately:**
+- **Two audit gaps, both bugs against ADR-0024, were fixed separately:**
   - audit events carried no `peer_addr`, fixed in
     [#202](https://github.com/gonzafg2/quantumssh/pull/202);
   - the failed attempt that exhausts the authentication budget emitted
@@ -157,13 +157,15 @@ filter is compiled in, and no `RUST_LOG` directive reaches it
 | `rekey.completed` | INFO | yes | `kex_algorithm`, `host_key_algorithm` (strings), `initiator` (enumeration: `server`, `peer`), `trigger` (enumeration: `time`, `bytes`, `peer`), `bytes_rx`, `bytes_tx`, `seconds` (integers) |
 | `auth.succeeded` | INFO | yes | `authenticated_identity` (string), `auth_method` (string) |
 | `auth.failed` | WARN | yes | `auth_method` (string), `failure_count` (integer) |
-| `exec.started` | INFO | yes | `authenticated_identity` (string), `executing_uid` (integer), `command` (string), `request_type` (enumeration: `exec`, `shell`), `pty` (boolean) |
-| `exec.finished` | INFO | yes | the five `exec.started` fields, plus `exit_status` (integer) |
+| `exec.started` | INFO | yes | `authenticated_identity` (string), `executing_uid` (integer), `command` (string), `request_type` (enumeration: `exec`, `shell`, `subsystem`), `pty` (boolean) |
+| `exec.finished` | INFO | yes | the five `exec.started` fields, plus `exit_status`, `bytes_received` and `bytes_sent` (integers) |
 
 ### 4. Field semantics
 
 - **Presence.** Every field listed in §3 is always present on its
-  event. `command` is `""` for a shell (ADR-0038 §9). Only a field added
+  event. `command` is `""` for a shell (ADR-0038 §9) and `sftp` for the
+  SFTP subsystem (ADR-0041). `bytes_received` and `bytes_sent` count the
+  channel payload bytes in each direction (ADR-0042). Only a field added
   after version 1 may be conditional, and only if the change that adds
   it says so (§5).
 - **`config_file`** names the configuration file the server was started
@@ -185,9 +187,9 @@ filter is compiled in, and no `RUST_LOG` directive reaches it
 
   That is OpenSSH's fingerprint format, so the value compares directly
   with `ssh-keygen -lf` and with a client's known-hosts prompt. The key
-  type changes with the cut-over RFC-0012 proposes
-  ([#172](https://github.com/gonzafg2/quantumssh/pull/172), TBD), but
-  the representation stays the same.
+  type changes with [RFC-0012](0012-composite-host-key-cutover.md)'s
+  cut-over (accepted; implementation TBD), but the representation stays
+  the same.
 - **`failure_count`** counts failed authentication requests within one
   connection, and it starts again at 1 on a new connection.
   - **Every failure emits `auth.failed`,** the one that exhausts the
@@ -229,13 +231,11 @@ them:
 - a new value of an enumeration;
 - any change to diagnostic records.
 
-Two planned changes fall in this class:
+One planned change falls in this class. (The SFTP stack, RFC-0013,
+landed with [#196](https://github.com/gonzafg2/quantumssh/pull/196)
+before the freeze, so its `request_type` `subsystem` and byte counts are
+version 1, §3.)
 
-- **The SFTP stack** proposed in
-  [#194](https://github.com/gonzafg2/quantumssh/pull/194) and
-  [#195](https://github.com/gonzafg2/quantumssh/pull/195) (TBD). It
-  adds `request_type` `subsystem`, and `bytes_received` and
-  `bytes_sent` on `exec.finished`.
 - **Certificate authentication** (RFC-0008, TBD). It adds the
   certificate fields, which are present on certificate authentications
   only (§6).
@@ -272,8 +272,8 @@ what it supersedes ([`README.md`](README.md), "After acceptance").
   - `server.started` and `server.config_error` gain `config_file`, and
     `server.config_override` joins the catalogue;
   - `exec.finished` lists `command`, which the code has emitted since
-    `a3921d5` but ADR-0024's row omitted. An erratum is proposed for
-    that in [#196](https://github.com/gonzafg2/quantumssh/pull/196).
+    `a3921d5` but ADR-0024's row omitted. ADR-0024 carries an erratum
+    for it since [#196](https://github.com/gonzafg2/quantumssh/pull/196).
 - **[ADR-0028](../adr/0028-phase-2-concurrent-connections-limits-graceful-shutdown.md)**
   calls the `connection.refused` field `reason`. The code has always
   emitted `limit`, whose values match the `[limits]` config keys
