@@ -71,17 +71,23 @@ are optional:
 
 | Key | Type | Default | Defined by |
 |---|---|---|---|
-| `server.listen` | socket address, as a string | `127.0.0.1:2222` | ADR-0029 |
+| `server.listen` | a string `IPv4:port` or `[IPv6]:port`; no hostname | `127.0.0.1:2222` | ADR-0029 |
 | `server.host_key` | path | none (required by flag or file) | ADR-0029 |
-| `server.handshake_timeout` | integer seconds, > 0 | `30` | ADR-0029 |
-| `server.drain_timeout` | integer seconds, > 0 | `30` | ADR-0028 |
+| `server.handshake_timeout` | integer seconds, 1 to 2⁶⁴ − 1 | `30` | ADR-0029 |
+| `server.drain_timeout` | integer seconds, 1 to 2⁶⁴ − 1 | `30` | ADR-0028 |
 | `auth.authorized_keys` | path | none (required by flag or file) | ADR-0029 |
 | `logging.format` | `"json"` or `"human"` | `json` unless stderr is a terminal | ADR-0029 |
-| `limits.max_connections` | integer, > 0 | `256` | ADR-0028 |
-| `limits.max_half_open` | integer, > 0 | `100` | ADR-0028 |
-| `limits.max_per_source` | integer, > 0 | `10` | ADR-0028 |
-| `limits.accept_rate` | integer tokens per second, > 0 | `1` | ADR-0028 |
-| `limits.accept_burst` | integer, > 0 | `10` | ADR-0028 |
+| `limits.max_connections` | integer, 1 to the platform's `usize` maximum | `256` | ADR-0028 |
+| `limits.max_half_open` | integer, 1 to the platform's `usize` maximum | `100` | ADR-0028 |
+| `limits.max_per_source` | integer, 1 to the platform's `usize` maximum | `10` | ADR-0028 |
+| `limits.accept_rate` | integer tokens per second, 1 to 2³² − 1 | `1` | ADR-0028 |
+| `limits.accept_burst` | integer, 1 to 2³² − 1 | `10` | ADR-0028 |
+
+The ranges are the accepted set version 1 freezes. A value outside one
+(zero, negative, or above the maximum) is a `schema_error`, and so is a
+value of the wrong TOML type. Accepting a wider range or another form
+later, such as a hostname for `listen`, is an additive widening under
+§2. Accepting a narrower one is breaking.
 
 These version-1 rules stand as RFC-0010 and ADR-0029 fixed them:
 - the schema is fail-closed (unknown key, unknown section, type
@@ -115,6 +121,10 @@ trade, and the error names what the older binary lacks.
 - making an optional key mandatory;
 - changing the precedence rule, or what a key applies to.
 
+A new command-line flag that overrides a file key is additive. The
+precedence rule stays `CLI > config > default`, and the flag reaches
+`server.config_override` with the key's TOML path (RFC-0014).
+
 A binary that reads version 2 keeps reading version 1 as version 1
 says, until a later RFC retires it. The set of accepted versions grows
 only through an RFC, which records the migration. A version the binary
@@ -126,7 +136,9 @@ Defaults are part of the documentation, not of the schema. Changing one
 leaves every file valid, so it does not move `schema_version`. It does
 change what a file that omits the key means, so:
 
-- **a default change needs an ADR and a CHANGELOG entry;**
+- **a default change needs a new or superseding ADR, and a CHANGELOG
+  entry.** Accepted ADRs are not edited in place, so changing an
+  ADR-0028 limit supersedes that part of ADR-0028;
 - **a change that widens exposure is listed under Security.** Examples
   are a wider `listen` address, higher `limits`, or a longer timeout.
 
@@ -142,10 +154,13 @@ the version-1 key set as this RFC's §1 without editing those documents
 The implementing PR:
 
 - adds a golden test that parses a file setting every §1 key, so a
-  rename or removal fails the build;
+  rename or removal fails the build. It also checks each range's ends.
+  The wrong-type case is already covered (`type_mismatch_is_schema_error`);
 - makes the `version_unsupported` message stop calling every unknown
   version "newer". It says `schema_version 0 is newer than this binary
-  understands` today;
+  understands (supported: 1)` today. The message should build the
+  supported list from `SUPPORTED_SCHEMA_VERSIONS`, so it stays right
+  when version 2 lands;
 - adds §2's rule, in a sentence, to the operator guide's configuration
   section, then flips this RFC to Accepted.
 
