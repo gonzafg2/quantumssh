@@ -4,7 +4,7 @@
 - **Authors:** Gonzalo Fleming Garrido
 - **Created:** 2026-10-13 (drafted as ADR-0044; moved to the RFC lane on 2026-10-14)
 - **Roadmap issue:** [#109](https://github.com/gonzafg2/quantumssh/issues/109)
-- **Implementation PR:** TBD
+- **Implementation PR:** [#220](https://github.com/gonzafg2/quantumssh/pull/220)
 
 ## Summary
 

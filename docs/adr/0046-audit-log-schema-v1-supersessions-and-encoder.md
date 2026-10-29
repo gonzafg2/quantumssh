@@ -1,7 +1,7 @@
 # ADR 0046: Audit-log schema version 1 — the superseded ADR parts, and the binary's own encoder
 
 - **Status:** Accepted
-- **Date:** 2026-10-29 (accepted with the implementing PR)
+- **Date:** 2026-10-29 (accepted with the implementing PR [#220](https://github.com/gonzafg2/quantumssh/pull/220))
 - **Deciders:** Project lead
 - **Related:** The superseding ADR [RFC-0014](../rfcs/0014-audit-log-schema-v1.md) §6 requires. It supersedes the parts of [ADR-0024](0024-phase-1-log-event-schema.md), [ADR-0028](0028-phase-2-concurrent-connections-limits-graceful-shutdown.md) and [ADR-0029](0029-phase-2-config-file-v1-schema-parser-strictmodes.md) listed in §Decision 1. It also records the implementation choices RFC-0014 §7 left non-normative.
 
