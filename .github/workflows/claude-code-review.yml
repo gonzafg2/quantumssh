@@ -28,6 +28,41 @@ jobs:
         with:
           fetch-depth: 1
 
+      # The code-review plugin is the review's prompt, so it is pinned like
+      # the action (#165). The action takes a marketplace as a git URL,
+      # cloned at its default branch, or as a local path. Pinning the
+      # anthropics/claude-code marketplace would not freeze the plugin:
+      # since 2026-10-26 its code-review entry is a git-subdir source on
+      # the default branch of anthropics/claude-plugins-official. This step
+      # fetches the plugin at one commit and serves it from a one-plugin
+      # local marketplace. Claude Code reserves the name
+      # claude-plugins-official for Anthropic's GitHub sources, hence
+      # quantumssh-review. Dependabot does not track PLUGIN_SHA: bump it
+      # deliberately, like the action's SHA.
+      - name: Fetch the code-review plugin at a pinned commit
+        env:
+          PLUGIN_REPO: https://github.com/anthropics/claude-plugins-official.git
+          # code-review 1.0.1, the version the run that reviewed #229 used.
+          PLUGIN_SHA: f8c5e7a1dcb71b10cb74586224b5401f3de5db28
+          MARKETPLACE: ${{ runner.temp }}/claude-review-marketplace
+        run: |
+          set -euo pipefail
+          git init -q "$MARKETPLACE"
+          git -C "$MARKETPLACE" sparse-checkout set --no-cone /plugins/code-review/
+          git -C "$MARKETPLACE" fetch -q --depth 1 --filter=blob:none "$PLUGIN_REPO" "$PLUGIN_SHA"
+          git -C "$MARKETPLACE" checkout -q FETCH_HEAD
+          [ "$(git -C "$MARKETPLACE" rev-parse HEAD)" = "$PLUGIN_SHA" ]
+          mkdir -p "$MARKETPLACE/.claude-plugin"
+          cat > "$MARKETPLACE/.claude-plugin/marketplace.json" <<'EOF'
+          {
+            "name": "quantumssh-review",
+            "owner": { "name": "QuantumSSH" },
+            "plugins": [
+              { "name": "code-review", "source": "./plugins/code-review" }
+            ]
+          }
+          EOF
+
       - name: Run Claude Code Review
         id: claude-review
         # Pinned to the v1.0.166 commit (not the floating @v1 tag): an
@@ -38,8 +73,8 @@ jobs:
         uses: anthropics/claude-code-action@16f9f71ab9c490faf367f94dd294897edc25be33 # v1.0.261
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'
-          plugins: 'code-review@claude-code-plugins'
+          plugin_marketplaces: ${{ runner.temp }}/claude-review-marketplace
+          plugins: 'code-review@quantumssh-review'
           # --comment is the plugin's posting switch: its step 7 reads "If
           # --comment argument was NOT provided, stop here. Do not post any
           # GitHub comments." Without it the review runs fully and prints its
