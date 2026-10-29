@@ -32,9 +32,12 @@ jobs:
     # fork PR is skipped here (no red check) rather than refused at runtime.
     # The comment path cannot see the head repository in its payload; the
     # vet step below refuses fork heads there, before any secret is exposed.
+    # The automatic path also needs OPENCODE_AUTO_REVIEW == 'true' (ADR-0045):
+    # unset means off, and `/oc` still runs on demand.
     if: |
       (
         github.event_name == 'pull_request' &&
+        vars.OPENCODE_AUTO_REVIEW == 'true' &&
         contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) &&
         github.event.pull_request.head.repo.full_name == github.repository
       ) ||

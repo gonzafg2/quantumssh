@@ -95,7 +95,7 @@ warnings.
   `commit-lint` check rejects subjects that are not Conventional Commits;
   the sign-off is checked by reviewers, not by automation.
 - Spanish and English are both first-class in issues, PRs, and commits.
-- The workflow reviewers (`opencode`, `Claude Code Review`) only run on PRs from `OWNER`/`MEMBER`/`COLLABORATOR`; Dependabot and other bots are excluded from them. Codex reviews through the Codex cloud GitHub App (ADR-0037), following `## Code Review Rules` below. The App has no author gate and may review bot and fork PRs too.
+- The workflow reviewers (`opencode`, `Claude Code Review`) only run on PRs from `OWNER`/`MEMBER`/`COLLABORATOR`; Dependabot and other bots are excluded from them. opencode runs automatically only when the repository variable `OPENCODE_AUTO_REVIEW` is `true`, and on demand with `/oc` (ADR-0045). Codex reviews through the Codex cloud GitHub App (ADR-0037), following `## Code Review Rules` below. The App has no author gate and may review bot and fork PRs too.
 
 ## Dependencies
 
