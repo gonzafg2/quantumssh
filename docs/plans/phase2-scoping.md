@@ -114,13 +114,17 @@ Because the freeze is irreversible (§"load-bearing constraint"), these must be 
 their intended long-term shape *before* the tag, each recorded in its own
 ADR/RFC (the config-file schema is scoped above as an RFC) — not in this note:
 
-- [ ] **Audit-log schema** carries `schema_version` and its field set is final
+- [x] **Audit-log schema** carries `schema_version` and its field set is final
       ([ADR-0024](../adr/0024-phase-1-log-event-schema.md) is "the input that
       Phase 2's versioned schema freezes"). Any field rename becomes a migration
       note after this point. Includes the `connection.refused` event
       [ADR-0028](../adr/0028-phase-2-concurrent-connections-limits-graceful-shutdown.md)
       adds — its shape must be final before the tag (that ADR's §Consequences
       names it a freeze-checklist item).
+      **Done:** schema version 1 is
+      [RFC-0014](../rfcs/0014-audit-log-schema-v1.md), implemented with
+      [ADR-0046](../adr/0046-audit-log-schema-v1-supersessions-and-encoder.md);
+      `connection.refused` keeps its `limit` field.
 - [ ] **Negotiation profile** (KEXINIT name-lists) reviewed as a
       to-be-frozen contract ([ADR-0021](../adr/0021-phase-1-negotiation-profile.md)).
 - [ ] **Host-key algorithm** is the composite `ssh-mldsa44-ed25519`, not

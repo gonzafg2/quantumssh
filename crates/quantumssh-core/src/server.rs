@@ -128,8 +128,8 @@ pub struct Server {
 }
 
 impl Server {
-    /// Binds the TCP listener and emits the ADR-0024 `server.started`
-    /// event — schema-complete now that a host key exists.
+    /// Binds the TCP listener. The binary emits `server.started` once this
+    /// returns, since it alone knows the configuration file (RFC-0014 §3).
     ///
     /// # Errors
     ///
@@ -137,12 +137,6 @@ impl Server {
     /// bound (in use, permission denied, …).
     pub async fn bind(config: &Config) -> io::Result<Self> {
         let listener = TcpListener::bind(config.listen).await?;
-        let listen_addr = listener.local_addr()?;
-        info!(
-            listen_addr = %listen_addr,
-            host_key_fingerprint = %config.host_key.fingerprint_sha256(),
-            "server.started"
-        );
         Ok(Self {
             listener,
             handshake_timeout: config.handshake_timeout,
@@ -239,7 +233,7 @@ impl Server {
                             // and `connection.accepted` are mutually
                             // exclusive within the span (ADR-0028).
                             let _entered = span.entered();
-                            info!(limit = refusal.as_str(), "connection.refused");
+                            info!(target: "audit", limit = refusal.as_str(), "connection.refused");
                             drop(stream);
                         }
                         Ok(guard) => {
@@ -248,7 +242,7 @@ impl Server {
                             let helper = self.helper.clone();
                             let conn_rx = shutdown.subscribe();
                             let connection = async move {
-                                info!("connection.accepted");
+                                info!(target: "audit", "connection.accepted");
                                 handle(
                                     stream,
                                     host_key,
@@ -327,7 +321,7 @@ fn log_join(
             match connection_spans.remove(&join_err.id()) {
                 Some(span) => {
                     let _entered = span.entered();
-                    info!(reason = %reason, "connection.closed");
+                    info!(target: "audit", reason = %reason, "connection.closed");
                 }
                 // Unreachable when every spawn inserts its span; not an
                 // ADR-0024 event — do not invent schema names here.
@@ -420,7 +414,7 @@ async fn handle(
     // The connection leaves the server's `JoinSet` only once its child is
     // reaped (ADR-0038 §6).
     children.join().await;
-    info!(reason = %reason, "connection.closed");
+    info!(target: "audit", reason = %reason, "connection.closed");
 }
 
 /// One connection through the type-state machine. The handshake (up to
@@ -445,6 +439,7 @@ async fn run_connection(
         let t = t.run_hybrid(&host_key).await?;
         let (negotiated, t) = t.exchange_newkeys().await?;
         info!(
+            target: "audit",
             kex_algorithm = negotiated.kex_algorithm,
             host_key_algorithm = negotiated.host_key_algorithm,
             "kex.completed"

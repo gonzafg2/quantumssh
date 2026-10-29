@@ -160,10 +160,20 @@ stores it in the journal:
 journalctl -u quantumssh -o cat | jq .
 ```
 
-Audit events (`target` `audit`) cannot be silenced by `RUST_LOG`
-([ADR-0024](adr/0024-phase-1-log-event-schema.md)). Every line lands
-at the journal's default priority, so filter on the JSON `level` field
-rather than with `journalctl -p`. Ship the records to a sink the host
+Each line is one record of the audit-log schema, version 1
+([RFC-0014](rfcs/0014-audit-log-schema-v1.md)). A catalogue record names
+its `event`, such as `auth.succeeded` or `exec.finished`, and carries
+`schema_version`, `timestamp`, `level` and, inside a connection,
+`peer_addr`. A diagnostic carries `message` instead and is not part of
+the contract. To keep only the contract:
+
+```sh
+journalctl -u quantumssh -o cat | jq -c 'select(has("event"))'
+```
+
+`RUST_LOG` governs diagnostics only: no directive removes a catalogue
+event. Every line lands at the journal's default priority, so filter
+on the JSON `level` field rather than with `journalctl -p`. Ship the records to a sink the host
 cannot rewrite (threat model §5.5.1).
 
 ## 8. Stop, restart and reload

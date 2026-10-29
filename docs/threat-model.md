@@ -1292,7 +1292,10 @@ repeating it.
   RFC 4253 binary packet grammar are the starting target. Defends
   §5.1.2.
 - **Audit log shape stable from Phase 2.** Structured records via
-  `tracing`, JSON-emittable, schema-versioned. Defends §5.5.1.
+  `tracing`, written as JSON at schema version 1
+  ([RFC-0014](/docs/rfcs/0014-audit-log-schema-v1.md)): every record
+  carries `schema_version`, and every catalogue event is on the audit
+  tier, which `RUST_LOG` cannot reach. Defends §5.5.1.
 
 ### 6.3 Authentication posture
 

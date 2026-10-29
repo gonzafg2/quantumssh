@@ -29,9 +29,11 @@ use zeroize::Zeroizing;
 
 mod config;
 mod log_fields;
+mod log_json;
 mod notify;
 use config::{ConfigFile, LogFormat, TrustedClass};
 use log_fields::EscapingFields;
+use log_json::{AUDIT_TARGET, ConnectionPeer, JsonV1};
 
 const DEFAULT_LISTEN: &str = "127.0.0.1:2222";
 const DEFAULT_HANDSHAKE_TIMEOUT_SECS: u64 = 30;
@@ -161,8 +163,8 @@ struct Resolved {
     limits: Limits,
     /// ADR-0028 drain deadline — config-file-only.
     drain_timeout: Duration,
-    /// Keys where an explicit flag overrode a set config value — each
-    /// is logged at info so the override is visible (RFC-0010).
+    /// Keys, as TOML paths, where an explicit flag overrode a set config
+    /// value: each becomes a `server.config_override` event (RFC-0014 §3).
     overrides: Vec<&'static str>,
 }
 
@@ -206,19 +208,19 @@ fn resolve(
         cli.listen,
         server.and_then(|s| s.listen),
         default_listen,
-        "listen",
+        "server.listen",
         &mut overrides,
     );
     let host_key_path = pick_opt(
         cli.host_key_path,
         server.and_then(|s| s.host_key.clone()),
-        "host_key",
+        "server.host_key",
         &mut overrides,
     );
     let authorized_keys_path = pick_opt(
         cli.authorized_keys_path,
         file.and_then(|f| f.auth.authorized_keys.clone()),
-        "authorized_keys",
+        "auth.authorized_keys",
         &mut overrides,
     );
     let handshake_timeout = pick(
@@ -227,14 +229,14 @@ fn resolve(
             .and_then(|s| s.handshake_timeout)
             .map(Duration::from_secs),
         Duration::from_secs(DEFAULT_HANDSHAKE_TIMEOUT_SECS),
-        "handshake_timeout",
+        "server.handshake_timeout",
         &mut overrides,
     );
     let log_format = pick(
         cli.log_format,
         file.and_then(|f| f.logging.format),
         tty_default,
-        "log_format",
+        "logging.format",
         &mut overrides,
     );
     let defaults = Limits::default();
@@ -278,8 +280,9 @@ where
 {
     let base = tracing_subscriber::fmt::layer().with_writer(writer);
     match format {
-        // serde escapes control bytes; no custom formatter needed.
-        LogFormat::Json => base.json().boxed(),
+        // RFC-0014's schema-version-1 line, which also escapes every
+        // control character (§5.4.3).
+        LogFormat::Json => base.event_format(JsonV1).boxed(),
         // The ADR-0024 field formatter: control bytes in field values
         // rendered as visible `\xNN`, never live (§5.4.3).
         LogFormat::Human => base.fmt_fields(EscapingFields).boxed(),
@@ -319,39 +322,62 @@ where
 {
     let general = fmt_layer(format, writer.clone())
         .with_filter(tracing_subscriber::filter::filter_fn(|meta| {
-            meta.target() != "audit"
+            meta.target() != AUDIT_TARGET
         }))
         .with_filter(env_filter);
 
     let audit =
         fmt_layer(format, writer).with_filter(tracing_subscriber::filter::filter_fn(|meta| {
-            meta.is_span() || meta.target() == "audit"
+            meta.is_span() || meta.target() == AUDIT_TARGET
         }));
 
-    tracing_subscriber::registry().with(general).with(audit)
+    // `ConnectionPeer` is unfiltered, so it records every `connection`
+    // span's `peer_addr` for the JSON envelope (RFC-0014 §2).
+    tracing_subscriber::registry()
+        .with(ConnectionPeer)
+        .with(general)
+        .with(audit)
+}
+
+/// Emits `server.config_error` (RFC-0014 §3): the failure's `class`, the
+/// detail for people in `error`, and the configuration file in use.
+fn config_error(class: &str, error: &str, config_file: &str) {
+    error!(
+        target: AUDIT_TARGET,
+        class,
+        error,
+        config_file,
+        "server.config_error"
+    );
 }
 
 /// Loads and checks the optional config file — `StrictModes` on the
-/// file itself first, per RFC-0010.
-fn load_config_file(cli: &Cli) -> Result<Option<ConfigFile>, config::ConfigError> {
-    cli.config_path.as_deref().map_or(Ok(None), |p| {
-        // Read the canonical path the check returns — the checked file
-        // is the read file, even if the given name is a symlink.
-        let canon = config::check_trusted_file(Path::new(p), TrustedClass::Input)?;
-        config::load(&canon).map(Some)
-    })
+/// file itself first, per RFC-0010. Also returns the `config_file` the
+/// audit events name: the canonical path once `StrictModes` resolved it,
+/// the path as given when that failed, or `""` without `--config`
+/// (RFC-0014 §4).
+fn load_config_file(cli: &Cli) -> (String, Result<Option<ConfigFile>, config::ConfigError>) {
+    let Some(p) = cli.config_path.as_deref() else {
+        return (String::new(), Ok(None));
+    };
+    // Read the canonical path the check returns — the checked file is
+    // the read file, even if the given name is a symlink.
+    match config::check_trusted_file(Path::new(p), TrustedClass::Input) {
+        Err(e) => (p.to_owned(), Err(e)),
+        Ok(canon) => (canon.display().to_string(), config::load(&canon).map(Some)),
+    }
 }
 
 /// `StrictModes` (ADR-0029 — the host key is a secret *and* a trusted
 /// input), then read once at startup with `std::fs` (ADR-0022's
 /// deliberate non-async file I/O). Logs and returns `None` on failure.
-fn load_host_key(path: &str) -> Option<Arc<HostKey>> {
+fn load_host_key(path: &str, config_file: &str) -> Option<Arc<HostKey>> {
     // Read the canonical path the check returns — the checked file is
     // the read file, even if the given name is a symlink.
     let canon = match config::check_trusted_file(Path::new(path), TrustedClass::Secret) {
         Ok(canon) => canon,
         Err(e) => {
-            error!(message = %e, "server.config_error");
+            config_error(e.class(), e.detail(), config_file);
             return None;
         }
     };
@@ -361,14 +387,22 @@ fn load_host_key(path: &str) -> Option<Arc<HostKey>> {
     let pem = match std::fs::read_to_string(&canon) {
         Ok(pem) => Zeroizing::new(pem),
         Err(e) => {
-            error!(message = %format!("cannot read host key {}: {e}", canon.display()), "server.config_error");
+            config_error(
+                "file_unavailable",
+                &format!("cannot read host key {}: {e}", canon.display()),
+                config_file,
+            );
             return None;
         }
     };
     match HostKey::from_openssh_pem(&pem) {
         Ok(k) => Some(Arc::new(k)),
         Err(e) => {
-            error!(message = %format!("cannot load host key {}: {e}", canon.display()), "server.config_error");
+            config_error(
+                "invalid_host_key",
+                &format!("cannot load host key {}: {e}", canon.display()),
+                config_file,
+            );
             None
         }
     }
@@ -376,19 +410,23 @@ fn load_host_key(path: &str) -> Option<Arc<HostKey>> {
 
 /// `StrictModes`, then read once at startup (ADR-0022). Logs and
 /// returns `None` on failure.
-fn load_authorized_keys(path: &str) -> Option<Arc<AuthorizedKeys>> {
+fn load_authorized_keys(path: &str, config_file: &str) -> Option<Arc<AuthorizedKeys>> {
     // Same canonical-read rule as the host key.
     let canon = match config::check_trusted_file(Path::new(path), TrustedClass::Input) {
         Ok(canon) => canon,
         Err(e) => {
-            error!(message = %e, "server.config_error");
+            config_error(e.class(), e.detail(), config_file);
             return None;
         }
     };
     match AuthorizedKeys::load(&canon) {
         Ok(k) => Some(Arc::new(k)),
         Err(e) => {
-            error!(message = %format!("cannot load authorized_keys {}: {e}", canon.display()), "server.config_error");
+            config_error(
+                "invalid_authorized_keys",
+                &format!("cannot load authorized_keys {}: {e}", canon.display()),
+                config_file,
+            );
             None
         }
     }
@@ -427,17 +465,18 @@ fn main() -> ExitCode {
     // subscriber is initialised with the CLI-or-TTY format first: a
     // config failure must reach `server.config_error`, not stderr
     // prose (RFC-0010 §Failure modes).
-    let resolved = match load_config_file(&cli) {
+    let (config_file, loaded) = load_config_file(&cli);
+    let resolved = match loaded {
         Err(e) => {
             init_logging(cli.log_format.unwrap_or(tty_default));
-            error!(message = %e, "server.config_error");
+            config_error(e.class(), e.detail(), &config_file);
             return ExitCode::FAILURE;
         }
         Ok(file) => resolve(cli, file.as_ref(), default_listen, tty_default),
     };
     init_logging(resolved.log_format);
-    for key in &resolved.overrides {
-        info!(key = %key, "command-line flag overrides the config file value");
+    for &key in &resolved.overrides {
+        info!(target: AUDIT_TARGET, key, "server.config_override");
     }
 
     // The binary constructs the runtime (ADR-0022), sized per
@@ -453,11 +492,15 @@ fn main() -> ExitCode {
     {
         Ok(runtime) => runtime,
         Err(e) => {
-            error!(message = %format!("cannot build the runtime: {e}"), "server.config_error");
+            config_error(
+                "runtime_failed",
+                &format!("cannot build the runtime: {e}"),
+                &config_file,
+            );
             return ExitCode::FAILURE;
         }
     };
-    runtime.block_on(run(resolved))
+    runtime.block_on(run(resolved, config_file))
 }
 
 /// This binary, re-executed for PTY and SFTP children (ADR-0038 §5,
@@ -501,25 +544,27 @@ fn spawn_signal_listener(tx: broadcast::Sender<Instant>, drain: Duration) {
     }));
 }
 
-async fn run(resolved: Resolved) -> ExitCode {
+async fn run(resolved: Resolved, config_file: String) -> ExitCode {
     let Some(host_key_path) = resolved.host_key_path else {
-        error!(
-            message = "host key is required (--host-key or [server].host_key)",
-            "server.config_error"
+        config_error(
+            "missing_setting",
+            "host key is required (--host-key or [server].host_key)",
+            &config_file,
         );
         return ExitCode::FAILURE;
     };
-    let Some(host_key) = load_host_key(&host_key_path) else {
+    let Some(host_key) = load_host_key(&host_key_path, &config_file) else {
         return ExitCode::FAILURE;
     };
     let Some(authorized_keys_path) = resolved.authorized_keys_path else {
-        error!(
-            message = "authorized_keys is required (--authorized-keys or [auth].authorized_keys)",
-            "server.config_error"
+        config_error(
+            "missing_setting",
+            "authorized_keys is required (--authorized-keys or [auth].authorized_keys)",
+            &config_file,
         );
         return ExitCode::FAILURE;
     };
-    let Some(authorized_keys) = load_authorized_keys(&authorized_keys_path) else {
+    let Some(authorized_keys) = load_authorized_keys(&authorized_keys_path, &config_file) else {
         return ExitCode::FAILURE;
     };
 
@@ -534,13 +579,27 @@ async fn run(resolved: Resolved) -> ExitCode {
         limits: resolved.limits,
         helper: helper(),
     };
-    let server = match Server::bind(&config).await {
-        Ok(server) => server,
+    let bound = Server::bind(&config)
+        .await
+        .and_then(|server| server.local_addr().map(|addr| (server, addr)));
+    let (server, listen_addr) = match bound {
+        Ok(bound) => bound,
         Err(e) => {
-            error!(message = %format!("cannot bind {}: {e}", resolved.listen), "server.config_error");
+            config_error(
+                "bind_failed",
+                &format!("cannot bind {}: {e}", resolved.listen),
+                &config_file,
+            );
             return ExitCode::FAILURE;
         }
     };
+    info!(
+        target: AUDIT_TARGET,
+        listen_addr = %listen_addr,
+        host_key_fingerprint = %config.host_key.fingerprint_sha256(),
+        config_file = config_file.as_str(),
+        "server.started"
+    );
 
     // Graceful shutdown (ADR-0028): the signal listener drives the
     // broadcast the accept loop and every connection subscribe to.
@@ -556,7 +615,11 @@ async fn run(resolved: Resolved) -> ExitCode {
     match server.serve(shutdown_tx, loop_rx).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            error!(message = %format!("accept loop failed: {e}"), "server.config_error");
+            config_error(
+                "listener_failed",
+                &format!("accept loop failed: {e}"),
+                &config_file,
+            );
             ExitCode::FAILURE
         }
     }
@@ -655,7 +718,7 @@ mod tests {
         );
         assert_eq!(r.listen, "127.0.0.1:2200".parse().unwrap());
         assert_eq!(r.host_key_path.as_deref(), Some("/cli/key"));
-        assert_eq!(r.overrides, vec!["listen", "host_key"]);
+        assert_eq!(r.overrides, vec!["server.listen", "server.host_key"]);
     }
 
     #[test]

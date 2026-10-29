@@ -1,6 +1,6 @@
 # ADR 0028: Phase 2 runtime — concurrent connections, admission limits, graceful shutdown
 
-- **Status:** Accepted
+- **Status:** Accepted; the name of `connection.refused`'s structured field in the admission-control bullet (`reason`) is superseded by [ADR-0046](0046-audit-log-schema-v1-supersessions-and-encoder.md), which keeps `limit`
 - **Date:** 2026-07-19 (accepted with the implementing PR [#129](https://github.com/gonzafg2/quantumssh/pull/129))
 - **Deciders:** Project lead
 - **Related:** Extends [ADR-0022](0022-phase-1-async-runtime-tokio.md) (runtime, feature set, the sequential spawn-and-join loop this ADR removes); constrained by [ADR-0018](0018-phase-1-unsafe-code-forbid-workspace.md) (`unsafe_code = "forbid"`) and [ADR-0024](0024-phase-1-log-event-schema.md) (log schema — one new event below). Part of the Phase-2 milestone ([#109](https://github.com/gonzafg2/quantumssh/issues/109)); sequencing rationale in [`docs/plans/phase2-scoping.md`](../plans/phase2-scoping.md) (non-authoritative). The systemd ADR (TBD) will build on the shutdown path decided here.

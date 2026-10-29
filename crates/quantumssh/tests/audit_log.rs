@@ -1,0 +1,253 @@
+//! RFC-0014 end to end: the real binary, with `RUST_LOG=off`, writes the
+//! schema-version-1 line for every catalogue event a configured `exec`
+//! session produces, each with exactly its §3 key set.
+
+#[path = "../../quantumssh-core/tests/support/mod.rs"]
+mod support;
+
+use std::io::{BufRead, BufReader};
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
+use std::sync::mpsc;
+use std::time::Duration;
+
+use ed25519_dalek::SigningKey;
+use quantumssh_core::host_key::HostKey;
+use support::*;
+
+struct Server(Child);
+
+impl Drop for Server {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+/// A private directory under `target/`: `StrictModes` refuses files below
+/// a world-writable ancestor such as `/tmp`.
+fn tree(name: &str) -> PathBuf {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target/audit-log-tests")
+        .join(format!("{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("create test tree");
+    std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).expect("chmod");
+    root
+}
+
+fn write_private(path: &Path, contents: &str) {
+    std::fs::write(path, contents).expect("write");
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).expect("chmod");
+}
+
+/// The server's stderr lines, read on a thread so a test can wait for
+/// one with a deadline.
+fn stderr_lines(child: &mut Child) -> mpsc::Receiver<String> {
+    let stderr = child.stderr.take().expect("stderr");
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+            if tx.send(line).is_err() {
+                break;
+            }
+        }
+    });
+    rx
+}
+
+/// Collects lines until one names `event`, which it returns as well.
+fn until(rx: &mpsc::Receiver<String>, seen: &mut Vec<String>, event: &str) -> String {
+    let needle = format!(r#""event":"{event}""#);
+    loop {
+        let line = rx
+            .recv_timeout(Duration::from_secs(20))
+            .unwrap_or_else(|_| panic!("no {event} line; so far: {seen:#?}"));
+        seen.push(line.clone());
+        if line.contains(&needle) {
+            return line;
+        }
+    }
+}
+
+/// The top-level keys of one JSON object line, in order.
+fn keys(line: &str) -> Vec<String> {
+    let (mut keys, mut depth, mut in_string, mut escaped) = (Vec::new(), 0, false, false);
+    let (mut current, mut last_string) = (String::new(), None);
+    for c in line.chars() {
+        if in_string {
+            match c {
+                _ if escaped => {
+                    escaped = false;
+                    current.push(c);
+                }
+                '\\' => escaped = true,
+                '"' => {
+                    in_string = false;
+                    last_string = Some(std::mem::take(&mut current));
+                }
+                _ => current.push(c),
+            }
+            continue;
+        }
+        match c {
+            '"' => in_string = true,
+            '{' | '[' => depth += 1,
+            '}' | ']' => depth -= 1,
+            ':' if depth == 1 => keys.extend(last_string.take()),
+            ',' => last_string = None,
+            _ => {}
+        }
+    }
+    keys
+}
+
+/// The line for `event` among `lines`, after checking that its keys are
+/// the envelope, then `event`, then `rest` (RFC-0014 §2, §3).
+fn line_of<'a>(lines: &'a [String], event: &str, rest: &[&str]) -> &'a str {
+    let line = lines
+        .iter()
+        .find(|l| l.contains(&format!(r#""event":"{event}""#)))
+        .unwrap_or_else(|| panic!("no {event} line in {lines:#?}"));
+    let mut want = vec!["schema_version", "timestamp", "level", "event"];
+    want.extend(rest);
+    assert_eq!(keys(line), want, "{line}");
+    assert!(line.starts_with(r#"{"schema_version":1,"#), "{line}");
+    line
+}
+
+fn value<'a>(line: &'a str, key: &str) -> &'a str {
+    line.split(&format!(r#""{key}":""#))
+        .nth(1)
+        .and_then(|rest| rest.split('"').next())
+        .unwrap_or_else(|| panic!("no string {key} in {line}"))
+}
+
+#[tokio::test]
+async fn an_exec_session_writes_every_catalogue_line_whatever_rust_log_says() {
+    let root = tree("session");
+    let host_key_path = root.join("hostkey");
+    let status = Command::new("ssh-keygen")
+        .args(["-q", "-t", "ed25519", "-N", "", "-f"])
+        .arg(&host_key_path)
+        .status()
+        .expect("run ssh-keygen");
+    assert!(status.success(), "ssh-keygen failed");
+    let host_key = HostKey::from_openssh_pem(&std::fs::read_to_string(&host_key_path).unwrap())
+        .expect("host key");
+    let authorized_keys = root.join("authorized_keys");
+    let client_line =
+        std::fs::read_to_string(temp_authorized_keys(&SigningKey::from_bytes(&[77u8; 32])))
+            .expect("client key line");
+    write_private(&authorized_keys, &client_line);
+    // The flag overrides the file's `listen`: one `server.config_override`.
+    let config = root.join("config.toml");
+    write_private(
+        &config,
+        "schema_version = 1\n\n[server]\nlisten = \"127.0.0.1:0\"\n",
+    );
+
+    let mut server = Server(
+        Command::new(env!("CARGO_BIN_EXE_quantumssh"))
+            .arg("--config")
+            .arg(&config)
+            .args(["--listen", "127.0.0.1:0", "--log-format", "json"])
+            .arg("--host-key")
+            .arg(&host_key_path)
+            .arg("--authorized-keys")
+            .arg(&authorized_keys)
+            .env("RUST_LOG", "off")
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("start the server"),
+    );
+    let rx = stderr_lines(&mut server.0);
+    let mut seen = Vec::new();
+    let started = until(&rx, &mut seen, "server.started");
+    let addr = value(&started, "listen_addr").parse().expect("listen_addr");
+
+    let (mut stream, mut client) = authenticate(addr, &host_key).await;
+    client.write_sealed(&mut stream, &channel_open(0)).await;
+    let chan = expect_open_confirmation(&mut client, &mut stream).await;
+    client
+        .write_sealed(&mut stream, &channel_exec(chan, b"echo hi"))
+        .await;
+    let (_out, _err, exit) = collect_session(&mut client, &mut stream, chan).await;
+    assert_eq!(exit, Some(0));
+    drop(stream);
+    until(&rx, &mut seen, "connection.closed");
+
+    let canonical = std::fs::canonicalize(&config).unwrap();
+    let override_line = line_of(&seen, "server.config_override", &["key"]);
+    assert_eq!(value(override_line, "key"), "server.listen");
+    let started = line_of(
+        &seen,
+        "server.started",
+        &["listen_addr", "host_key_fingerprint", "config_file"],
+    );
+    assert_eq!(value(started, "config_file"), canonical.to_str().unwrap());
+    assert_eq!(
+        value(started, "host_key_fingerprint"),
+        host_key.fingerprint_sha256()
+    );
+    let peer = ["peer_addr"];
+    line_of(&seen, "connection.accepted", &peer);
+    line_of(
+        &seen,
+        "kex.completed",
+        &["peer_addr", "kex_algorithm", "host_key_algorithm"],
+    );
+    line_of(
+        &seen,
+        "auth.succeeded",
+        &["peer_addr", "authenticated_identity", "auth_method"],
+    );
+    let session = [
+        "peer_addr",
+        "authenticated_identity",
+        "executing_uid",
+        "command",
+        "request_type",
+        "pty",
+    ];
+    line_of(&seen, "exec.started", &session);
+    let finished = [
+        &session[..],
+        &["exit_status", "bytes_received", "bytes_sent"],
+    ]
+    .concat();
+    line_of(&seen, "exec.finished", &finished);
+    line_of(&seen, "connection.closed", &["peer_addr", "reason"]);
+    // `RUST_LOG=off` leaves diagnostics out and every catalogue line in.
+    assert!(seen.iter().all(|l| l.contains(r#""event":""#)), "{seen:#?}");
+}
+
+#[test]
+fn a_missing_config_file_is_one_config_error_line() {
+    let root = tree("missing");
+    let missing = root.join("absent.toml");
+    let output = Command::new(env!("CARGO_BIN_EXE_quantumssh"))
+        .arg("--config")
+        .arg(&missing)
+        .args(["--log-format", "json"])
+        .env("RUST_LOG", "off")
+        .output()
+        .expect("run the server");
+    assert!(!output.status.success());
+    let lines: Vec<String> = String::from_utf8(output.stderr)
+        .unwrap()
+        .lines()
+        .map(str::to_string)
+        .collect();
+    assert_eq!(lines.len(), 1, "{lines:#?}");
+    let line = line_of(
+        &lines,
+        "server.config_error",
+        &["class", "error", "config_file"],
+    );
+    assert!(line.contains(r#""level":"ERROR""#), "{line}");
+    assert_eq!(value(line, "class"), "file_unavailable");
+    // StrictModes failed, so the path is the one given.
+    assert_eq!(value(line, "config_file"), missing.to_str().unwrap());
+}

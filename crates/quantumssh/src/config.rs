@@ -15,11 +15,10 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
-/// Startup configuration failures, classified by the ADR-0029 message
-/// values. `Display` renders `class: detail` — the stable class is a
-/// machine-parseable prefix of the `server.config_error` `message`
-/// field, and the detail still names the file and predicate the ADR
-/// requires.
+/// Startup configuration failures, classified by the ADR-0029 values.
+/// The `server.config_error` event carries [`ConfigError::class`] and
+/// [`ConfigError::detail`] as separate fields (RFC-0014 §3); `Display`
+/// renders `class: detail` for people.
 #[derive(Debug)]
 pub enum ConfigError {
     /// A check or read could not run at all: missing file, unreadable
@@ -32,6 +31,29 @@ pub enum ConfigError {
     VersionUnsupported(String),
     /// A `StrictModes` predicate failed (`insecure_permissions`).
     InsecurePermissions(String),
+}
+
+impl ConfigError {
+    /// The `server.config_error` `class` (RFC-0014 §4).
+    pub const fn class(&self) -> &'static str {
+        match self {
+            Self::FileUnavailable(_) => "file_unavailable",
+            Self::SchemaError(_) => "schema_error",
+            Self::VersionUnsupported(_) => "version_unsupported",
+            Self::InsecurePermissions(_) => "insecure_permissions",
+        }
+    }
+
+    /// The `server.config_error` `error`: the detail, naming the file
+    /// and the predicate (RFC-0010).
+    pub fn detail(&self) -> &str {
+        match self {
+            Self::FileUnavailable(d)
+            | Self::SchemaError(d)
+            | Self::VersionUnsupported(d)
+            | Self::InsecurePermissions(d) => d,
+        }
+    }
 }
 
 impl std::fmt::Display for ConfigError {

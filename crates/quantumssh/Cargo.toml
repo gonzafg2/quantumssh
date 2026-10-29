@@ -18,7 +18,7 @@ quantumssh-core = { path = "../quantumssh-core", version = "0.0.1" }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
 tracing = { workspace = true }
 # ADR-0024: the binary is the only place a subscriber is constructed.
-tracing-subscriber = { workspace = true, features = ["fmt", "env-filter", "json", "ansi"] }
+tracing-subscriber = { workspace = true, features = ["fmt", "env-filter", "ansi"] }
 # Threat model section 4.3: the host-key PEM buffer is erased on drop.
 zeroize = { workspace = true }
 # ADR-0029 (RFC-0010): the TOML config file and its StrictModes checks.
