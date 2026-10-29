@@ -78,7 +78,14 @@ What an operator should know:
 
 - **When it is honoured.** `subsystem` (RFC 4254 §6.5) with the name `sftp`
   is honoured once, in `Idle`. It is exclusive with `exec` and `shell`, as
-  they are with each other (ADR-0038 §1).
+  they are with each other (ADR-0038 §1). ADR-0038 §1 refuses `subsystem`
+  today. That refusal is a decision, so it changes through a superseding
+  ADR, which ADR-0041 ([#195](https://github.com/gonzafg2/quantumssh/pull/195),
+  TBD) proposes.
+- **Per-key restrictions.** ADR-0040 refuses every `authorized_keys` line
+  with options until they are enforced. Once they are, a restriction that
+  limits `shell` and `exec` limits `subsystem` too, so no key option can
+  leave `subsystem sftp` open as a bypass.
 - **What is refused.** Any other subsystem name gets
   `SSH_MSG_CHANNEL_FAILURE` when `want_reply` is set. So does `subsystem`
   after a `pty-req`: SFTP is a binary protocol, and a terminal's line
@@ -148,7 +155,10 @@ implemented by OpenSSH ("Newer versions … will not be supported",
   - **Every request gets exactly one response** (draft-02: "Exactly one
     response will be returned for each request"). An unknown request type
     gets `SSH_FX_OP_UNSUPPORTED`. OpenSSH sends nothing in that case
-    (`sftp-server.c:1876-1877`); QuantumSSH follows the draft.
+    (`sftp-server.c:1876-1877`); QuantumSSH follows the draft. The
+    request id is the `uint32` after the type byte, whatever the type. A
+    packet too short to carry one is malformed, and it takes the
+    fail-closed path of the framing rule above.
   - **SYMLINK takes its arguments in OpenSSH's reversed order**, target
     path first. That is the order the deployed client sends
     (`PROTOCOL:386-397`).
@@ -239,7 +249,8 @@ implementation PR adds it verbatim after §5.4.4:
 > operator expected.
 >
 > **Assets at risk.** Service availability (§2.8), the integrity of the
-> SFTP helper process, and the files the service account can reach.
+> SFTP helper process, and the files the service account can reach,
+> which QuantumSSH does not protect from that account in Phase 2 (§8.12).
 >
 > **Actors.** Authenticated peer upward.
 >
