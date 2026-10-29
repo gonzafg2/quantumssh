@@ -37,13 +37,14 @@ getrandom          = { version = "0.4", default-features = false }  # OS randomn
 # `unsafe`-free (ADR-0018). ADR-0038 §4 adds `pty` and `termios` for
 # PTY allocation, modes and window size.
 rustix             = { version = "1", default-features = false, features = ["std", "process", "fs", "pty", "termios"] }
-# ADR-0029 (RFC-0010): the TOML config parser. `basic-toml` over the
-# full `toml` crate: serde-only, no winnow/indexmap/toml_datetime tree.
+# ADR-0029 (RFC-0010): the TOML config file. The parser is `toml`
+# (ADR-0044, replacing the unmaintained `basic-toml`): parse and serde
+# only. No `display`, and no `unbounded`, so the recursion limit stays.
 # `serde` itself was already in the binary's build graph via
 # tracing-subscriber's JSON output; `derive` is what this enables.
-# The rustix `fs` feature above is the same ADR (StrictModes stat).
-serde      = { version = "1", default-features = false, features = ["std", "derive"] }
-basic-toml = { version = "0.1", default-features = false }
+# The rustix `fs` feature above is ADR-0029 too (StrictModes stat).
+serde = { version = "1", default-features = false, features = ["std", "derive"] }
+toml  = { version = "1.1", default-features = false, features = ["std", "serde", "parse"] }
 
 # Cryptographic primitive layer — pinned by RFC-0003 §"Guide-level
 # explanation" and ADR-0019. All pure-Rust, no FFI; `hmac` is

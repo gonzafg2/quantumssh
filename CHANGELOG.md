@@ -38,6 +38,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so it now exits with 255 in that case. Other signals still report
   128 + n, and the audit `exit_status` keeps 128 + n for every signal
   ([ADR-0038](docs/adr/0038-phase-2-interactive-pty-sessions.md) §8).
+- The config file is parsed with `toml` 1.1 instead of `basic-toml`,
+  which RustSec marks unmaintained
+  ([RUSTSEC-2026-0374](https://rustsec.org/advisories/RUSTSEC-2026-0374.html)).
+  A `schema_error` now points at the offending key rather than its
+  table, and its wording changes. The class does not change, and the
+  message stays on one line with no excerpt of the file
+  ([ADR-0044](docs/adr/0044-toml-replaces-basic-toml-config-parser.md)).
 
 ### Fixed
 

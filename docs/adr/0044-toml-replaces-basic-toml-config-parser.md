@@ -1,7 +1,7 @@
 # ADR 0044: Parse the config file with `toml`, replacing the unmaintained `basic-toml`
 
-- **Status:** Proposed
-- **Date:** — (set on acceptance; drafted 2026-10-28)
+- **Status:** Accepted
+- **Date:** 2026-10-28 (accepted with the implementing PR [#218](https://github.com/gonzafg2/quantumssh/pull/218); drafted 2026-10-28)
 - **Deciders:** Project lead
 - **Related:** Supersedes the "Parser crate" bullet of [ADR-0029](0029-phase-2-config-file-v1-schema-parser-strictmodes.md) §Decision; every other bullet of ADR-0029 stands. [RFC-0010](../rfcs/0010-configuration-file.md) §"The parser and its dependency" leaves the crate to an implementing ADR, chosen against `cargo deny` at the time. Triggered by [RUSTSEC-2026-0374](https://rustsec.org/advisories/RUSTSEC-2026-0374.html); the stopgap ignore is [#212](https://github.com/gonzafg2/quantumssh/pull/212). Constrained by [ADR-0010](0010-toolchain-pinning-resolver-3-edition-2024-msrv-1-92.md) (MSRV 1.92).
 
@@ -58,10 +58,13 @@ still reads the whole file with `read_to_string`.
    - `unbounded`: it adds a method that disables the parser's recursion
      limit. Without it, the limit stays in force, so nesting depth in the
      file is bounded.
-2. **The lockfile delta is five crates, net four.** `toml` 1.1.8,
+2. **The build graph gains five crates, net four.** `toml` 1.1.8,
    `toml_parser` 1.1.5, `toml_datetime` 1.1.2, `serde_spanned` 1.1.2 and
-   `winnow` 1.0.4 enter, `basic-toml` 0.1.10 leaves, and `serde_core`
-   1.0.229 is already locked. Checked on 2026-10-28:
+   `winnow` 1.0.4 are compiled, `basic-toml` 0.1.10 leaves, and
+   `serde_core` 1.0.229 is already locked. `Cargo.lock` also records
+   `toml`'s optional dependencies, which no enabled feature compiles:
+   `indexmap` 2.14.2 (with `hashbrown` 0.17.1 and `equivalent` 1.0.3) and
+   `toml_writer` 1.1.3, all `MIT OR Apache-2.0`. Checked on 2026-10-28:
    - **Licences:** `MIT OR Apache-2.0`, and `MIT` for `winnow`. `deny.toml`
      allows both.
    - **MSRV:** 1.85, and 1.65 for `winnow`. Both are within ADR-0010's
