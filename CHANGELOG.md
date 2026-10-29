@@ -42,6 +42,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The JSON log is now the audit-log schema, version 1
+  ([RFC-0014](docs/rfcs/0014-audit-log-schema-v1.md),
+  [ADR-0046](docs/adr/0046-audit-log-schema-v1-supersessions-and-encoder.md)):
+  one flat object per line with `schema_version`, `timestamp`, `level`,
+  then `event` for a catalogue record or `message` for a diagnostic,
+  `peer_addr` inside a connection, and the event's fields at the top
+  level. Every catalogue event is on the audit tier, so `RUST_LOG` no
+  longer removes `server.started`, `server.config_error`,
+  `connection.*` or `kex.completed`. Strings escape every control
+  character (C0, DEL and C1) as `\u00XX`. **Migration for existing JSON
+  consumers:**
+  - `fields.message` becomes `event` (or `message` for a diagnostic);
+  - `span.peer_addr` becomes `peer_addr`, and there is no `target`,
+    `span` or `spans`;
+  - `server.config_error`'s `message` splits into `class` and `error`,
+    and gains `config_file`, as does `server.started`;
+  - the override log line becomes the `server.config_override` event,
+    whose `key` is the TOML path (`server.listen`, …).
+
 - A remote command killed by a signal on RFC 4254 §6.10's list (`ABRT`,
   `ALRM`, `FPE`, `HUP`, `ILL`, `INT`, `KILL`, `PIPE`, `QUIT`, `SEGV`,
   `TERM`, `USR1`, `USR2`) is now reported with `exit-signal` instead of

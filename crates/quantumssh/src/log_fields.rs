@@ -4,8 +4,8 @@
 //! replay ANSI sequences or forge log lines in an operator's live
 //! terminal (threat model §5.4.3). Stock `tracing_subscriber::fmt()`
 //! does not do this, which is why the formatter is part of the
-//! ADR-0024 decision. The JSON format needs no equivalent — serde
-//! escapes control bytes.
+//! ADR-0024 decision. The JSON format escapes the same set in its own
+//! encoder (`log_json`, RFC-0014 §2).
 
 use std::fmt::{self, Write as _};
 

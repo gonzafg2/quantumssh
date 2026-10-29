@@ -40,7 +40,8 @@ warnings.
   spawn-and-join loop (ADR-0022) is history.
 - **Audit log is two-layer** (ADR-0024): `tracing` facade with a separate
   audit layer whose filter is compiled in — `RUST_LOG` cannot suppress audit
-  events. All output to stderr.
+  events. All output to stderr. The JSON line is schema version 1
+  (RFC-0014, ADR-0046): every catalogue event is on the audit tier.
 
 ## Code conventions (deviations from Rust defaults)
 
