@@ -753,7 +753,7 @@ recording side; the cryptanalytic side has no specific ATT&CK
 technique because ATT&CK assumes a defender-relevant time horizon.
 
 **Test handle.** The default key exchange must be
-`mlkem768x25519-sha256` (per `draft-ietf-sshm-mlkem-hybrid-kex`).
+`mlkem768x25519-sha256` (per RFC 10042).
 Algorithm negotiation must not permit any non-hybrid post-quantum
 or non-post-quantum-only exchange in the default profile. Both
 halves of the hybrid must contribute to the derived key; failure
@@ -831,8 +831,7 @@ sessions.
 **ATT&CK reference.** No specific ATT&CK technique; this is an
 implementation-cryptanalysis vector.
 
-**Test handle.** The current `draft-ietf-sshm-mlkem-hybrid-kex`
-(version -10, 26 February 2026) does not itself publish
+**Test handle.** RFC 10042 (August 2026) does not itself publish
 hybrid-combiner test vectors; the substitute is layered.
 Component-level vectors must be reproduced byte-for-byte: NIST
 ACVP-Server vectors for the ML-KEM-768 half
@@ -842,8 +841,7 @@ X25519 half. Hybrid-combiner output (`K = HASH(K_PQ || K_CL)`)
 and the SSH-level exchange hash `H` must be testable against
 fixed inputs; internally-captured golden vectors against an
 OpenSSH 10.x peer using a fixed-RNG test profile (analogous
-to OpenSSH's `TEST_SSH_FIXED_KEX_SEED`) close the gap until the
-IETF draft adopts an appendix of canonical vectors.
+to OpenSSH's `TEST_SSH_FIXED_KEX_SEED`) close that gap.
 
 ### 5.3 Authentication
 
@@ -1211,9 +1209,9 @@ repeating it.
 ### 6.1 Cryptographic posture
 
 - **Hybrid post-quantum key exchange by default.**
-  `mlkem768x25519-sha256` from `draft-ietf-sshm-mlkem-hybrid-kex` is
-  the only key exchange offered in the default profile. Failure of
-  either half aborts the handshake; there is no silent fallback.
+  `mlkem768x25519-sha256` from RFC 10042 is the only key exchange
+  offered in the default profile. Failure of either half
+  aborts the handshake; there is no silent fallback.
   Defends §5.2.1, §5.2.2.
 - **Ed25519 host keys.** RFC 8709. Compact fingerprints, modern
   curve, no parameter-choice attack surface. Defends §5.2.3.
@@ -1599,10 +1597,10 @@ full rationale and operational counterpart.
 - IETF RFC 9142, *Key Exchange (KEX) Method Updates and
   Recommendations for Secure Shell (SSH)*, January 2022.
   <https://datatracker.ietf.org/doc/html/rfc9142>
-- IETF Internet-Draft, *PQ/T Hybrid Key Exchange with ML-KEM in SSH*,
-  `draft-ietf-sshm-mlkem-hybrid-kex` (version -10, 26 February
-  2026). Active draft as of acceptance of this document.
-  <https://datatracker.ietf.org/doc/draft-ietf-sshm-mlkem-hybrid-kex/>
+- IETF RFC 10042, *Post-Quantum/Traditional Hybrid Key Exchange with
+  the Module-Lattice-Based Key-Encapsulation Mechanism for Use in SSH*,
+  August 2026.
+  <https://datatracker.ietf.org/doc/html/rfc10042>
 - NIST FIPS 203, *Module-Lattice-Based Key-Encapsulation Mechanism
   Standard*, 13 August 2024.
   <https://csrc.nist.gov/pubs/fips/203/final>
