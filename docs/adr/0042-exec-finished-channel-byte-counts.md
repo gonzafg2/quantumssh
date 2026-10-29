@@ -1,7 +1,7 @@
 # ADR 0042: `exec.finished` carries the channel byte counts of every child
 
-- **Status:** Proposed
-- **Date:** — (set on acceptance; drafted 2026-10-12)
+- **Status:** Accepted
+- **Date:** 2026-10-28 (accepted with the implementing PR [#196](https://github.com/gonzafg2/quantumssh/pull/196), on RFC-0013's acceptance; drafted 2026-10-12)
 - **Deciders:** Project lead
 - **Related:** Answers [RFC-0013](../rfcs/0013-sftp-subsystem.md)'s
   unresolved question 3 (Accepted, [#194](https://github.com/gonzafg2/quantumssh/pull/194)).

@@ -1,7 +1,7 @@
 # ADR 0041: SFTP v3 server in a re-exec helper — request handling, bounds and file operations
 
-- **Status:** Proposed
-- **Date:** — (set on acceptance; drafted 2026-10-12)
+- **Status:** Accepted
+- **Date:** 2026-10-28 (accepted with the implementing PR [#196](https://github.com/gonzafg2/quantumssh/pull/196), on RFC-0013's acceptance; drafted 2026-10-12)
 - **Deciders:** Project lead
 - **Related:** Implements [RFC-0013](../rfcs/0013-sftp-subsystem.md)
   (Accepted, [#194](https://github.com/gonzafg2/quantumssh/pull/194)), which
@@ -144,7 +144,7 @@ SYMLINK's target is link content and is stored as sent.
 
 | Request | Operation |
 |---|---|
-| OPEN | `rustix::fs::open` with the flags OpenSSH's `flags_from_portable` builds (`sftp-server.c:247-268`). READ and WRITE give `O_RDWR`, READ alone `O_RDONLY`, WRITE alone `O_WRONLY`. APPEND, CREAT, TRUNC and EXCL each add their own flag, so READ\|APPEND opens read-only and READ\|CREAT is valid. `O_CLOEXEC` is always set. `OpenOptions` cannot express this, because `append(true)` grants write access and `create(true)` requires it. The descriptor becomes a `File` through the safe `From<OwnedFd>`. The create mode is the ATTRS permissions `& 0o777`, or `0o666` if absent; the umask applies. |
+| OPEN | `rustix::fs::open` with the flags OpenSSH's `flags_from_portable` builds (`sftp-server.c:247-268`). READ and WRITE give `O_RDWR`, READ alone `O_RDONLY`, WRITE alone `O_WRONLY`. APPEND, CREAT, TRUNC and EXCL each add their own flag, so READ\|APPEND opens read-only and READ\|CREAT is valid. `O_CLOEXEC` is always set. `OpenOptions` cannot express this, because `append(true)` grants write access and `create(true)` requires it. The descriptor becomes a `File` through the safe `From<OwnedFd>`. The create mode is the ATTRS permissions `& 0o777`, or `0o666` if absent; the umask applies. Opening a FIFO with no peer blocks the helper, as it blocks OpenSSH's `sftp-server`. Only the caller's own session stalls, and closing the channel kills its process group (ADR-0038 §6). |
 | CLOSE | A handle on a **regular file** that was written since it was opened is first synced with `sync_data`; a failure is the reply's status (§4 mapping). A FIFO, socket or device is not synced, because `fdatasync` fails there with `EINVAL` (fsync(2)) while OpenSSH's plain `close()` succeeds. Then the handle is dropped. This is the only safe way to observe a deferred write error at CLOSE, as OpenSSH's `close()` does (`sftp-server.c:785-786`): `std::fs::File` ignores the close error in `Drop`, and `rustix::io::close` is `unsafe` and returns nothing (rustix 1.1.5, `src/io/close.rs:54`). A directory handle, or a file handle that was only read, is dropped. |
 | READ | `read_at(offset)`: `SSH_FX_EOF` at end of file, otherwise DATA of ≤ min(len, 261 120) bytes. |
 | WRITE | On a handle opened with APPEND, `write_all`: the kernel appends and the offset is ignored, as OpenSSH's `process_write` does by skipping `lseek` for `O_APPEND` (`sftp-server.c:865-872`). On any other handle, `write_all_at(offset)`. A positional write is never used with APPEND, because POSIX gives `O_APPEND` no effect on `pwrite`, and macOS follows POSIX: only Linux appends regardless (pwrite(2), BUGS). |
