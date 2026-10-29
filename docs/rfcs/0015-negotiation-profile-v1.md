@@ -78,8 +78,11 @@ standards and the current OpenSSH:
 
 ## Guide-level explanation
 
-A client that connects to `0.1.0` will keep connecting to every later
-release with `negotiation profile version 1`. A later release may add
+Version 1 starts at `0.1.0`. The earlier pre-alpha release, `0.0.1`,
+offered `ssh-ed25519` as its host key and carries no compatibility
+promise, so §1's host-key entry is the version-1 starting point, not a
+removal under §3. A client that connects to `0.1.0` will keep
+connecting to every later release with `negotiation profile version 1`. A later release may add
 names to a list, so a client gains choices, but it never removes a name
 the version-1 lists carry. A release that must remove one, for example
 because a primitive is disallowed (RFC-0009), says so as version 2, with
@@ -120,8 +123,13 @@ client observes them:
   the accepted user-authentication algorithms, which are `ssh-ed25519`
   in version 1.
 - **Re-keying is half-duplex.** From its own KEXINIT to its NEWKEYS, the
-  server sends only KEX messages, which is the rule OpenSSH 10.4
-  enforces.
+  server sends only what RFC 4253 §7.1 allows: transport-layer generic
+  messages (1–19, never `SSH_MSG_SERVICE_REQUEST` or `_ACCEPT`),
+  algorithm negotiation (20–29, no second KEXINIT) and key-exchange
+  messages (30–49). OpenSSH 10.4 enforces this rule. The channel layer
+  sends no data, window adjustment or channel reply in the window, and
+  it defers the peer's connection-layer messages until the re-key ends
+  (`channel.rs`, `rekey_active()`; ADR-0026).
 
 ### 3. Compatibility rules
 
@@ -137,6 +145,13 @@ connects:
 - **reordering a list.** Selection follows the client's order (RFC 4253
   §7.1), so order changes nothing a client can observe. The order is
   still kept stable, as ADR-0021 says.
+
+"Additive" describes the wire contract, not the size of the change.
+The negotiation code returns the single entries `KEX_ALGORITHM` and
+`HOST_KEY_LIST`, and the wrong-guess skip for `first_kex_packet_follows`
+compares against them (`kex.rs`). Adding a name to either list therefore
+also changes selection and that skip, which run before authentication
+and get the pre-authentication review rules.
 
 **Breaking changes require version 2,** with their own RFC and a
 CHANGELOG migration note:
@@ -167,16 +182,24 @@ an additive change:
   both server markers. It enables strict KEX when the client offers the
   matching form, standard or pre-standard. It never pairs forms
   across, per `draft-ietf-sshm-strict-kex` §3.1. Requiring strict KEX
-  then means requiring either matching pair.
+  then means requiring either matching pair. When a client offers both
+  forms, both pairs match and the protocol changes are the same, so
+  which pair enabled it is not recorded. The audit log carries no
+  marker field (RFC-0014).
+- **The host key** (`ssh-mldsa44-ed25519`) follows the name OpenSSH 10.6
+  uses for `draft-ietf-sshm-composite-sigs`, which is not yet
+  registered. If the registered name differs, it is added as an alias
+  next to the version-1 name, which stays.
 
 ### 5. Preconditions for the `0.1.0` tag
 
 - **RFC-0012's cut-over has landed,** so `server_host_key_algorithms` is
   `ssh-mldsa44-ed25519` (§1).
-- **The interop gate runs OpenSSH ≥ 10.6,** as RFC-0012's subsidiary
-  ADR 3 already requires for the composite host key. Its re-key step
-  (`RekeyLimit`) then also exercises OpenSSH 10.4's rule (§2), which the
-  10.0p2 client cannot.
+- **The interop gate runs OpenSSH ≥ 10.6 and passes its re-key step,**
+  as RFC-0012's subsidiary ADR 3 already requires for the composite host
+  key. The `RekeyLimit` step on that client is the first test of
+  OpenSSH 10.4's rule (§2), which the 10.0p2 client cannot exercise, so
+  a green run of that step on that client is the exit criterion.
 - **The citations name RFC 10042.** The threat model, the code comments
   and the operator-facing text cite the RFC instead of the draft.
   Accepted ADRs and RFCs keep their text, as the project does not edit
@@ -191,6 +214,10 @@ through its own subsidiary ADR, and this RFC only records the result in
 
 ## Drawbacks
 
+- **Version 1 needs OpenSSH 10.6 or later.** No earlier release offers
+  the name `ssh-mldsa44-ed25519` (10.4 and 10.5 had only the
+  experimental `@openssh.com` form, off by default), so after the tag an
+  older client never connects (RFC-0012's Drawbacks).
 - **Version 1 has one key exchange.** A client that cannot do
   `mlkem768x25519-sha256` never connects, by design (README non-goal).
   Adding `mlkem1024nistp384-sha384` later is additive, but it needs an
