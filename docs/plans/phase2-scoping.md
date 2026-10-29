@@ -133,6 +133,8 @@ ADR/RFC (the config-file schema is scoped above as an RFC) — not in this note:
       implementation and three subsidiary ADRs before the tag.
 - [ ] **Config-file schema** stable enough to extend compatibly (it, too, is a
       public interface once shipped).
+      Reviewed on 2026-10-29: version 1 and its compatibility rule are
+      proposed in [RFC-0016](../rfcs/0016-config-schema-v1.md) (Draft).
 
 ## Cross-phase: what Phase 3 waits on
 
