@@ -134,8 +134,12 @@ Five rules govern the envelope:
   envelope key name.
 - **No internal names.** There is no `target`, no span name and no
   span list.
-- **Control bytes are escaped.** The JSON encoder escapes them in
-  string values (threat model §5.4.3).
+- **Control characters are escaped.** In string values, every
+  character `char::is_control` reports (C0, DEL and C1: U+0000–U+001F
+  and U+007F–U+009F) is written as a `\u00XX` escape. That is the set
+  the human formatter escapes (threat model §5.4.3). `serde_json` alone
+  escapes only C0, so the binary's formatter escapes DEL and C1 too
+  (§7).
 - **One encoder.** The binary owns the encoder (§7). The library keeps
   emitting through the `tracing` facade only (ADR-0024).
 
@@ -169,6 +173,12 @@ filter is compiled in, and no `RUST_LOG` directive reaches it
   channel payload bytes in each direction (ADR-0042). Only a field added
   after version 1 may be conditional, and only if the change that adds
   it says so (§5).
+- **`exit_status`** is the child's exit code on a normal exit, and
+  128 + the signal number when a signal killed it, also when
+  `exit-signal` went on the wire (ADR-0038 §8). It is 127 when the
+  child could not be started or waited on, or when no status was
+  recorded. A real exit code of 127 or 128 + n reads the same, so a
+  consumer must not treat 127 alone as a start failure.
 - **`config_file`** names the configuration file the server was started
   with: its canonical path once StrictModes resolved it, the path as
   given when that failed, or `""` without `--config`. It is on
@@ -181,7 +191,7 @@ filter is compiled in, and no `RUST_LOG` directive reaches it
 - **`authenticated_identity`** is `SHA256:` followed by the unpadded
   base64 SHA-256 of the public key the client proved possession of
   (ADR-0024). The field and `executing_uid` stay separate first-class
-  fields (§2.7, §8.12).
+  fields (threat model §2.7, §8.12).
 - **`host_key_fingerprint`** uses the same representation:
   - `SHA256:` followed by the SHA-256 of the host key's public-key blob;
   - the digest is encoded in standard base64 with no padding.
@@ -211,7 +221,7 @@ filter is compiled in, and no `RUST_LOG` directive reaches it
 - **`server.config_override`** is emitted once per command-line flag
   that overrides a value the config file set (RFC-0010's precedence).
   Together with `config_file`, it records which configuration the
-  server loaded (§2.7).
+  server loaded (threat model §2.7).
   - **The format of `key`.** It is the overridden key's TOML path,
     section and key joined by a dot. In version 1 a flag can override
     five keys, so the values are the five listed in §3.
@@ -323,7 +333,9 @@ implementing PR does seven things:
   layer, in the binary, that writes §2's envelope.
   - **Encoding:** `serde_json`, already in the build through
     `tracing-subscriber`'s `json` feature, becomes a direct dependency
-    with no new crate in the tree.
+    with no new crate in the tree. String values go through the
+    `char::is_control` escape of §2 first, since `serde_json` leaves DEL
+    and C1 as they are.
   - **`peer_addr`:** taken from the `connection` span's recorded fields.
 - **The tier moves:** the six events move to the audit target.
 - **The new fields:** `server.started` gains `config_file`;
@@ -381,7 +393,7 @@ changes says what a consumer needs to know.
 ### Alternative 4: keep ADR-0024's two tiers
 
 `RUST_LOG=warn` would keep dropping the connection and configuration
-records that §2.7 counts as audit content.
+records that threat model §2.7 counts as audit content.
 
 ### Alternative 5: make `authenticated_identity` the certificate identity
 
