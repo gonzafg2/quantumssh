@@ -137,6 +137,7 @@ authoritative reference; the operative rules a reviewer applies:
 | `crates/quantumssh-core/` | The library — modules `wire`, `kex`, `cipher`, `host_key`, `transport` (type-state machine), `auth`, `channel`, `exec`, `pty`, `server`, `sftp` |
 | `crates/quantumssh/` | The thin binary entrypoint over the library (two crates, flat — [ADR-0017](docs/adr/0017-phase-1-workspace-topology-two-crates-flat.md)) |
 | `tests/interop/` | `run_openssh_client.sh` — the OpenSSH interop gate driver (ADR-0020) |
+| `scripts/` | Maintenance scripts, such as `extract-acvp-mlkem768.py`, which regenerates the ML-KEM-768 ACVP vectors in `crates/quantumssh-core/tests/vectors/` |
 | `contrib/systemd/`, [`docs/deployment.md`](docs/deployment.md) | The reference systemd unit and the operator guide ([ADR-0043](docs/adr/0043-systemd-notify-service-and-reference-unit.md)) |
 | `tests/systemd/` | `run_reference_unit.sh` — the reference unit under a real systemd, in a disposable container (ADR-0043) |
 | `.github/workflows/` | CI: `ci`, `audit`, `deny`, `interop` (OpenSSH gate), and the two workflow reviewers (`claude-code-review`, `opencode`); Codex runs as a GitHub App, not a workflow ([ADR-0037](docs/adr/0037-codex-reviews-via-chatgpt-github-app.md)) |
