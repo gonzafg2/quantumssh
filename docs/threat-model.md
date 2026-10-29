@@ -1047,7 +1047,8 @@ paths (`..`, symlinks, `~`) to reach files outside the directory the
 operator expected.
 
 **Assets at risk.** Service availability (§2.8), the integrity of the
-SFTP helper process, and the files the service account can reach.
+SFTP helper process, and the files the service account can reach,
+which QuantumSSH does not protect from that account in Phase 2 (§8.12).
 
 **Actors.** Authenticated peer upward.
 
