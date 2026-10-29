@@ -797,13 +797,11 @@ fn is_end_of_session(error: &io::Error) -> bool {
 }
 
 /// Forwards what the master already holds and no more (ADR-0038 §7): the
-/// byte count is read once, with `FIONREAD`, so a process left writing to
-/// the terminal cannot extend the drain while a send waits for the client.
-/// Ends early at would-block, end of session or failure.
+/// byte count is read once, with [`master_holds`], so a process left
+/// writing to the terminal cannot extend the drain while a send waits for
+/// the client. Ends early at would-block, end of session or failure.
 async fn drain_master(master: &OwnedFd, out_tx: &mpsc::Sender<ChildChunk>, buf: &mut [u8]) {
-    let Ok(mut remaining) = rustix::io::ioctl_fionread(master) else {
-        return;
-    };
+    let mut remaining = master_holds(master);
     while remaining > 0 {
         let want = usize::try_from(remaining).map_or(buf.len(), |r| r.min(buf.len()));
         let Ok(n) = rustix::io::read(master, &mut buf[..want]) else {
@@ -820,6 +818,27 @@ async fn drain_master(master: &OwnedFd, out_tx: &mpsc::Sender<ChildChunk>, buf: 
         remaining = remaining.saturating_sub(n as u64);
     }
 }
+
+/// The bytes the master can read now, by `FIONREAD`; 0 if it fails.
+#[cfg(not(target_os = "macos"))]
+fn master_holds(master: &OwnedFd) -> u64 {
+    rustix::io::ioctl_fionread(master).unwrap_or(0)
+}
+
+/// The most the master can hold: macOS's `FIONREAD` on the master counts
+/// the slave's input queue, not what the master reads (#226). The output
+/// queue holds at most XNU's `TTYCLSIZE`, 1,024 bytes.
+// ponytail: a capacity, not a count, so a process still writing can add up
+// to that much to the drain. `TIOCOUTQ` counts exactly, once `rustix` has
+// a safe wrapper for it.
+#[cfg(target_os = "macos")]
+const fn master_holds(_master: &OwnedFd) -> u64 {
+    MACOS_MASTER_CAPACITY
+}
+
+/// XNU's `TTYCLSIZE`: the capacity of a terminal's output queue.
+#[cfg(target_os = "macos")]
+const MACOS_MASTER_CAPACITY: u64 = 1024;
 
 /// Forwards one output pipe in chunks of at most [`CHUNK`]. `send` waits
 /// while the queue is full, which backpressures the child's pipe.
@@ -1106,6 +1125,51 @@ mod tests {
         drop(pair.master);
         consumer.await.expect("consumer");
         writer.join().expect("writer");
+    }
+
+    /// The drain forwards what the master holds, on macOS too, where
+    /// `FIONREAD` on the master counts nothing it can read (#226).
+    #[tokio::test]
+    async fn the_post_exit_drain_forwards_what_the_master_holds() {
+        let pair = pty::allocate(&pty::Modes::parse(&[]).expect("modes"), Size::default())
+            .expect("allocate");
+        // ponytail: the deprecated constructor, sound as in `wait_exit`:
+        // the master is moved in and never duplicated.
+        #[allow(deprecated)]
+        let master = AsyncFd::new(pair.master).expect("AsyncFd takes the master");
+        rustix::io::write(&pair.slave, b"probe\n").expect("write to the slave");
+        // Linux moves the output to the master asynchronously; the leader's
+        // reap comes long after it in a session.
+        let _ = tokio::time::timeout(Duration::from_secs(5), master.readable())
+            .await
+            .expect("readable in time")
+            .expect("readiness");
+        let (tx, mut rx) = mpsc::channel(OUT_QUEUE);
+        let mut buf = vec![0u8; CHUNK];
+        drain_master(master.get_ref(), &tx, &mut buf).await;
+        drop(tx);
+        let mut out = Vec::new();
+        while let Some(ChildChunk::Stdout(chunk)) = rx.recv().await {
+            out.extend_from_slice(&chunk);
+        }
+        assert_eq!(out, b"probe\r\n");
+    }
+
+    /// The macOS drain bound is the output queue's capacity: a full
+    /// terminal, newlines expanded by `ONLCR` included, holds no more.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_full_macos_terminal_holds_the_drain_bound() {
+        let pair = pty::allocate(&pty::Modes::parse(&[]).expect("modes"), Size::default())
+            .expect("allocate");
+        rustix::fs::fcntl_setfl(&pair.slave, rustix::fs::OFlags::NONBLOCK).expect("nonblock");
+        while rustix::io::write(&pair.slave, &[b'\n'; 4096]).is_ok_and(|n| n > 0) {}
+        let mut buf = vec![0u8; CHUNK];
+        let mut held = 0;
+        while let Ok(n @ 1..) = rustix::io::read(&pair.master, &mut buf) {
+            held += n as u64;
+        }
+        assert_eq!(held, MACOS_MASTER_CAPACITY);
     }
 
     /// A child that reads a prefix of a large chunk and exits still
