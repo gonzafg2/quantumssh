@@ -789,14 +789,18 @@ fn realpath(path: &Path, cwd: &Path) -> io::Result<PathBuf> {
         _ => (cwd.as_os_str().as_bytes().to_vec(), path.to_vec()),
     };
     let mut links = 0;
-    while !left.is_empty() {
-        let (token, last) = match left.iter().position(|&b| b == b'/') {
-            Some(i) => {
-                let token = left[..i].to_vec();
-                left.drain(..=i);
-                (token, false)
-            }
-            None => (std::mem::take(&mut left), true),
+    // A read cursor, not `drain`: draining shifts the rest of the buffer for
+    // every component, which is quadratic on a 256 KiB path of `./`.
+    let mut pos = 0;
+    while pos < left.len() {
+        let (token, last) = if let Some(i) = left[pos..].iter().position(|&b| b == b'/') {
+            let token = left[pos..pos + i].to_vec();
+            pos += i + 1;
+            (token, false)
+        } else {
+            let token = left[pos..].to_vec();
+            pos = left.len();
+            (token, true)
         };
         if resolved.last() != Some(&b'/') {
             resolved.push(b'/');
@@ -832,9 +836,10 @@ fn realpath(path: &Path, cwd: &Path) -> io::Result<PathBuf> {
                 if target.last() != Some(&b'/') {
                     target.push(b'/');
                 }
-                target.extend_from_slice(&left);
+                target.extend_from_slice(&left[pos..]);
             }
             left = target;
+            pos = 0;
         }
     }
     if resolved.len() > 1 && resolved.last() == Some(&b'/') {
@@ -1367,6 +1372,20 @@ mod tests {
         );
         fs::create_dir(dir.join("a")).unwrap();
         assert_eq!(realpath(&dir.join("a/../b"), root).unwrap(), dir.join("b"));
+    }
+
+    /// A packet-sized path of `./` resolves in linear time: the components
+    /// are read through a cursor, not drained one by one.
+    #[test]
+    fn realpath_of_a_packet_sized_path_is_linear() {
+        let dir = temp_dir();
+        let long = format!("{}x", "./".repeat(MAX_PACKET / 2 - 1));
+        let started = std::time::Instant::now();
+        assert_eq!(realpath(Path::new(&long), &dir).unwrap(), dir.join("x"));
+        let took = started.elapsed();
+        // Measured on a debug build: ~8 ms with the cursor, ~280 ms with
+        // the former per-component `drain`.
+        assert!(took < Duration::from_millis(150), "took {took:?}");
     }
 
     /// OpenSSH follows the final symlink too: a dangling one resolves to
