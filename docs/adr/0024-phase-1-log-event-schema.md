@@ -18,7 +18,7 @@
 >   The Context sentence "What does not yet exist is the concrete event
 >   list" now reads as of drafting time; the events had landed in the
 >   milestones the Related line names before the ADR was accepted.
-> - **2026-10-26** ([PR #196](https://github.com/gonzafg2/quantumssh/pull/196)): The
+> - **2026-10-28** ([PR #196](https://github.com/gonzafg2/quantumssh/pull/196)): The
 >   `exec.finished` row omitted `command`. The code already emitted it
 >   when the ADR was accepted (`channel.rs` at `a3921d5`, 2026-06-30), as
 >   `exec.started` does. Corrected in place.

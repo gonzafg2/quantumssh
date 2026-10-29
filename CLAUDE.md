@@ -27,8 +27,8 @@ publickey Ed25519 authentication → one `session` channel running one
 `exec` → clean close, with mid-session re-keying (1 GiB / 1 h, [ADR-0026](docs/adr/0026-phase-1-rekeying-policy.md))
 — and interoperate with a stock OpenSSH 10.x client
 (the `interop` CI gate, [ADR-0020](docs/adr/0020-phase-1-ci-openssh-interop-gate.md)).
-It is **not** hardened for production: no config file, no
-per-user privilege separation (Phase 2+).
+It is **not** hardened for production: there is no per-user privilege
+separation until Phase 3 (threat model §8.12).
 
 The Phase-1 ADRs (0016–0024, 0026) are **Accepted** — flipped from `Proposed`
 in the [#86](https://github.com/gonzafg2/quantumssh/issues/86) governance sweep
