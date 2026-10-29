@@ -38,7 +38,7 @@
 >   the PTY tests), and that keys with options get no PTY (under
 >   ADR-0040 they get no session at all); Links said the PTY module
 >   does not exist yet.
-> - **2026-10-26** ([PR #196](https://github.com/gonzafg2/quantumssh/pull/196)): Consequences
+> - **2026-10-28** ([PR #196](https://github.com/gonzafg2/quantumssh/pull/196)): Consequences
 >   said "Still one channel per connection; SFTP brings multiplexing".
 >   SFTP needs no multiplexing: OpenSSH's `sftp` and `scp` open one
 >   `session` channel and send `subsystem "sftp"` on it
