@@ -132,10 +132,24 @@ pub struct LimitsSection {
 /// set widens only with a documented compatibility rule).
 const SUPPORTED_SCHEMA_VERSIONS: [u32; 1] = [1];
 
+/// One line: the deserializer's message and, when it has a span, the
+/// 1-based line and column of the span's start. `toml`'s `Display` adds a
+/// multi-line excerpt of the file, which is left out (ADR-0044 §3).
+fn schema_detail(e: &toml::de::Error, text: &str) -> String {
+    let message = e.message().trim_end().replace('\n', " ");
+    let Some(start) = e.span().map(|s| s.start.min(text.len())) else {
+        return message;
+    };
+    let before = text.get(..start).unwrap_or(text);
+    let line = before.matches('\n').count() + 1;
+    let column = before.rsplit('\n').next().unwrap_or("").chars().count() + 1;
+    format!("{message} at line {line} column {column}")
+}
+
 /// Parses schema v1, fail-closed. `origin` names the source in errors.
 pub fn parse(text: &str, origin: &str) -> Result<ConfigFile, ConfigError> {
-    let file: ConfigFile = basic_toml::from_str(text)
-        .map_err(|e| ConfigError::SchemaError(format!("{origin}: {e}")))?;
+    let file: ConfigFile = toml::from_str(text)
+        .map_err(|e| ConfigError::SchemaError(format!("{origin}: {}", schema_detail(&e, text))))?;
     if !SUPPORTED_SCHEMA_VERSIONS.contains(&file.schema_version) {
         return Err(ConfigError::VersionUnsupported(format!(
             "{origin}: schema_version {} is newer than this binary understands (supported: 1)",
@@ -352,6 +366,28 @@ format = "human"
     #[test]
     fn unknown_key_in_section_is_schema_error() {
         let err = parse("schema_version = 1\n[server]\nport = 22", "test").unwrap_err();
+        assert!(matches!(err, ConfigError::SchemaError(_)), "{err}");
+    }
+
+    /// One line, naming the origin, line and column, with no excerpt of
+    /// the file (ADR-0044 §3).
+    #[test]
+    fn schema_error_is_one_line_with_line_and_column() {
+        let err = parse("schema_version = 1\n[server]\nport = 22\n", "test").unwrap_err();
+        let ConfigError::SchemaError(detail) = &err else {
+            panic!("{err}");
+        };
+        assert!(!detail.contains('\n'), "{detail}");
+        assert!(detail.starts_with("test: "), "{detail}");
+        assert!(detail.ends_with(" at line 3 column 1"), "{detail}");
+    }
+
+    /// The parser's recursion limit stays in force: `toml`'s `unbounded`
+    /// feature is off (ADR-0044 §1).
+    #[test]
+    fn deep_nesting_is_a_schema_error() {
+        let text = format!("a = {}1{}", "[".repeat(1000), "]".repeat(1000));
+        let err = parse(&text, "test").unwrap_err();
         assert!(matches!(err, ConfigError::SchemaError(_)), "{err}");
     }
 
