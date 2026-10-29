@@ -1499,9 +1499,9 @@ or continue using OpenSSH on those endpoints during the transition.
 
 NSA CNSA 2.0 mandates **ML-KEM-1024** and **ML-DSA-87** for U.S.
 National Security Systems. QuantumSSH's default,
-`mlkem768x25519-sha256`, uses ML-KEM-**768** — consistent with the
-IETF hybrid PQ KEX draft and with the OpenSSH 10.0 default, but
-*below* CNSA 2.0's NSS requirement. QuantumSSH is not targeting
+`mlkem768x25519-sha256`, uses ML-KEM-**768** — consistent with
+RFC 10042 and with the OpenSSH 10.0 default, but *below*
+CNSA 2.0's NSS requirement. QuantumSSH is not targeting
 NSS deployments; operators in that space should consult the
 controlling authority and the current CNSA 2.0 advisory before
 relying on any open-source SSH implementation.
