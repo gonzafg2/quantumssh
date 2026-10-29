@@ -73,17 +73,18 @@ are optional:
 |---|---|---|---|
 | `server.listen` | a string `IPv4:port` or `[IPv6]:port`; no hostname | `127.0.0.1:2222` | ADR-0029 |
 | `server.host_key` | path | none (required by flag or file) | ADR-0029 |
-| `server.handshake_timeout` | integer seconds, 1 to 2⁶⁴ − 1 | `30` | ADR-0029 |
-| `server.drain_timeout` | integer seconds, 1 to 2⁶⁴ − 1 | `30` | ADR-0028 |
+| `server.handshake_timeout` | integer seconds, 1 to 2⁶³ − 1 | `30` | ADR-0029 |
+| `server.drain_timeout` | integer seconds, 1 to 2⁶³ − 1 | `30` | ADR-0028 |
 | `auth.authorized_keys` | path | none (required by flag or file) | ADR-0029 |
 | `logging.format` | `"json"` or `"human"` | `json` unless stderr is a terminal | ADR-0029 |
-| `limits.max_connections` | integer, 1 to the platform's `usize` maximum | `256` | ADR-0028 |
-| `limits.max_half_open` | integer, 1 to the platform's `usize` maximum | `100` | ADR-0028 |
-| `limits.max_per_source` | integer, 1 to the platform's `usize` maximum | `10` | ADR-0028 |
+| `limits.max_connections` | integer, 1 to 2⁶³ − 1 (2³² − 1 on a 32-bit platform) | `256` | ADR-0028 |
+| `limits.max_half_open` | integer, 1 to 2⁶³ − 1 (2³² − 1 on a 32-bit platform) | `100` | ADR-0028 |
+| `limits.max_per_source` | integer, 1 to 2⁶³ − 1 (2³² − 1 on a 32-bit platform) | `10` | ADR-0028 |
 | `limits.accept_rate` | integer tokens per second, 1 to 2³² − 1 | `1` | ADR-0028 |
 | `limits.accept_burst` | integer, 1 to 2³² − 1 | `10` | ADR-0028 |
 
-The ranges are the accepted set version 1 freezes. A value outside one
+The ranges are the accepted set version 1 freezes. TOML integers are
+64-bit signed, so no key can exceed 2⁶³ − 1 in a file. A value outside one
 (zero, negative, or above the maximum) is a `schema_error`, and so is a
 value of the wrong TOML type. Accepting a wider range or another form
 later, such as a hostname for `listen`, is an additive widening under
