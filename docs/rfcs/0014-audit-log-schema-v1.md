@@ -20,7 +20,8 @@ contract. This RFC defines that contract as **schema version 1**:
 - **The rules.** They say which changes keep version 1 and which need
   version 2.
 
-The RFC refines three accepted decisions so that they fit one contract:
+The RFC refines accepted decisions in five documents so that they fit one
+contract:
 
 - ADR-0024's log format and audit-tier membership, ADR-0028's refusal
   field name, and ADR-0029's info-level override diagnostic;
@@ -153,7 +154,7 @@ filter is compiled in, and no `RUST_LOG` directive reaches it
 | `connection.refused` | INFO | yes | `limit` (enumeration: `max_connections`, `max_half_open`, `max_per_source`, `accept_rate`) |
 | `connection.closed` | INFO | yes | `reason` (string, free text) |
 | `kex.completed` | INFO | yes | `kex_algorithm`, `host_key_algorithm` (strings) |
-| `kex.failed` | WARN | yes | `reason` (enumeration of kebab-case tokens: `no-hybrid-kex`, `no-strict-kex`, …), `disconnect_code` (integer) |
+| `kex.failed` | WARN | yes | `reason` (enumeration, §4), `disconnect_code` (integer) |
 | `rekey.completed` | INFO | yes | `kex_algorithm`, `host_key_algorithm` (strings), `initiator` (enumeration: `server`, `peer`), `trigger` (enumeration: `time`, `bytes`, `peer`), `bytes_rx`, `bytes_tx`, `seconds` (integers) |
 | `auth.succeeded` | INFO | yes | `authenticated_identity` (string), `auth_method` (string) |
 | `auth.failed` | WARN | yes | `auth_method` (string), `failure_count` (integer) |
@@ -216,6 +217,20 @@ filter is compiled in, and no `RUST_LOG` directive reaches it
     five keys, so the values are the five listed in §3.
   - **New keys.** A key added to the config file later uses the same
     form, which keeps it an additive enumeration value.
+- **`kex.failed`'s `reason`** is a kebab-case token, one per cause the
+  transport rejects with `SSH_DISCONNECT_KEY_EXCHANGE_FAILED` (3). In
+  version 1 the values are:
+  - **negotiation:** `no-hybrid-kex`, `no-strict-kex`,
+    `no-host-key-algorithm`, `no-cipher-c2s`, `no-cipher-s2c`,
+    `no-compression`;
+  - **the hybrid exchange:** `bad-hybrid-init-length`,
+    `invalid-mlkem-key`, `invalid-x25519-key`, `rng-failure`;
+  - **re-key:** `rekey-timeout`.
+
+  A malformed packet is a protocol violation (code 2), not a
+  `kex.failed`, and `connection.closed` carries its reason. A new
+  rejection cause is a new token, which keeps it an additive enumeration
+  value.
 - **Free-text fields** are `connection.closed`'s `reason` and
   `server.config_error`'s `error`. They carry detail for people, and
   consumers must not match on them.
@@ -231,14 +246,16 @@ them:
 - a new value of an enumeration;
 - any change to diagnostic records.
 
-One planned change falls in this class. (The SFTP stack, RFC-0013,
-landed with [#196](https://github.com/gonzafg2/quantumssh/pull/196)
-before the freeze, so its `request_type` `subsystem` and byte counts are
-version 1, §3.)
+One planned change falls in this class:
 
 - **Certificate authentication** (RFC-0008, TBD). It adds the
   certificate fields, which are present on certificate authentications
   only (§6).
+
+The SFTP stack (RFC-0013) is not a planned change. It landed with
+[#196](https://github.com/gonzafg2/quantumssh/pull/196) before the
+freeze, so its `request_type` `subsystem` and byte counts are version 1
+(§3).
 
 **Breaking changes require `schema_version` 2.** Each one needs its own
 RFC, and a migration note in the CHANGELOG:
