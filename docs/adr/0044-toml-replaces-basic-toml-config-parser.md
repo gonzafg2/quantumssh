@@ -1,7 +1,7 @@
 # ADR 0044: Parse the config file with `toml`, replacing the unmaintained `basic-toml`
 
 - **Status:** Accepted
-- **Date:** 2026-10-28 (accepted with the implementing PR; drafted 2026-10-28)
+- **Date:** 2026-10-28 (accepted with the implementing PR [#218](https://github.com/gonzafg2/quantumssh/pull/218); drafted 2026-10-28)
 - **Deciders:** Project lead
 - **Related:** Supersedes the "Parser crate" bullet of [ADR-0029](0029-phase-2-config-file-v1-schema-parser-strictmodes.md) §Decision; every other bullet of ADR-0029 stands. [RFC-0010](../rfcs/0010-configuration-file.md) §"The parser and its dependency" leaves the crate to an implementing ADR, chosen against `cargo deny` at the time. Triggered by [RUSTSEC-2026-0374](https://rustsec.org/advisories/RUSTSEC-2026-0374.html); the stopgap ignore is [#212](https://github.com/gonzafg2/quantumssh/pull/212). Constrained by [ADR-0010](0010-toolchain-pinning-resolver-3-edition-2024-msrv-1-92.md) (MSRV 1.92).
 
