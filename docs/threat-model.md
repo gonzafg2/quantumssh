@@ -1063,8 +1063,9 @@ Phase 2 grants no confinement to escape.
   host key ([RFC-0013](/docs/rfcs/0013-sftp-subsystem.md)).
 - Every attacker-controlled length is bounded (a packet ≤ 256 KiB, the
   read clamp, the handle cap), and malformed input ends the session.
-  The parser is a pure function, shaped for §6.2's Phase-3 fuzzing
-  harness.
+  The framing and field parsers are pure functions. The request
+  handlers act on the filesystem, so §6.2's Phase-3 fuzzing harness
+  drives them in a scratch directory.
 - The helper runs as the service account with no confinement in
   Phase 2. Any path the service account can reach is reachable, which
   is the access a `shell` session already has (§8.12). Confinement and
