@@ -1,6 +1,6 @@
 # RFC 0013: SFTP subsystem — a first-party SFTP v3 server in a re-exec helper
 
-- **Status:** Draft
+- **Status:** Accepted (2026-10-28)
 - **Authors:** Gonzalo Fleming Garrido
 - **Created:** 2026-10-12
 - **Roadmap issue:** [#109](https://github.com/gonzafg2/quantumssh/issues/109)

@@ -4,7 +4,7 @@
 - **Date:** — (set on acceptance; drafted 2026-10-12)
 - **Deciders:** Project lead
 - **Related:** Implements [RFC-0013](../rfcs/0013-sftp-subsystem.md)
-  (Draft, [#194](https://github.com/gonzafg2/quantumssh/pull/194)), which
+  (Accepted, [#194](https://github.com/gonzafg2/quantumssh/pull/194)), which
   decides the shape; this ADR locks the operative details and answers the
   RFC's unresolved questions 1, 2 and 4 (question 3 is
   [ADR-0042](0042-exec-finished-channel-byte-counts.md)). Extends

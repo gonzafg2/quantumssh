@@ -4,7 +4,7 @@
 - **Date:** — (set on acceptance; drafted 2026-10-12)
 - **Deciders:** Project lead
 - **Related:** Answers [RFC-0013](../rfcs/0013-sftp-subsystem.md)'s
-  unresolved question 3 (Draft, [#194](https://github.com/gonzafg2/quantumssh/pull/194)).
+  unresolved question 3 (Accepted, [#194](https://github.com/gonzafg2/quantumssh/pull/194)).
   Realises threat model §5.4.4's record ("a session recorded as having
   opened an SFTP subsystem, transferred N bytes, and closed it"). Once
   accepted, it partially supersedes the field list of the `exec.finished`
