@@ -127,6 +127,8 @@ ADR/RFC (the config-file schema is scoped above as an RFC) — not in this note:
       `connection.refused` keeps its `limit` field.
 - [ ] **Negotiation profile** (KEXINIT name-lists) reviewed as a
       to-be-frozen contract ([ADR-0021](../adr/0021-phase-1-negotiation-profile.md)).
+      Reviewed on 2026-10-29: version 1 is proposed in
+      [RFC-0015](../rfcs/0015-negotiation-profile-v1.md) (Draft).
 - [ ] **Host-key algorithm** is the composite `ssh-mldsa44-ed25519`, not
       `ssh-ed25519` ([RFC-0012](../rfcs/0012-composite-host-key-cutover.md)).
       Part of the profile above, listed on its own because it needs an
