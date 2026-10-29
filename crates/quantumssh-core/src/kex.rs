@@ -31,7 +31,7 @@ pub const SSH_MSG_KEXINIT: u8 = 20;
 /// `SSH_MSG_NEWKEYS` (RFC 4253 §7.3).
 pub const SSH_MSG_NEWKEYS: u8 = 21;
 /// Hybrid KEX initiation, client → server
-/// (`draft-ietf-sshm-mlkem-hybrid-kex`; shares number 30).
+/// (RFC 10042 §2.2; shares number 30).
 pub const SSH_MSG_KEX_HYBRID_INIT: u8 = 30;
 /// Hybrid KEX reply, server → client.
 pub const SSH_MSG_KEX_HYBRID_REPLY: u8 = 31;
@@ -590,7 +590,7 @@ mod tests {
 }
 
 // ---------------------------------------------------------------------------
-// Hybrid key exchange (draft-ietf-sshm-mlkem-hybrid-kex)
+// Hybrid key exchange (RFC 10042)
 // ---------------------------------------------------------------------------
 
 use ml_kem::{B32, EncapsulationKey, MlKem768};
@@ -604,16 +604,16 @@ pub const MLKEM_EK_LEN: usize = 1184;
 pub const MLKEM_CT_LEN: usize = 1088;
 /// X25519 public-key length (RFC 7748).
 pub const X25519_LEN: usize = 32;
-/// `C_INIT`: client's concatenated `EK_PQ ‖ PK_CL` (draft §3).
+/// `C_INIT`: client's concatenated `EK_PQ ‖ PK_CL` (RFC 10042 §2.1).
 pub const CLIENT_INIT_LEN: usize = MLKEM_EK_LEN + X25519_LEN;
-/// `S_REPLY`: server's concatenated `CT_PQ ‖ PK_CL` (draft §3).
+/// `S_REPLY`: server's concatenated `CT_PQ ‖ PK_CL` (RFC 10042 §2.1).
 pub const SERVER_REPLY_LEN: usize = MLKEM_CT_LEN + X25519_LEN;
 
 /// Outcome of the server side of the hybrid exchange.
 pub struct HybridOutcome {
     /// `CT_PQ ‖ S_CL` — sent back in `SSH_MSG_KEX_HYBRID_REPLY`.
     pub server_reply: Vec<u8>,
-    /// `K = SHA-256(K_PQ ‖ K_CL)` — the draft encodes the combined
+    /// `K = SHA-256(K_PQ ‖ K_CL)` — RFC 10042 §2.5 encodes the combined
     /// secret as a **fixed-length byte string**, not an mpint
     /// (the encoding ADR-0019 mandates an explicit test for).
     pub shared_secret: Zeroizing<[u8; 32]>,
@@ -700,7 +700,7 @@ pub fn hybrid_exchange(client_init: &[u8]) -> Result<HybridOutcome, KexError> {
     })
 }
 
-/// Inputs to the exchange hash `H` (draft-ietf-sshm-mlkem-hybrid-kex,
+/// Inputs to the exchange hash `H` (RFC 10042 §2.5,
 /// following the RFC 4253 §8 pattern with `K` as a string).
 pub struct ExchangeHashInputs<'a> {
     /// Client identification line, without CRLF.
@@ -732,8 +732,8 @@ impl std::fmt::Debug for ExchangeHashInputs<'_> {
 ///
 /// The full `I_C`/`I_S` KEXINIT payloads are bound into the hash —
 /// the anti-downgrade binding the threat model §5.2.2 mandates a
-/// mutation test for. `K` enters as a **string**, per the hybrid
-/// draft (unlike classical DH's mpint).
+/// mutation test for. `K` enters as a **string**, per RFC 10042 §2.5
+/// (unlike classical DH's mpint).
 #[must_use]
 pub fn exchange_hash(inputs: &ExchangeHashInputs<'_>) -> [u8; 32] {
     let mut w = Writer::new();
@@ -752,7 +752,7 @@ pub fn exchange_hash(inputs: &ExchangeHashInputs<'_>) -> [u8; 32] {
 }
 
 /// Derives key material per RFC 4253 §7.2 with `HASH = SHA-256` and
-/// `K` encoded as a string (hybrid draft).
+/// `K` encoded as a string (RFC 10042 §2.5).
 ///
 /// `letter` selects the key class (`b'A'`–`b'F'`); output is extended
 /// (`K2 = HASH(K ‖ H ‖ K1)`, …) until `needed` bytes are available.
