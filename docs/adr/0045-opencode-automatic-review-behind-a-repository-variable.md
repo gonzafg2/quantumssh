@@ -1,7 +1,7 @@
 # ADR 0045: Switch opencode's automatic review with a repository variable, and keep `/oc` on demand
 
 - **Status:** Accepted
-- **Date:** 2026-10-28 (accepted with the implementing PR)
+- **Date:** 2026-10-28 (accepted with the implementing PR [#217](https://github.com/gonzafg2/quantumssh/pull/217))
 - **Deciders:** Project lead
 - **Related:** Supersedes, in [ADR-0025](0025-opencode-second-automated-reviewer.md) §Decision, the "Triggered on every PR" part of the trigger bullet. The `/oc` and `/opencode` comment trigger, the author gate and every other bullet stand, as amended by [ADR-0032](0032-opencode-reviewer-provider-model-variable-and-proof-of-review.md). It follows ADR-0032's pattern of keeping an operational choice in a repository variable.
 
