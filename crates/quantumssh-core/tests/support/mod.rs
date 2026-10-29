@@ -381,7 +381,8 @@ pub fn temp_authorized_keys(signing: &SigningKey) -> std::path::PathBuf {
     let blob = auth_test_blob(&vk);
     let b64 = quantumssh_core::host_key::base64_encode_nopad(&blob);
     let dir = std::env::temp_dir();
-    let path = dir.join(format!("quantumssh-test-ak-{n}.txt"));
+    // The process ID keeps test binaries that run at once apart.
+    let path = dir.join(format!("quantumssh-test-ak-{}-{n}.txt", std::process::id()));
     let mut f = std::fs::File::create(&path).expect("create temp ak file");
     writeln!(f, "ssh-ed25519 {b64} test-key").expect("write ak");
     path
