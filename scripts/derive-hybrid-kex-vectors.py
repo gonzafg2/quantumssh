@@ -157,7 +157,7 @@ def main():
     print()
     rows = [
         ("m", bytes.fromhex(case["m"])),
-        ("server_x25519_secret", x25519["bob_secret"]),
+        ("server_x25519_b", x25519["bob_secret"]),
         ("client_init", client_init),
         ("server_reply", server_reply),
         ("k_pq", k_pq),

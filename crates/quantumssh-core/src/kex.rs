@@ -846,7 +846,7 @@ mod hybrid_tests {
     /// shared secrets in RFC 10042 §2.1 and §2.4's order and encoding.
     #[test]
     fn hybrid_exchange_matches_the_derived_vectors() {
-        let draws = [vector("m"), vector("server_x25519_secret")];
+        let draws = [vector("m"), vector("server_x25519_b")];
         let mut next = draws.iter();
         let outcome = hybrid_exchange_with(&vector("client_init"), |buf: &mut [u8]| {
             buf.copy_from_slice(next.next().expect("two draws"));
