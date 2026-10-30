@@ -55,14 +55,27 @@ OpenCode 2.2.3 was checked in a container before this decision:
    Both values sit in the workflow, so a bump is a pull request. No
    installer script runs, and no `api.github.com` call happens before the
    review. This closes both halves of #166.
-2. **The review runs `opencode run --standalone --format json`.** It
-   takes the project prompt, which now starts with the PR number and the
-   `gh` commands that read the PR. The job checks out the head commit
-   that the fork-refusal step read from the API, so a push in between
-   cannot swap the code under review. The permission configuration of
-   ADR-0032 still travels in `OPENCODE_CONFIG_CONTENT`. The run has no
-   `--auto`, so any request the configuration does not grant is rejected.
-3. **Two jobs, split on privilege, as ADR-0030's Codex workflow was.**
+2. **The review runs `opencode run --standalone --format json`.** The
+   job checks out the head commit that the fork-refusal step read from
+   the API, so a push in between cannot swap the code under review.
+3. **The agent gets read-only tools and nothing else.** The PR's diff,
+   description and comments come from people this workflow does not vet
+   (anyone can comment on a public PR), and the provider key sits in the
+   agent's environment.
+   - The permission configuration, still passed in
+     `OPENCODE_CONFIG_CONTENT`, denies everything except reading,
+     searching and starting subagents. Subagents inherit it.
+   - So there is no shell to expand an environment variable, no web tool
+     to send one out, and no GitHub token.
+   - Outside the checkout the agent may read only `/etc` and the PR files.
+   - The run has no `--auto`, so any request the configuration does not
+     grant is rejected.
+
+   The workflow, not the model, fetches the PR before the run, as
+   ADR-0030's Codex workflow did. It saves the PR, the diff, the commits
+   with their `.commit.verification`, and the earlier comments and
+   reviews. The prompt starts with where those files are.
+4. **Two jobs, split on privilege, as ADR-0030's Codex workflow was.**
    - `review` holds `contents: read`, `pull-requests: read` and
      `issues: read`, the provider secret and the model. It extracts the
      last text part that carries `## PR Review:`, and hands the comment
@@ -71,25 +84,30 @@ OpenCode 2.2.3 was checked in a container before this decision:
      no model, and posts the comment with `gh pr comment`.
 
    `id-token: write` is dropped.
-4. **Reviews appear as `github-actions[bot]`.** A footer names the
+5. **Reviews appear as `github-actions[bot]`.** A footer names the
    OpenCode version and the model, and links the run, as the action's
    footer did.
-5. **Proof of review by construction.** `review` fails when opencode ends
+6. **Proof of review by construction.** `review` fails when opencode ends
    without a `## PR Review:` report, and `post` fails when the comment
    is not created. A green check therefore means the comment is on the PR.
    This is how ADR-0033 already treats ADR-0030's Codex workflow. The
    comment-count step goes.
-6. **Unchanged:**
+7. **Unchanged:**
    - the triggers, the author gate and the ADR-0045 switch;
    - the fork refusal on both paths, the model variable, its validation
      and the two providers, and the 30-minute ceiling;
    - the concurrency rules;
    - the prompt and its `.github/REVIEW-FORMAT.md` contract.
 
-   The prompt loses only its commit instructions, because nothing in the
-   job can push. It also names the `subagent` tool, OpenCode 2's name for
-   what OpenCode 1 called `task`. OpenCode 2's `run` has no share option,
-   so ADR-0025's "No share" holds without a flag.
+   The prompt changes only where it described tools the agent no longer
+   has:
+   - the commit instructions go, because nothing in the job can push;
+   - the signature check points at `commits.jsonl`;
+   - the fan-out names the `subagent` tool, OpenCode 2's name for what
+     OpenCode 1 called `task`.
+
+   OpenCode 2's `run` has no share option, so ADR-0025's "No share"
+   holds without a flag.
 
 ## Consequences
 
@@ -100,6 +118,9 @@ OpenCode 2.2.3 was checked in a container before this decision:
 - The model never holds a write-capable token. Under OpenCode 1 the CLI
   kept the App token as git's `extraheader` inside the process the agent
   drives. Now only `post`, which runs no model, can write.
+- A prompt injection in a PR comment cannot read the provider key or a
+  token through a tool, nor send anything out. Under OpenCode 1 the
+  agent had a shell, the provider key and a token in its environment.
 - The reviewer no longer depends on the opencode-agent App or on
   `api.opencode.ai`, both of which upstream is retiring.
 
@@ -112,6 +133,8 @@ OpenCode 2.2.3 was checked in a container before this decision:
 - Bumping the CLI is manual: Dependabot does not track a release asset.
   OpenCode 2 releases often (2.2.0 to 2.2.3 in three days), so the pin
   will lag. A lag only matters when a fix is needed.
+- The agent cannot run commands: no `cargo`, no `git`, nothing from the
+  shell. A review rests on the checkout and the fetched PR data.
 - `/oc` asks for a review and nothing else. The comment's text does not
   reach the model, and OpenCode 1's reactions on the triggering comment
   are gone.
