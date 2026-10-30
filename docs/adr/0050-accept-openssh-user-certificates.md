@@ -64,11 +64,12 @@ options.
   with `verify_strict` as today.
 - **No draft name.** `ssh-ed25519-cert` is not accepted, because no
   released client sends it. Adding it later is additive.
-- **No profile change.** `server-sig-algs` stays `ssh-ed25519`. It lists
-  signature algorithms, and sshd leaves certificate types out
-  (`kex.c:332`, `sshkey_alg_list(0, 1, 1, ',')`, whose second argument
-  drops certificates). ADR-0021 and RFC-0015 ([#223](https://github.com/gonzafg2/quantumssh/pull/223))
-  are unaffected.
+- **No profile change.** `server-sig-algs` stays `ssh-ed25519`, as
+  ADR-0021 sets it. It lists signature algorithms, and sshd leaves
+  certificate types out (`kex.c:332`, `sshkey_alg_list(0, 1, 1, ',')`,
+  whose second argument drops certificates). The version-1 profile that
+  RFC-0015 proposes ([#223](https://github.com/gonzafg2/quantumssh/pull/223),
+  Draft) is unaffected too.
 
 ### 3. Trust anchor
 
@@ -76,8 +77,10 @@ options.
   keys, one per line, `keytype base64 [comment]`. It is optional.
   Without it, a certificate fails like an unknown key. It has no
   command-line flag (RFC-0010: "everything new lives only in the
-  file"). Under RFC-0016 ([#224](https://github.com/gonzafg2/quantumssh/pull/224))
-  a new optional key keeps `schema_version = 1`.
+  file"). ADR-0029 has each feature's implementing PR add its keys
+  before the `0.1.0` freeze, so the key is part of schema version 1.
+  RFC-0016 ([#224](https://github.com/gonzafg2/quantumssh/pull/224),
+  Draft) would also count it as an additive change.
 - **Loading.** The file is read once at startup under the
   `authorized_keys` rules: blank and `#` lines are skipped, an options
   field is refused (ADR-0040), a file without keys is refused, and
@@ -167,6 +170,12 @@ logged on failure, because nothing in it is authenticated before check
   §Future possibilities).
 - **Only the certificate path reads the user name,** because only there
   has a CA bound it to the key.
+- **The CA file is the access boundary.** Every session runs as the
+  service account and the client chooses the user name, so the
+  principal match fixes the name a certificate logs in under, not
+  whether it gets in. Until Phase 3, every certificate a trusted CA
+  issued, for any principal, authenticates. Operators should trust a CA
+  dedicated to this server.
 
 ### 8. Interop gate
 
@@ -174,7 +183,8 @@ ADR-0020's driver gains hard checks, as ADR-0047 added its own.
 `ssh-keygen -s` signs a user certificate with a principal and a
 validity window, using a CA listed in `trusted_user_ca_keys`. The exec
 round trip runs with that certificate. A certificate for another
-principal and an expired certificate both fail to authenticate. With
+principal, an expired certificate, and a certificate from a CA that is
+not in `trusted_user_ca_keys` all fail to authenticate. With
 the RFC-0012 implementation, the CA becomes `-t mldsa44-ed25519` on
 ADR-0048's client.
 
@@ -208,7 +218,10 @@ ADR-0048's client.
 - Without `-V`, `ssh-keygen -s` issues a certificate that never
   expires, and the server accepts it. Expiry is the only revocation, so
   the operator guide must require `-V`. A maximum-lifetime setting is
-  not part of this ADR.
+  left to a later ADR.
+- Trusting a CA admits every certificate it issued, for any principal,
+  until Phase 3 maps principals to accounts (§7). A CA shared with other
+  hosts shares access to this one.
 
 ### Neutral
 
@@ -247,8 +260,12 @@ every configuration that uses it.
 ### Alternative 4: Accept any principal
 
 This would match the bare-key path, which ignores the user name.
-Rejected: any certificate from a trusted CA could then log in under any
-name, and RFC-0008 requires a principal match.
+Rejected: RFC-0008 requires a principal match, and Phase 3 maps
+principals to accounts
+([#43](https://github.com/gonzafg2/quantumssh/issues/43)), so accepting any name now would make that
+mapping a breaking change. Until then, the match fixes the name that a
+certificate logs in under and that `cert_principal` records. It does
+not limit who gets in (§7).
 
 ### Alternative 5: Also accept the draft name `ssh-ed25519-cert`
 
@@ -260,11 +277,11 @@ branch. It is an additive change once a client does.
 - Decision source: [RFC-0008](../rfcs/0008-ssh-certificate-authentication.md).
 - Trust surface: [RFC-0010](../rfcs/0010-configuration-file.md)
   (guide-level example), [ADR-0029](0029-phase-2-config-file-v1-schema-parser-strictmodes.md)
-  §Decision, RFC-0016 ([#224](https://github.com/gonzafg2/quantumssh/pull/224)).
+  §Decision, RFC-0016 ([#224](https://github.com/gonzafg2/quantumssh/pull/224), Draft).
 - Related ADRs: ADR-0016, ADR-0020, ADR-0021, ADR-0035, ADR-0038,
   ADR-0040, ADR-0047, ADR-0048, ADR-0051.
 - Related RFCs: RFC-0003, RFC-0012, RFC-0014, RFC-0015
-  ([#223](https://github.com/gonzafg2/quantumssh/pull/223)).
+  ([#223](https://github.com/gonzafg2/quantumssh/pull/223), Draft).
 - Threat model: §4.1, §5.3.2, §6.3.
 - Standard: [`draft-ietf-sshm-cert`](https://datatracker.ietf.org/doc/draft-ietf-sshm-cert/)
   (`-01`, 2026-06-15).
