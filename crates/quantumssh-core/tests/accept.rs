@@ -923,6 +923,16 @@ async fn client_initiated_rekey_gcm() {
 }
 
 #[tokio::test]
+async fn rekey_under_the_longest_handshake_budget() {
+    // The binary's re-key budget is its handshake timeout, which takes
+    // any positive TOML integer of seconds (ADR-0029), up to 2^63 - 1:
+    // the deadline must not overflow `Instant`.
+    let mut rekey = test_rekey(u64::MAX);
+    rekey.completion_deadline = Duration::from_secs(i64::MAX.unsigned_abs());
+    rekey_roundtrip_with("chacha20-poly1305@openssh.com", rekey).await;
+}
+
+#[tokio::test]
 async fn byte_threshold_triggers_server_rekey() {
     // A low byte threshold makes the server initiate a re-key mid-stream.
     let cipher = "chacha20-poly1305@openssh.com";
