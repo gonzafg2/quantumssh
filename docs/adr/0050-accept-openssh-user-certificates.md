@@ -1,7 +1,7 @@
 # ADR 0050: Accept OpenSSH user certificates from the CAs in `trusted_user_ca_keys`
 
-- **Status:** Proposed
-- **Date:** — (set on acceptance; drafted 2026-10-30)
+- **Status:** Accepted
+- **Date:** 2026-10-30 (accepted with the implementing PR [#237](https://github.com/gonzafg2/quantumssh/pull/237); drafted 2026-10-30)
 - **Deciders:** Project lead
 - **Related:** Implementing ADR of [RFC-0008](../rfcs/0008-ssh-certificate-authentication.md) (Accepted; [#41](https://github.com/gonzafg2/quantumssh/issues/41)). Its audit fields are [ADR-0051](0051-certificate-audit-fields.md). It adds the `[auth] trusted_user_ca_keys` key that [RFC-0010](../rfcs/0010-configuration-file.md) reserves and [ADR-0029](0029-phase-2-config-file-v1-schema-parser-strictmodes.md) leaves to "each feature's implementing PR". [ADR-0040](0040-refuse-authorized-keys-options-until-enforced.md) stays in force. It maps the `permit-pty` extension onto the [ADR-0038](0038-phase-2-interactive-pty-sessions.md) §3 gate. Its CA algorithm follows the [RFC-0012](../rfcs/0012-composite-host-key-cutover.md) cut-over ([ADR-0035](0035-ml-dsa-crate-rustcrypto.md), [ADR-0047](0047-host-key-algorithm-ssh-mldsa44-ed25519.md)), and it adds checks to the [ADR-0020](0020-phase-1-ci-openssh-interop-gate.md) gate. Part of the Phase-2 milestone ([#109](https://github.com/gonzafg2/quantumssh/issues/109)). Implementation: the `auth` and `transport` modules of `quantumssh-core`, the binary's config loader, and `tests/interop/run_openssh_client.sh`.
 
