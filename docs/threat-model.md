@@ -892,8 +892,9 @@ Keys), `T1078` (Valid Accounts).
 once the key is in the attacker's hands: from the server's
 viewpoint, the attacker is the legitimate user. QuantumSSH's
 contribution is to make compensating controls discoverable —
-short-lived certificates (a Phase 2 feature designed in
-[RFC-0008](rfcs/0008-ssh-certificate-authentication.md)), audit-
+short-lived certificates (designed in
+[RFC-0008](rfcs/0008-ssh-certificate-authentication.md), implemented
+per [ADR-0050](adr/0050-accept-openssh-user-certificates.md)), audit-
 record fidelity, and configurable per-key restrictions
 (`from=`, `command=`, `no-port-forwarding`, equivalents in
 QuantumSSH's own syntax; not yet implemented, and until they are,
@@ -1299,7 +1300,17 @@ repeating it.
 
 - **Public-key only — no other method is compiled in.** Defends §5.3.1.
 - **Authentication-event records include key fingerprint.** Defends
-  §5.3.3 post-hoc detection.
+  §5.3.3 post-hoc detection. A certificate authentication adds its
+  key ID, serial, CA fingerprint and principal
+  ([ADR-0051](adr/0051-certificate-audit-fields.md)).
+- **User certificates from operator-listed CAs.** OpenSSH user
+  certificates for Ed25519 keys, from the CAs in
+  `[auth] trusted_user_ca_keys`
+  ([ADR-0050](adr/0050-accept-openssh-user-certificates.md)). Short
+  lifetimes narrow §5.3.2's window, because expiry is the only
+  revocation. The certificate parser runs before authentication on
+  bounded input, and a certificate that carries any critical option is
+  refused until that option is enforced.
 - **No `authorized_keys` writes from the server.** Defends §5.3.3
   in-band.
 - **Per-key restrictions (planned).** `from=`, `command=`, forwarding
@@ -1362,9 +1373,8 @@ operators must account for. The principal items, by category, are:
 
 - **Compromise of the user's endpoint or private key** (§5.3.2)
   remains the dominant lateral-movement risk and is not addressable
-  server-side; certificate-based authentication and short-lived
-  credentials, both Phase-2 RFC items, narrow the window but do not
-  close it.
+  server-side; certificate-based authentication with short-lived
+  certificates (ADR-0050) narrows the window but does not close it.
 - **Compromise of the host or operator account** (§5.5.4, §8.1)
   defeats QuantumSSH by hypothesis; host-level controls are the
   operator's responsibility.

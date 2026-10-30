@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- User certificates: OpenSSH user certificates for Ed25519 keys
+  (`ssh-ed25519-cert-v01@openssh.com`) log in when a CA listed in the
+  new optional `[auth] trusted_user_ca_keys` file signed them for the
+  requested user name and they are within their validity window. The
+  first cut honours no critical options, so a certificate with one is
+  refused, and `permit-pty` decides whether the session may allocate a
+  PTY ([ADR-0050](docs/adr/0050-accept-openssh-user-certificates.md)).
+  `auth.succeeded`, `exec.started` and `exec.finished` carry
+  `cert_key_id`, `cert_serial`, `cert_ca_fingerprint` and
+  `cert_principal` on certificate sessions only
+  ([ADR-0051](docs/adr/0051-certificate-audit-fields.md)).
 - systemd integration: the server sends `READY=1` once it listens and
   `STOPPING=1`, with a stop timeout that covers the drain, when a
   shutdown starts (`Type=notify`, implemented on the standard library

@@ -30,6 +30,7 @@ use tokio::sync::mpsc;
 use tokio::time::Instant;
 use tracing::info;
 
+use crate::auth::Authenticated;
 use crate::exec::{self, ChildChunk, ChildIo, ChildScope, Program};
 use crate::pty::{self, PtyPair, Size};
 use crate::transport::{Expect, RekeyStep, Session, TransportError};
@@ -166,7 +167,9 @@ struct Driver<'a> {
     /// A pair allocated by `pty-req`, waiting for the child that starts
     /// on it.
     pty: Option<PendingPty>,
-    identity: String,
+    /// Who authenticated: the `exec.*` identity fields (ADR-0024,
+    /// ADR-0051) and the PTY permission (ADR-0050 §6).
+    authenticated: Authenticated,
     uid: u32,
     state: ChannelState,
     /// The client's channel id (recipient of every frame we send).
@@ -237,11 +240,11 @@ impl Drop for Driver<'_> {
 }
 
 impl<'a> Driver<'a> {
-    fn new(identity: String, children: &'a ChildScope) -> Self {
+    fn new(authenticated: Authenticated, children: &'a ChildScope) -> Self {
         Self {
             children,
             pty: None,
-            identity,
+            authenticated,
             uid: exec::executing_uid(),
             state: ChannelState::BeforeOpen,
             peer_chan: 0,
@@ -331,7 +334,7 @@ pub(crate) async fn drive<S>(
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
-    let mut d = Driver::new(session.identity().to_string(), children);
+    let mut d = Driver::new(session.authenticated().clone(), children);
 
     loop {
         // Outbound channel work is suppressed during a re-key (RFC 4253 §9
@@ -620,9 +623,10 @@ impl Driver<'_> {
                 }
             }
             let exit_status = self.exit_status.unwrap_or(EXIT_SPAWN_FAILED);
+            let cert = self.authenticated.certificate.as_ref();
             info!(
                 target: "audit",
-                authenticated_identity = %self.identity,
+                authenticated_identity = %self.authenticated.fingerprint,
                 executing_uid = self.uid,
                 command = %command,
                 request_type = self.request_type,
@@ -630,6 +634,10 @@ impl Driver<'_> {
                 exit_status,
                 bytes_received = self.bytes_received,
                 bytes_sent = self.bytes_sent,
+                cert_key_id = cert.map(|c| c.key_id.as_str()),
+                cert_serial = cert.map(|c| c.serial.as_str()),
+                cert_ca_fingerprint = cert.map(|c| c.ca_fingerprint.as_str()),
+                cert_principal = cert.map(|c| c.principal.as_str()),
                 "exec.finished"
             );
         }
@@ -831,8 +839,9 @@ impl Driver<'_> {
 
     /// `pty-req` (RFC 4254 §6.2, ADR-0038 §2): every field is bounded, and
     /// a malformed one disconnects. A request in the wrong state, a second
-    /// one, a refused `TERM`, no helper, or a failed allocation is refused
-    /// and leaves no PTY state behind.
+    /// one, a refused `TERM`, no helper, a failed allocation, or a
+    /// certificate without `permit-pty` (the ADR-0038 §3 gate, ADR-0050
+    /// §6) is refused and leaves no PTY state behind.
     async fn on_pty_req<S>(
         &mut self,
         session: &mut Expect<S, Session>,
@@ -861,7 +870,8 @@ impl Driver<'_> {
             width_px,
             height_px,
         };
-        let allowed = self.state == ChannelState::Idle
+        let allowed = self.authenticated.pty_permitted
+            && self.state == ChannelState::Idle
             && self.pty.is_none()
             && self.children.helper().is_some()
             && pty::valid_term(term);
@@ -958,13 +968,18 @@ impl Driver<'_> {
         self.command = Some(command.to_string());
         self.request_type = request_type;
         self.on_pty = pending.is_some();
+        let cert = self.authenticated.certificate.as_ref();
         info!(
             target: "audit",
-            authenticated_identity = %self.identity,
+            authenticated_identity = %self.authenticated.fingerprint,
             executing_uid = self.uid,
             command = %command,
             request_type,
             pty = self.on_pty,
+            cert_key_id = cert.map(|c| c.key_id.as_str()),
+            cert_serial = cert.map(|c| c.serial.as_str()),
+            cert_ca_fingerprint = cert.map(|c| c.ca_fingerprint.as_str()),
+            cert_principal = cert.map(|c| c.principal.as_str()),
             "exec.started"
         );
         self.reply(session, want_reply, true).await?;
@@ -1223,6 +1238,16 @@ fn build_channel_msg(msg: u8, peer_chan: u32) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cert::CertIdentity;
+
+    /// A bare-key authentication, as `auth::resolve` builds it.
+    fn bare_key() -> Authenticated {
+        Authenticated {
+            fingerprint: "SHA256:test".to_string(),
+            certificate: None,
+            pty_permitted: true,
+        }
+    }
 
     fn read_msg(frame: &[u8]) -> (u8, Reader<'_>) {
         let mut r = Reader::new(frame);
@@ -1408,7 +1433,7 @@ mod tests {
         let capture = Fields::default();
         let seen = capture.0.clone();
         tracing::subscriber::with_default(capture, || {
-            let mut d = Driver::new("SHA256:test".to_string(), &scope);
+            let mut d = Driver::new(bare_key(), &scope);
             d.command = Some(String::new());
             d.request_type = "shell";
             d.on_pty = true;
@@ -1437,6 +1462,57 @@ mod tests {
         // ADR-0042: the channel byte counts, on every request type.
         assert_eq!(field("bytes_received"), Some("0"));
         assert_eq!(field("bytes_sent"), Some("0"));
+        // ADR-0051: a bare key carries no certificate field.
+        for name in [
+            "cert_key_id",
+            "cert_serial",
+            "cert_ca_fingerprint",
+            "cert_principal",
+        ] {
+            assert_eq!(field(name), None, "{name}");
+        }
+    }
+
+    #[test]
+    fn exec_events_carry_the_certificate_fields() {
+        // ADR-0051: all four, on both `exec.*` events.
+        let scope = ChildScope::default();
+        let capture = Fields::default();
+        let seen = capture.0.clone();
+        let authenticated = Authenticated {
+            certificate: Some(CertIdentity {
+                key_id: "alice@example".to_string(),
+                serial: "18364758544493064720".to_string(),
+                ca_fingerprint: "SHA256:ca".to_string(),
+                principal: "alice".to_string(),
+            }),
+            ..bare_key()
+        };
+        tracing::subscriber::with_default(capture, || {
+            let mut d = Driver::new(authenticated, &scope);
+            d.command = Some("true".to_string());
+            d.exit_status = Some(0);
+            d.emit_finished();
+        });
+        let events = seen.lock().unwrap().clone();
+        let finished = events
+            .iter()
+            .find(|e| {
+                e.iter()
+                    .any(|(k, v)| k == "message" && v == "exec.finished")
+            })
+            .expect("exec.finished emitted");
+        let field = |name: &str| {
+            finished
+                .iter()
+                .find(|(k, _)| k == name)
+                .map(|(_, v)| v.as_str())
+        };
+        assert_eq!(field("authenticated_identity"), Some("SHA256:test"));
+        assert_eq!(field("cert_key_id"), Some("alice@example"));
+        assert_eq!(field("cert_serial"), Some("18364758544493064720"));
+        assert_eq!(field("cert_ca_fingerprint"), Some("SHA256:ca"));
+        assert_eq!(field("cert_principal"), Some("alice"));
     }
 
     fn finished_count(seen: &std::sync::Mutex<Vec<String>>) -> usize {
@@ -1456,7 +1532,7 @@ mod tests {
             // AssertUnwindSafe: the Driver is owned by the closure and fully
             // dropped by the unwind; no state observable after the panic.
             let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                let mut d = Driver::new("SHA256:test".to_string(), &scope);
+                let mut d = Driver::new(bare_key(), &scope);
                 d.command = Some("true".to_string());
                 panic!("mid-exec panic");
             }));
@@ -1471,7 +1547,7 @@ mod tests {
         let capture = Capture::default();
         let seen = capture.0.clone();
         tracing::subscriber::with_default(capture, || {
-            let mut d = Driver::new("SHA256:test".to_string(), &scope);
+            let mut d = Driver::new(bare_key(), &scope);
             d.command = Some("true".to_string());
             d.exit_status = Some(0);
             d.emit_finished();
@@ -1486,7 +1562,7 @@ mod tests {
         let capture = Capture::default();
         let seen = capture.0.clone();
         tracing::subscriber::with_default(capture, || {
-            drop(Driver::new("SHA256:test".to_string(), &scope));
+            drop(Driver::new(bare_key(), &scope));
         });
         assert_eq!(finished_count(&seen), 0);
     }

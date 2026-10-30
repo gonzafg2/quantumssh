@@ -15,6 +15,7 @@ use ml_kem::kem::{Decapsulate as _, FromSeed as _, KeyExport as _};
 use quantumssh_core::admission::Limits;
 use quantumssh_core::auth;
 use quantumssh_core::auth::AuthorizedKeys;
+use quantumssh_core::cert::{self, TrustedUserCaKeys};
 use quantumssh_core::cipher;
 use quantumssh_core::host_key::HostKey;
 use quantumssh_core::kex;
@@ -64,7 +65,7 @@ pub async fn start_server_full(
     broadcast::Sender<tokio::time::Instant>,
     tokio::task::JoinHandle<std::io::Result<()>>,
 ) {
-    start_server_configured(handshake_timeout, rekey, limits, None).await
+    start_server_configured(handshake_timeout, rekey, limits, None, None).await
 }
 
 /// A server whose PTY children re-execute `helper` (ADR-0038 §5).
@@ -75,6 +76,25 @@ pub async fn start_server_with_helper(helper: std::path::PathBuf) -> (SocketAddr
         RekeyThresholds::bsi_defaults(budget),
         Limits::default(),
         Some(helper),
+        None,
+    )
+    .await;
+    (addr, host_key)
+}
+
+/// A server that trusts [`test_ca`] for user certificates (ADR-0050),
+/// whose PTY and SFTP children re-execute `helper` when one is given.
+pub async fn start_server_with_ca(
+    helper: Option<std::path::PathBuf>,
+) -> (SocketAddr, Arc<HostKey>) {
+    let cas = TrustedUserCaKeys::load(&temp_authorized_keys(&test_ca())).expect("load test CA");
+    let budget = Duration::from_secs(30);
+    let (addr, host_key, _tx, _serve) = start_server_configured(
+        budget,
+        RekeyThresholds::bsi_defaults(budget),
+        Limits::default(),
+        helper,
+        Some(Arc::new(cas)),
     )
     .await;
     (addr, host_key)
@@ -85,6 +105,7 @@ pub async fn start_server_configured(
     rekey: RekeyThresholds,
     limits: Limits,
     helper: Option<std::path::PathBuf>,
+    trusted_user_ca_keys: Option<Arc<TrustedUserCaKeys>>,
 ) -> (
     SocketAddr,
     Arc<HostKey>,
@@ -102,6 +123,7 @@ pub async fn start_server_configured(
         handshake_timeout,
         host_key: Arc::clone(&host_key),
         authorized_keys,
+        trusted_user_ca_keys,
         rekey,
         limits,
         helper,
@@ -426,13 +448,24 @@ pub fn signed_auth_request(
     session_id: &[u8; 32],
     key_blob: &[u8],
 ) -> Vec<u8> {
+    signed_auth_request_for(signing, session_id, b"ssh-ed25519", key_blob)
+}
+
+/// [`signed_auth_request`] for a key `algorithm`: `ssh-ed25519`, or
+/// [`cert::CERT_ALGORITHM`] with a certificate blob.
+pub fn signed_auth_request_for(
+    signing: &SigningKey,
+    session_id: &[u8; 32],
+    algorithm: &[u8],
+    key_blob: &[u8],
+) -> Vec<u8> {
     let mut w = Writer::new();
     w.put_byte(auth::SSH_MSG_USERAUTH_REQUEST);
     w.put_string(b"testuser");
     w.put_string(b"ssh-connection");
     w.put_string(b"publickey");
     w.put_boolean(true);
-    w.put_string(b"ssh-ed25519");
+    w.put_string(algorithm);
     w.put_string(key_blob);
     let payload_without_sig = w.into_bytes();
 
@@ -452,15 +485,113 @@ pub fn signed_auth_request(
 
 /// Builds a `SSH_MSG_USERAUTH_REQUEST` with `signature_present = false`.
 pub fn probe_auth_request(key_blob: &[u8]) -> Vec<u8> {
+    probe_auth_request_for(b"ssh-ed25519", key_blob)
+}
+
+/// [`probe_auth_request`] for a key `algorithm`.
+pub fn probe_auth_request_for(algorithm: &[u8], key_blob: &[u8]) -> Vec<u8> {
     let mut w = Writer::new();
     w.put_byte(auth::SSH_MSG_USERAUTH_REQUEST);
     w.put_string(b"testuser");
     w.put_string(b"ssh-connection");
     w.put_string(b"publickey");
     w.put_boolean(false);
-    w.put_string(b"ssh-ed25519");
+    w.put_string(algorithm);
     w.put_string(key_blob);
     w.into_bytes()
+}
+
+// ---- ADR-0050: user certificates ----
+
+/// The CA [`start_server_with_ca`] trusts.
+pub fn test_ca() -> SigningKey {
+    SigningKey::from_bytes(&[91u8; 32])
+}
+
+/// The user key the test certificates certify.
+pub fn cert_user_key() -> SigningKey {
+    SigningKey::from_bytes(&[92u8; 32])
+}
+
+/// A user certificate for [`cert_user_key`], signed by `ca`, valid from
+/// the epoch until `valid_before`, for `principals`, with `permit-pty`
+/// when `permit_pty` (`draft-ietf-sshm-cert` §2.1, the shape
+/// `ssh-keygen -s` produces).
+pub fn user_cert(
+    ca: &SigningKey,
+    principals: &[&[u8]],
+    valid_before: u64,
+    permit_pty: bool,
+) -> Vec<u8> {
+    let mut names = Writer::new();
+    for p in principals {
+        names.put_string(p);
+    }
+    let mut extensions = Writer::new();
+    if permit_pty {
+        extensions.put_string(b"permit-pty");
+        extensions.put_string(b"");
+    }
+    let mut w = Writer::new();
+    w.put_string(cert::CERT_ALGORITHM.as_bytes());
+    w.put_string(&[0x42; 32]);
+    w.put_string(cert_user_key().verifying_key().as_bytes());
+    w.put_uint64(7);
+    w.put_uint32(1);
+    w.put_string(b"testuser@ci");
+    w.put_string(&names.into_bytes());
+    w.put_uint64(0);
+    w.put_uint64(valid_before);
+    w.put_string(b"");
+    w.put_string(&extensions.into_bytes());
+    w.put_string(b"");
+    w.put_string(&auth_test_blob(&ca.verifying_key()));
+    let signed = w.into_bytes();
+    let mut sig = Writer::new();
+    sig.put_string(b"ssh-ed25519");
+    sig.put_string(&ca.sign(&signed).to_bytes());
+    let mut w = Writer::new();
+    w.put_bytes(&signed);
+    w.put_string(&sig.into_bytes());
+    w.into_bytes()
+}
+
+/// Authenticates as `testuser` with the certificate `cert_blob` for
+/// [`cert_user_key`].
+pub async fn authenticate_with_cert(
+    addr: SocketAddr,
+    host_key: &HostKey,
+    cert_blob: &[u8],
+) -> (TcpStream, SealedClient) {
+    let mut stream = connect(addr).await;
+    let (mut client, session_id, _server_id) = establish(
+        &mut stream,
+        host_key,
+        OPENSSH_KEX_PLAIN,
+        "chacha20-poly1305@openssh.com",
+        "chacha20-poly1305@openssh.com",
+    )
+    .await;
+    client
+        .write_sealed(&mut stream, &service_request_payload())
+        .await;
+    assert_eq!(client.read_sealed(&mut stream).await.first(), Some(&6));
+    client
+        .write_sealed(
+            &mut stream,
+            &signed_auth_request_for(
+                &cert_user_key(),
+                &session_id,
+                cert::CERT_ALGORITHM.as_bytes(),
+                cert_blob,
+            ),
+        )
+        .await;
+    assert_eq!(
+        client.read_sealed(&mut stream).await,
+        vec![auth::SSH_MSG_USERAUTH_SUCCESS]
+    );
+    (stream, client)
 }
 
 // ---- M5: channel layer + exec (ADR-0023) ----

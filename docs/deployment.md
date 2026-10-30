@@ -60,6 +60,7 @@ group or others, and its owner must be root or the account.
 | `/etc/quantumssh/config.toml` | `root:root` | `0644` | The account cannot change its own configuration. |
 | `/etc/quantumssh/ssh_host_ed25519_key` | `quantumssh:quantumssh` | `0600` | The account must read it, so a root-owned `0600` key would not work. |
 | `/etc/quantumssh/authorized_keys` | `root:root` | `0644` | The account cannot change who may log in. |
+| `/etc/quantumssh/trusted_user_ca_keys` (optional, §4) | `root:root` | `0644` | The account cannot change which CAs it trusts. |
 
 ```sh
 sudo install -d -m 0755 /etc/quantumssh
@@ -98,10 +99,54 @@ These optional keys exist:
 - `[server] drain_timeout`, the graceful-shutdown deadline in seconds
   (default 30);
 - the `[limits]` admission caps (defaults 256 connections, 100
-  half-open, 10 per source).
+  half-open, 10 per source);
+- `[auth] trusted_user_ca_keys`, the CAs whose user certificates log in
+  (below).
 
-ADR-0028 and ADR-0029 define them. The log format follows the stream:
-under systemd it is JSON.
+ADR-0028 and ADR-0029 define the first three. The log format follows
+the stream: under systemd it is JSON.
+
+### User certificates
+
+Instead of listing every key in `authorized_keys`, you can trust a
+certificate authority (CA) and give users short-lived certificates
+([ADR-0050](adr/0050-accept-openssh-user-certificates.md)). Put the
+CA's public key in `trusted_user_ca_keys`, one `ssh-ed25519` line per
+CA, with no options, and name the file in `[auth]`:
+
+```sh
+ssh-keygen -t ed25519 -f user_ca              # keep user_ca offline
+sudo install -m 0644 user_ca.pub /etc/quantumssh/trusted_user_ca_keys
+```
+
+```toml
+[auth]
+authorized_keys      = "/etc/quantumssh/authorized_keys"
+trusted_user_ca_keys = "/etc/quantumssh/trusted_user_ca_keys"
+```
+
+Sign a user's Ed25519 key with a principal and a validity window:
+
+```sh
+ssh-keygen -s user_ca -I alice@laptop -n alice -V +8h alice_key.pub
+```
+
+- **Always pass `-V`.** Without it the certificate never expires, and
+  expiry is the only revocation: the server keeps no revocation list.
+- **The principal is the login name.** `ssh alice@host` needs `alice`
+  in `-n`. Every session still runs as the service account.
+- **No critical options.** A certificate signed with `-O force-command`,
+  `-O source-address` or `-O verify-required` is refused, because the
+  server does not enforce them yet.
+- **PTY.** A certificate gets a PTY only with the `permit-pty`
+  extension, which `ssh-keygen -s` includes unless you pass `-O no-pty`.
+- **CA algorithm.** The CA key is `ssh-ed25519` today. Before `0.1.0`
+  the server switches to `ssh-mldsa44-ed25519` CAs only, which OpenSSH
+  10.6 or later can generate and sign with (ADR-0050 §4).
+
+A refused certificate fails like an unknown key. The server records the
+reason (for example `expired` or `principal_mismatch`) in a
+`certificate refused` diagnostic line.
 
 ## 5. Install and start the unit
 

@@ -175,9 +175,15 @@ impl HostKey {
     /// `host_key_fingerprint` / `authenticated_identity` format).
     #[must_use]
     pub fn fingerprint_sha256(&self) -> String {
-        let digest = Sha256::digest(self.public_key_blob());
-        format!("SHA256:{}", base64_encode_nopad(&digest))
+        fingerprint_sha256(&self.public_key_blob())
     }
+}
+
+/// OpenSSH-format fingerprint of a public-key blob: `SHA256:` + unpadded
+/// base64 of its SHA-256 (RFC-0014 §4).
+pub(crate) fn fingerprint_sha256(blob: &[u8]) -> String {
+    let digest = Sha256::digest(blob);
+    format!("SHA256:{}", base64_encode_nopad(&digest))
 }
 
 const B64_ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";

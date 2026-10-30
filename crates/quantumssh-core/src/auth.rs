@@ -8,21 +8,25 @@
 //!
 //! - **One method**: `publickey` (ADR-0021). Every other method is
 //!   refused with `SSH_MSG_USERAUTH_FAILURE` naming only `publickey`.
-//! - **One key type**: `ssh-ed25519`. A different key algorithm is
-//!   refused with `SSH_MSG_USERAUTH_FAILURE`.
+//! - **One key type**: `ssh-ed25519`, bare or certified by a trusted CA
+//!   (`ssh-ed25519-cert-v01@openssh.com`, ADR-0050, [`crate::cert`]). A
+//!   different key algorithm is refused with `SSH_MSG_USERAUTH_FAILURE`.
 //! - **`authorized_keys`** is read once at startup (`std::fs`, per
 //!   ADR-0022). A line carrying an options field is refused (ADR-0040):
 //!   no option is enforced, so loading it would drop the restriction.
+//!   `trusted_user_ca_keys` is read under the same rules (ADR-0050 §3).
 
 use std::fmt;
 use std::path::Path;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use zeroize::Zeroizing;
 
+use crate::cert::{self, CertIdentity, TrustedUserCaKeys};
 use crate::host_key;
 use crate::wire::{Reader, Writer};
 use ed25519_dalek::{Signature, VerifyingKey};
-use sha2::{Digest, Sha256};
+use tracing::info;
 
 /// `SSH_MSG_USERAUTH_REQUEST` (RFC 4252 §8).
 pub const SSH_MSG_USERAUTH_REQUEST: u8 = 50;
@@ -54,7 +58,9 @@ pub(crate) const KEY_ALGO_BOUND: usize = 64;
 pub(crate) const KEY_BLOB_BOUND: usize = 1024;
 pub(crate) const SIGNATURE_BOUND: usize = 256;
 
-/// Errors loading or parsing the `authorized_keys` file.
+/// Errors loading or parsing a key file in the `authorized_keys` format:
+/// `authorized_keys` itself, or `trusted_user_ca_keys` (ADR-0050 §3).
+/// The caller names the file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AuthError {
     /// File cannot be read or is completely invalid.
@@ -86,28 +92,26 @@ pub enum AuthError {
 impl fmt::Display for AuthError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Io(e) => write!(f, "cannot read authorized_keys: {e}"),
-            Self::MalformedLine { line, reason } => {
-                write!(f, "authorized_keys line {line}: {reason}")
-            }
+            Self::Io(e) => write!(f, "cannot read the file: {e}"),
+            Self::MalformedLine { line, reason } => write!(f, "line {line}: {reason}"),
             Self::UnsupportedKeyType { line, found } => {
                 write!(
                     f,
-                    "authorized_keys line {line}: unsupported key type '{found}' (need ssh-ed25519)"
+                    "line {line}: unsupported key type '{found}' (need ssh-ed25519)"
                 )
             }
             Self::KeyOptions { line } => write!(
                 f,
-                "authorized_keys line {line}: key options are not enforced, so the line is refused (ADR-0040)"
+                "line {line}: key options are not enforced, so the line is refused (ADR-0040)"
             ),
-            Self::Empty => write!(f, "authorized_keys file contains no keys"),
+            Self::Empty => write!(f, "the file contains no keys"),
         }
     }
 }
 
 impl std::error::Error for AuthError {}
 
-/// A single parsed entry from an `authorized_keys` file.
+/// A single parsed entry from an `authorized_keys`-format file.
 pub struct AuthorizedKey {
     /// Raw wire-format key blob (string algorithm + string key).
     pub blob: Vec<u8>,
@@ -167,116 +171,7 @@ impl AuthorizedKeys {
     #[must_use]
     #[allow(clippy::double_must_use)]
     pub fn load(path: &Path) -> Result<Self, AuthError> {
-        let content = std::fs::read_to_string(path).map_err(|e| AuthError::Io(e.to_string()))?;
-
-        let mut keys = Vec::new();
-        for (line_no, raw_line) in content.lines().enumerate() {
-            let line_no = line_no + 1; // 1-indexed for diagnostics
-            let trimmed = raw_line.trim();
-            if trimmed.is_empty() || trimmed.starts_with('#') {
-                continue;
-            }
-
-            // sshd(8) line format: `[options] keytype base64 [comment]`.
-            // A first field not shaped like a key type is an options
-            // field. No option is enforced, so the line is refused
-            // rather than loaded without its restriction (ADR-0040).
-            let first = trimmed.split_whitespace().next().unwrap_or("");
-            if !looks_like_key_type(first) {
-                return Err(AuthError::KeyOptions { line: line_no });
-            }
-            let mut tokens = trimmed.split_whitespace();
-            let algo = tokens.next().ok_or_else(|| AuthError::MalformedLine {
-                line: line_no,
-                reason: "no key type found".into(),
-            })?;
-            if algo != KEY_ALGORITHM {
-                return Err(AuthError::UnsupportedKeyType {
-                    line: line_no,
-                    found: algo.into(),
-                });
-            }
-
-            let b64 = tokens.next().ok_or_else(|| AuthError::MalformedLine {
-                line: line_no,
-                reason: "missing base64 key".into(),
-            })?;
-
-            let blob = host_key::base64_decode(b64.as_bytes()).ok_or_else(|| {
-                AuthError::MalformedLine {
-                    line: line_no,
-                    reason: "invalid base64".into(),
-                }
-            })?;
-
-            // Parse the wire-format blob: string(algorithm) + string(key).
-            let mut r = Reader::new(&blob);
-            let parsed_algo = r
-                .string(KEY_ALGO_BOUND)
-                .map_err(|_| AuthError::MalformedLine {
-                    line: line_no,
-                    reason: "blob truncated or oversized".into(),
-                })?;
-            if parsed_algo != KEY_ALGORITHM.as_bytes() {
-                return Err(AuthError::MalformedLine {
-                    line: line_no,
-                    reason: format!(
-                        "blob algorithm is '{}', expected 'ssh-ed25519'",
-                        String::from_utf8_lossy(parsed_algo)
-                    ),
-                });
-            }
-            let key_bytes = r.string(64).map_err(|_| AuthError::MalformedLine {
-                line: line_no,
-                reason: "missing key bytes in blob".into(),
-            })?;
-            r.finish().map_err(|e| AuthError::MalformedLine {
-                line: line_no,
-                reason: format!("trailing data in blob: {e}"),
-            })?;
-
-            if key_bytes.len() != 32 {
-                return Err(AuthError::MalformedLine {
-                    line: line_no,
-                    reason: format!(
-                        "expected 32-byte Ed25519 key, got {} bytes",
-                        key_bytes.len()
-                    ),
-                });
-            }
-            let mut arr = [0u8; 32];
-            arr.copy_from_slice(key_bytes);
-            let verifying_key =
-                VerifyingKey::from_bytes(&arr).map_err(|_| AuthError::MalformedLine {
-                    line: line_no,
-                    reason: "invalid Ed25519 key bytes".into(),
-                })?;
-            // A small-order key accepts forged signatures under the
-            // non-strict check; `verify_auth_signature` already uses
-            // `verify_strict`, and refusing the key here as well fails a
-            // bad `authorized_keys` loudly instead of keeping it loaded.
-            if verifying_key.is_weak() {
-                return Err(AuthError::MalformedLine {
-                    line: line_no,
-                    reason: "small-order (weak) Ed25519 key".into(),
-                });
-            }
-
-            let digest = Sha256::digest(&blob);
-            let fingerprint = format!("SHA256:{}", host_key::base64_encode_nopad(&digest));
-
-            keys.push(AuthorizedKey {
-                blob,
-                fingerprint,
-                verifying_key,
-            });
-        }
-
-        if keys.is_empty() {
-            return Err(AuthError::Empty);
-        }
-
-        Ok(Self { keys })
+        load_key_file(path).map(|keys| Self { keys })
     }
 
     /// Looks up a key blob (the exact wire-format blob the client sends
@@ -284,7 +179,193 @@ impl AuthorizedKeys {
     /// its fingerprint and verifying key.
     #[must_use]
     pub fn lookup(&self, key_blob: &[u8]) -> Option<&AuthorizedKey> {
-        self.keys.iter().find(|k| k.blob == key_blob)
+        lookup(&self.keys, key_blob)
+    }
+}
+
+/// The entry whose blob equals `key_blob`, byte for byte.
+pub(crate) fn lookup<'k>(keys: &'k [AuthorizedKey], key_blob: &[u8]) -> Option<&'k AuthorizedKey> {
+    keys.iter().find(|k| k.blob == key_blob)
+}
+
+/// Loads an `authorized_keys`-format file: the rules and errors of
+/// [`AuthorizedKeys::load`], shared with `trusted_user_ca_keys`
+/// (ADR-0050 §3).
+pub(crate) fn load_key_file(path: &Path) -> Result<Vec<AuthorizedKey>, AuthError> {
+    let content = std::fs::read_to_string(path).map_err(|e| AuthError::Io(e.to_string()))?;
+
+    let mut keys = Vec::new();
+    for (line_no, raw_line) in content.lines().enumerate() {
+        let line_no = line_no + 1; // 1-indexed for diagnostics
+        let trimmed = raw_line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+
+        // sshd(8) line format: `[options] keytype base64 [comment]`.
+        // A first field not shaped like a key type is an options
+        // field. No option is enforced, so the line is refused
+        // rather than loaded without its restriction (ADR-0040).
+        let first = trimmed.split_whitespace().next().unwrap_or("");
+        if !looks_like_key_type(first) {
+            return Err(AuthError::KeyOptions { line: line_no });
+        }
+        let mut tokens = trimmed.split_whitespace();
+        let algo = tokens.next().ok_or_else(|| AuthError::MalformedLine {
+            line: line_no,
+            reason: "no key type found".into(),
+        })?;
+        if algo != KEY_ALGORITHM {
+            return Err(AuthError::UnsupportedKeyType {
+                line: line_no,
+                found: algo.into(),
+            });
+        }
+
+        let b64 = tokens.next().ok_or_else(|| AuthError::MalformedLine {
+            line: line_no,
+            reason: "missing base64 key".into(),
+        })?;
+
+        let blob =
+            host_key::base64_decode(b64.as_bytes()).ok_or_else(|| AuthError::MalformedLine {
+                line: line_no,
+                reason: "invalid base64".into(),
+            })?;
+
+        // Parse the wire-format blob: string(algorithm) + string(key).
+        let mut r = Reader::new(&blob);
+        let parsed_algo = r
+            .string(KEY_ALGO_BOUND)
+            .map_err(|_| AuthError::MalformedLine {
+                line: line_no,
+                reason: "blob truncated or oversized".into(),
+            })?;
+        if parsed_algo != KEY_ALGORITHM.as_bytes() {
+            return Err(AuthError::MalformedLine {
+                line: line_no,
+                reason: format!(
+                    "blob algorithm is '{}', expected 'ssh-ed25519'",
+                    String::from_utf8_lossy(parsed_algo)
+                ),
+            });
+        }
+        let key_bytes = r.string(64).map_err(|_| AuthError::MalformedLine {
+            line: line_no,
+            reason: "missing key bytes in blob".into(),
+        })?;
+        r.finish().map_err(|e| AuthError::MalformedLine {
+            line: line_no,
+            reason: format!("trailing data in blob: {e}"),
+        })?;
+
+        if key_bytes.len() != 32 {
+            return Err(AuthError::MalformedLine {
+                line: line_no,
+                reason: format!(
+                    "expected 32-byte Ed25519 key, got {} bytes",
+                    key_bytes.len()
+                ),
+            });
+        }
+        let mut arr = [0u8; 32];
+        arr.copy_from_slice(key_bytes);
+        let verifying_key =
+            VerifyingKey::from_bytes(&arr).map_err(|_| AuthError::MalformedLine {
+                line: line_no,
+                reason: "invalid Ed25519 key bytes".into(),
+            })?;
+        // A small-order key accepts forged signatures under the
+        // non-strict check; `verify_auth_signature` already uses
+        // `verify_strict`, and refusing the key here as well fails a
+        // bad `authorized_keys` loudly instead of keeping it loaded.
+        if verifying_key.is_weak() {
+            return Err(AuthError::MalformedLine {
+                line: line_no,
+                reason: "small-order (weak) Ed25519 key".into(),
+            });
+        }
+
+        let fingerprint = host_key::fingerprint_sha256(&blob);
+
+        keys.push(AuthorizedKey {
+            blob,
+            fingerprint,
+            verifying_key,
+        });
+    }
+
+    if keys.is_empty() {
+        return Err(AuthError::Empty);
+    }
+
+    Ok(keys)
+}
+
+/// What a successful `publickey` authentication hands the session: the
+/// audit identity (RFC-0014 §6, ADR-0051) and the PTY permission
+/// (ADR-0038 §3, ADR-0050 §6).
+#[derive(Debug, Clone)]
+pub(crate) struct Authenticated {
+    /// `authenticated_identity`: the fingerprint of the key whose
+    /// possession was proven, the certified key for a certificate.
+    pub(crate) fingerprint: String,
+    /// The ADR-0051 fields, on a certificate authentication only.
+    pub(crate) certificate: Option<CertIdentity>,
+    /// A bare key may allocate a PTY; a certificate only with
+    /// `permit-pty`.
+    pub(crate) pty_permitted: bool,
+}
+
+/// A key a `publickey` request may authenticate with, once its
+/// signature verifies.
+pub(crate) struct Candidate {
+    pub(crate) verifying_key: VerifyingKey,
+    pub(crate) authenticated: Authenticated,
+}
+
+/// Resolves the key a `publickey` request names: a bare `ssh-ed25519`
+/// key listed in `authorized_keys`, or a certificate that a CA in
+/// `trusted_user_ca_keys` signed for `user` (ADR-0050). `None` when
+/// neither holds. A refused certificate leaves a diagnostic record with
+/// its fixed reason and no certificate string (ADR-0050 §5).
+pub(crate) fn resolve(
+    key_algorithm: &str,
+    key_blob: &[u8],
+    user: &str,
+    authorized_keys: &AuthorizedKeys,
+    trusted_cas: Option<&TrustedUserCaKeys>,
+) -> Option<Candidate> {
+    if key_algorithm == KEY_ALGORITHM {
+        let ak = authorized_keys.lookup(key_blob)?;
+        return Some(Candidate {
+            verifying_key: ak.verifying_key,
+            authenticated: Authenticated {
+                fingerprint: ak.fingerprint.clone(),
+                certificate: None,
+                pty_permitted: true,
+            },
+        });
+    }
+    let verified = trusted_cas.map_or(Err(cert::Refusal::UntrustedCa), |cas| {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
+        cert::verify(key_blob, cas, user, now)
+    });
+    match verified {
+        Ok(c) => Some(Candidate {
+            verifying_key: c.key,
+            authenticated: Authenticated {
+                fingerprint: c.fingerprint,
+                certificate: Some(c.identity),
+                pty_permitted: c.permit_pty,
+            },
+        }),
+        Err(refusal) => {
+            info!(reason = refusal.as_str(), "certificate refused");
+            None
+        }
     }
 }
 
