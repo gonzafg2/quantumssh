@@ -329,8 +329,10 @@ jobs:
           # the quality of its verdicts, not by the check being green.
           # One log line per tool call and per model step, with the time
           # since the start, so a slow review shows where it spends its time
-          # while it runs. The lines carry tool names, paths, patterns and
-          # token counts, never a tool's output.
+          # while it runs: a slow step with many reasoning tokens is the model
+          # thinking, one with few is the provider making it wait. The lines
+          # carry tool names, paths, patterns and token counts, never a
+          # tool's output.
           PROGRESS_JQ: |
             def at($ms): (($ms - $t0) / 1000 | floor) as $s
               | "[\($s / 60 | floor)m\($s % 60 | tostring | if length < 2 then "0" + . else . end)s]";
@@ -339,7 +341,7 @@ jobs:
               if $e.type == "tool_use" then
                 "\(at($e.timestamp)) \($e.part.tool) \($e.part.state.status) \((($e.part.state.time.end // $e.timestamp) - ($e.part.state.time.start // $e.timestamp)) / 1000 | floor)s \($e.part.state.input | .description // .pattern // .path // .filePath // "" | tostring | .[0:100])"
               elif $e.type == "step_finish" and . != null then
-                "\(at($e.timestamp)) step \(($e.timestamp - .) / 1000 | floor)s, tokens in \($e.part.tokens.input // 0) out \($e.part.tokens.output // 0)"
+                "\(at($e.timestamp)) step \(($e.timestamp - .) / 1000 | floor)s, tokens in \($e.part.tokens.input // 0) out \($e.part.tokens.output // 0) reasoning \($e.part.tokens.reasoning // 0)"
               elif $e.type == "error" then
                 "\(at($e.timestamp)) error \($e.error.type // "")"
               else empty end)
