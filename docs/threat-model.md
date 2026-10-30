@@ -1310,7 +1310,9 @@ repeating it.
   lifetimes narrow §5.3.2's window, because expiry is the only
   revocation. The certificate parser runs before authentication on
   bounded input, and a certificate that carries any critical option is
-  refused until that option is enforced.
+  refused until that option is enforced. Until Phase 3 maps principals
+  to accounts, the CA file is the access boundary: every certificate a
+  trusted CA issued gets in, whatever its principal.
 - **No `authorized_keys` writes from the server.** Defends §5.3.3
   in-band.
 - **Per-key restrictions (planned).** `from=`, `command=`, forwarding

@@ -146,15 +146,17 @@ echo "ok: openssh_scp"
 
 # 8. User certificates (ADR-0050 §8): `ssh-keygen -s` signs for the
 # `tester` principal with a validity window, and the exec round trip runs
-# on the certificate alone. A certificate for another principal and an
-# expired one are refused.
-sign() { # sign <name> <principal> <validity>: writes $WORK/<name>-cert.pub
+# on the certificate alone. A certificate for another principal, an
+# expired one, and one from a CA the server does not trust are refused.
+ssh-keygen -t ed25519 -N "" -f "$WORK/untrusted_ca" -q
+sign() { # sign <name> <ca> <principal> <validity>: writes $WORK/<name>-cert.pub
     cp "$WORK/certkey.pub" "$WORK/$1.pub"
-    ssh-keygen -q -s "$WORK/ca" -I "tester@interop" -n "$2" -V "$3" "$WORK/$1.pub"
+    ssh-keygen -q -s "$WORK/$2" -I "tester@interop" -n "$3" -V "$4" "$WORK/$1.pub"
 }
-sign valid tester -5m:+5m
-sign other someone-else -5m:+5m
-sign expired tester 20200101:20200102
+sign valid ca tester -5m:+5m
+sign other ca someone-else -5m:+5m
+sign expired ca tester 20200101:20200102
+sign untrusted untrusted_ca tester -5m:+5m
 CERT_OPTS=(-i "$WORK/certkey" -p "$PORT"
     -o StrictHostKeyChecking=no
     -o UserKnownHostsFile=/dev/null
@@ -167,7 +169,7 @@ out="$(ssh "${CERT_OPTS[@]}" -o CertificateFile="$WORK/valid-cert.pub" \
 grep -q "cert_key_id=tester@interop" "$WORK/server.log" \
     || fail "cert: auth.succeeded lacks cert_key_id (ADR-0051)"
 echo "ok: openssh_cert"
-for refused in other expired; do
+for refused in other expired untrusted; do
     if ssh "${CERT_OPTS[@]}" -o CertificateFile="$WORK/$refused-cert.pub" \
            tester@127.0.0.1 'true' 2>/dev/null; then
         fail "cert: the $refused certificate was NOT refused"

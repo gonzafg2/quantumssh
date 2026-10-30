@@ -134,7 +134,9 @@ ssh-keygen -s user_ca -I alice@laptop -n alice -V +8h alice_key.pub
 - **Always pass `-V`.** Without it the certificate never expires, and
   expiry is the only revocation: the server keeps no revocation list.
 - **The principal is the login name.** `ssh alice@host` needs `alice`
-  in `-n`. Every session still runs as the service account.
+  in `-n`. Every session still runs as the service account, so the
+  principal does not limit access: every certificate the CA issued, for
+  any principal, gets in. Use a CA dedicated to this server.
 - **No critical options.** A certificate signed with `-O force-command`,
   `-O source-address` or `-O verify-required` is refused, because the
   server does not enforce them yet.
