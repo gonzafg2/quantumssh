@@ -39,6 +39,7 @@ use tracing::{Instrument, Span, debug, info, info_span, warn};
 
 use crate::admission::{Admission, ConnectionGuard, Limits};
 use crate::auth::AuthorizedKeys;
+use crate::cert::TrustedUserCaKeys;
 use crate::exec::ChildScope;
 use crate::host_key::HostKey;
 use crate::transport::{self, RekeyThresholds, TransportError};
@@ -104,6 +105,9 @@ pub struct Config {
     pub host_key: Arc<HostKey>,
     /// The parsed `authorized_keys` file (publickey auth).
     pub authorized_keys: Arc<AuthorizedKeys>,
+    /// The CAs `[auth] trusted_user_ca_keys` lists; `None` accepts no
+    /// certificate (ADR-0050 §3).
+    pub trusted_user_ca_keys: Option<Arc<TrustedUserCaKeys>>,
     /// Re-keying thresholds (ADR-0026: 1 GiB / 1 hour by default).
     pub rekey: RekeyThresholds,
     /// The ADR-0028 admission caps and per-source rate limit.
@@ -122,6 +126,7 @@ pub struct Server {
     handshake_timeout: Duration,
     host_key: Arc<HostKey>,
     authorized_keys: Arc<AuthorizedKeys>,
+    trusted_user_ca_keys: Option<Arc<TrustedUserCaKeys>>,
     rekey: RekeyThresholds,
     limits: Limits,
     helper: Option<Arc<Path>>,
@@ -142,6 +147,7 @@ impl Server {
             handshake_timeout: config.handshake_timeout,
             host_key: Arc::clone(&config.host_key),
             authorized_keys: Arc::clone(&config.authorized_keys),
+            trusted_user_ca_keys: config.trusted_user_ca_keys.clone(),
             rekey: config.rekey,
             limits: config.limits,
             helper: config.helper.as_deref().map(Arc::from),
@@ -239,6 +245,7 @@ impl Server {
                         Ok(guard) => {
                             let host_key = Arc::clone(&self.host_key);
                             let authorized_keys = Arc::clone(&self.authorized_keys);
+                            let trusted_cas = self.trusted_user_ca_keys.clone();
                             let helper = self.helper.clone();
                             let conn_rx = shutdown.subscribe();
                             let connection = async move {
@@ -247,6 +254,7 @@ impl Server {
                                     stream,
                                     host_key,
                                     authorized_keys,
+                                    trusted_cas,
                                     budget,
                                     rekey,
                                     guard,
@@ -357,6 +365,7 @@ async fn handle(
     mut stream: TcpStream,
     host_key: Arc<HostKey>,
     authorized_keys: Arc<AuthorizedKeys>,
+    trusted_cas: Option<Arc<TrustedUserCaKeys>>,
     budget: Duration,
     rekey: RekeyThresholds,
     guard: ConnectionGuard,
@@ -376,6 +385,7 @@ async fn handle(
             &mut stream,
             host_key,
             &authorized_keys,
+            trusted_cas.as_deref(),
             budget,
             rekey,
             &guard,
@@ -424,10 +434,13 @@ async fn handle(
 /// ([`Expect::serve`]) runs un-timed: a command may legitimately take
 /// arbitrarily long (ADR-0023). Returns `Ok(())` on a clean session
 /// close.
+// The `handle` argument list, minus what `handle` keeps for itself.
+#[allow(clippy::too_many_arguments)]
 async fn run_connection(
     stream: &mut TcpStream,
     host_key: Arc<HostKey>,
     authorized_keys: &AuthorizedKeys,
+    trusted_cas: Option<&TrustedUserCaKeys>,
     budget: Duration,
     rekey: RekeyThresholds,
     guard: &ConnectionGuard,
@@ -454,7 +467,7 @@ async fn run_connection(
         let (service, responder) = t.read_service_request().await?;
         if service.as_str() == "ssh-userauth" {
             let t = responder.accept().await?;
-            Ok::<_, TransportError>(Some(t.authenticate(authorized_keys).await?))
+            Ok::<_, TransportError>(Some(t.authenticate(authorized_keys, trusted_cas).await?))
         } else {
             info!(service = %service, "service denied (only ssh-userauth supported)");
             Err(responder.deny().await)

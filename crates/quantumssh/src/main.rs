@@ -13,7 +13,8 @@ use std::time::Duration;
 use std::sync::Arc;
 
 use quantumssh_core::admission::Limits;
-use quantumssh_core::auth::AuthorizedKeys;
+use quantumssh_core::auth::{AuthError, AuthorizedKeys};
+use quantumssh_core::cert::TrustedUserCaKeys;
 use quantumssh_core::host_key::HostKey;
 use quantumssh_core::server::{Config, Server};
 use quantumssh_core::transport::RekeyThresholds;
@@ -156,6 +157,8 @@ struct Resolved {
     listen: SocketAddr,
     host_key_path: Option<String>,
     authorized_keys_path: Option<String>,
+    /// ADR-0050 §3 — config-file-only.
+    trusted_user_ca_keys_path: Option<String>,
     handshake_timeout: Duration,
     log_format: LogFormat,
     /// ADR-0028 admission knobs — config-file-only (RFC-0010:
@@ -263,6 +266,7 @@ fn resolve(
         listen,
         host_key_path,
         authorized_keys_path,
+        trusted_user_ca_keys_path: file.and_then(|f| f.auth.trusted_user_ca_keys.clone()),
         handshake_timeout,
         log_format,
         limits,
@@ -408,9 +412,15 @@ fn load_host_key(path: &str, config_file: &str) -> Option<Arc<HostKey>> {
     }
 }
 
-/// `StrictModes`, then read once at startup (ADR-0022). Logs and
-/// returns `None` on failure.
-fn load_authorized_keys(path: &str, config_file: &str) -> Option<Arc<AuthorizedKeys>> {
+/// `StrictModes`, then read once at startup (ADR-0022): `authorized_keys`
+/// or `trusted_user_ca_keys` (`name`), whose load failure is the
+/// `invalid_<name>` class. Logs and returns `None` on failure.
+fn load_key_file<T>(
+    path: &str,
+    name: &str,
+    load: fn(&Path) -> Result<T, AuthError>,
+    config_file: &str,
+) -> Option<Arc<T>> {
     // Same canonical-read rule as the host key.
     let canon = match config::check_trusted_file(Path::new(path), TrustedClass::Input) {
         Ok(canon) => canon,
@@ -419,12 +429,12 @@ fn load_authorized_keys(path: &str, config_file: &str) -> Option<Arc<AuthorizedK
             return None;
         }
     };
-    match AuthorizedKeys::load(&canon) {
+    match load(&canon) {
         Ok(k) => Some(Arc::new(k)),
         Err(e) => {
             config_error(
-                "invalid_authorized_keys",
-                &format!("cannot load authorized_keys {}: {e}", canon.display()),
+                &format!("invalid_{name}"),
+                &format!("cannot load {name} {}: {e}", canon.display()),
                 config_file,
             );
             None
@@ -574,8 +584,27 @@ async fn run(resolved: Resolved, config_file: String) -> ExitCode {
         );
         return ExitCode::FAILURE;
     };
-    let Some(authorized_keys) = load_authorized_keys(&authorized_keys_path, &config_file) else {
+    let Some(authorized_keys) = load_key_file(
+        &authorized_keys_path,
+        "authorized_keys",
+        AuthorizedKeys::load,
+        &config_file,
+    ) else {
         return ExitCode::FAILURE;
+    };
+    let trusted_user_ca_keys = match resolved.trusted_user_ca_keys_path {
+        None => None,
+        Some(path) => {
+            let Some(cas) = load_key_file(
+                &path,
+                "trusted_user_ca_keys",
+                TrustedUserCaKeys::load,
+                &config_file,
+            ) else {
+                return ExitCode::FAILURE;
+            };
+            Some(cas)
+        }
     };
 
     let config = Config {
@@ -583,6 +612,7 @@ async fn run(resolved: Resolved, config_file: String) -> ExitCode {
         handshake_timeout: resolved.handshake_timeout,
         host_key,
         authorized_keys,
+        trusted_user_ca_keys,
         // ADR-0026 BSI defaults (1 GiB / 1 h); the re-key completion budget
         // mirrors the handshake budget.
         rekey: RekeyThresholds::bsi_defaults(resolved.handshake_timeout),

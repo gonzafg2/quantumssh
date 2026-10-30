@@ -22,7 +22,7 @@ We are not forking OpenSSH. We are not adding PQ algorithms as an option. We are
 
 Phase 0 (foundation) and Phase 1 (walking skeleton) are done: the greenfield SSH-2 server in Rust accepts OpenSSH 10.x clients end-to-end (hybrid `mlkem768x25519-sha256`, Ed25519 host keys, publickey auth, single-command `exec`, structured `tracing`, CI interop gate). Crates are at `0.0.1`; there is no public `0.1.0` tag yet.
 
-Phase 2 (“Usable”) is underway — tracked in [#109](https://github.com/gonzafg2/quantumssh/issues/109). Landed so far: TOML configuration file and StrictModes checks, concurrent accept loop with admission control, graceful shutdown, interactive PTY sessions, systemd integration, and SFTP. Still open before `0.1.0`: the one-way freeze of the negotiation profile and audit-log schema.
+Phase 2 (“Usable”) is underway — tracked in [#109](https://github.com/gonzafg2/quantumssh/issues/109). Landed so far: TOML configuration file and StrictModes checks, concurrent accept loop with admission control, graceful shutdown, interactive PTY sessions, systemd integration, SFTP, and OpenSSH user certificates. Still open before `0.1.0`: the one-way freeze of the negotiation profile and audit-log schema.
 
 Supporting infrastructure (DNS, TLS, email, signing, repository hardening) is described in [`docs/infrastructure.md`](./docs/infrastructure.md); independent verification recipes live in [`docs/operations.md`](./docs/operations.md). Decision records live in [`docs/adr/`](./docs/adr/) and [`docs/rfcs/`](./docs/rfcs/). Running the server under systemd: [`docs/deployment.md`](./docs/deployment.md).
 
@@ -124,6 +124,7 @@ Tracked in [#109](https://github.com/gonzafg2/quantumssh/issues/109). Scoping (n
 - ✅ Concurrent connections, admission limits, graceful shutdown — [ADR-0028](./docs/adr/0028-phase-2-concurrent-connections-limits-graceful-shutdown.md), implemented in [#129](https://github.com/gonzafg2/quantumssh/pull/129)
 - ✅ Interactive PTY sessions — [ADR-0038](./docs/adr/0038-phase-2-interactive-pty-sessions.md), implemented in [#189](https://github.com/gonzafg2/quantumssh/pull/189), [#192](https://github.com/gonzafg2/quantumssh/pull/192) and [#193](https://github.com/gonzafg2/quantumssh/pull/193)
 - ✅ SFTP subsystem — [RFC-0013](./docs/rfcs/0013-sftp-subsystem.md), [ADR-0041](./docs/adr/0041-sftp-v3-server-in-a-re-exec-helper.md), [ADR-0042](./docs/adr/0042-exec-finished-channel-byte-counts.md), implemented in [#196](https://github.com/gonzafg2/quantumssh/pull/196)
+- ✅ OpenSSH user certificates from trusted CAs — [RFC-0008](./docs/rfcs/0008-ssh-certificate-authentication.md), [ADR-0050](./docs/adr/0050-accept-openssh-user-certificates.md), [ADR-0051](./docs/adr/0051-certificate-audit-fields.md), implemented in [#237](https://github.com/gonzafg2/quantumssh/pull/237)
 - ✅ systemd integration — [ADR-0043](./docs/adr/0043-systemd-notify-service-and-reference-unit.md), implemented in [#198](https://github.com/gonzafg2/quantumssh/pull/198); operator guide in [`docs/deployment.md`](./docs/deployment.md)
 - First public release: `0.1.0` (one-way freeze of negotiation profile + audit-log `schema_version`)
 

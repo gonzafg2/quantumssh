@@ -1,7 +1,7 @@
 # ADR 0051: Certificate authentications carry four `cert_*` audit fields
 
-- **Status:** Proposed
-- **Date:** — (set on acceptance; drafted 2026-10-30)
+- **Status:** Accepted
+- **Date:** 2026-10-30 (accepted with the implementing PR [#237](https://github.com/gonzafg2/quantumssh/pull/237); drafted 2026-10-30)
 - **Deciders:** Project lead
 - **Related:** Names the certificate fields that [RFC-0014](../rfcs/0014-audit-log-schema-v1.md) §5 and §6 leave to [RFC-0008](../rfcs/0008-ssh-certificate-authentication.md)'s implementing ADR. The feature is [ADR-0050](0050-accept-openssh-user-certificates.md), and both are implemented in the same PR. The change is additive under RFC-0014 §5, so `schema_version` stays `1`. It keeps the [ADR-0024](0024-phase-1-log-event-schema.md) rule that every `exec.*` event names who ran the command. Part of the Phase-2 milestone ([#109](https://github.com/gonzafg2/quantumssh/issues/109)).
 
