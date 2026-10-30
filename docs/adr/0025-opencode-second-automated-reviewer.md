@@ -1,6 +1,6 @@
 # ADR 0025: Add opencode as a second automated PR reviewer
 
-- **Status:** Accepted; §Decision's opening sentence (provider and model), its permissions bullet and the "sent to DeepSeek" clause of its `No share` bullet are superseded by [ADR-0032](0032-opencode-reviewer-provider-model-variable-and-proof-of-review.md); the "Triggered on every PR" part of its trigger bullet is superseded by [ADR-0045](0045-opencode-automatic-review-behind-a-repository-variable.md)
+- **Status:** Accepted; §Decision's opening sentence (provider and model), its permissions bullet and the "sent to DeepSeek" clause of its `No share` bullet are superseded by [ADR-0032](0032-opencode-reviewer-provider-model-variable-and-proof-of-review.md); the "Triggered on every PR" part of its trigger bullet is superseded by [ADR-0045](0045-opencode-automatic-review-behind-a-repository-variable.md); the integration (`anomalyco/opencode/github`, posting as `opencode-agent[bot]`) and the "Pinned to a full commit SHA" bullet are superseded by [ADR-0049](0049-opencode-reviewer-on-a-pinned-opencode-2-cli.md)
 - **Date:** 2026-06-13
 - **Deciders:** Project lead
 - **Related:** `.github/workflows/opencode.yml` (implements this decision); `.github/workflows/claude-code-review.yml` (existing reviewer this decision mirrors)
