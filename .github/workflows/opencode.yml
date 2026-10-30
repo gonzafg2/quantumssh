@@ -279,6 +279,16 @@ jobs:
                 }
               }
             }
+          # The checkout is the PR's code, and OpenCode loads a project's
+          # opencode.json and .opencode/ from it: permissions, plugins and
+          # local MCP servers, the last two being commands it runs (checked
+          # with OpenCode 2.2.3). These three flags make it read only the
+          # configuration above: no project configuration or instruction
+          # files, no external plugins, no skills from .claude or .agents.
+          # The prompt names the files the agent should read instead.
+          OPENCODE_DISABLE_PROJECT_CONFIG: "1"
+          OPENCODE_PURE: "1"
+          OPENCODE_DISABLE_EXTERNAL_SKILLS: "1"
           # `<provider>/<model>` comes from OPENCODE_MODEL, validated above
           # and written to the job summary. Providers this workflow supports:
           # opencode-go (a fixed monthly subscription fronting several

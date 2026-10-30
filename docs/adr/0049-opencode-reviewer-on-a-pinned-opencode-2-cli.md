@@ -70,6 +70,11 @@ OpenCode 2.2.3 was checked in a container before this decision:
    - Outside the checkout the agent may read only `/etc` and the PR files.
    - The run has no `--auto`, so any request the configuration does not
      grant is rejected.
+   - OpenCode ignores the project configuration in the checkout
+     (`OPENCODE_DISABLE_PROJECT_CONFIG`, `OPENCODE_PURE`,
+     `OPENCODE_DISABLE_EXTERNAL_SKILLS`). A PR's `opencode.json` or
+     `.opencode/` could otherwise grant permissions, load plugins or start
+     local MCP servers, which are commands.
    - The job deletes every symlink in the checkout. Read and grep follow
      a symlink wherever it points, and the directory rules see only the
      path inside the checkout. The repository tracks no symlinks.
