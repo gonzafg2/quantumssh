@@ -124,6 +124,28 @@ OpenCode 2.2.3 was checked in a container before this decision:
 
    OpenCode 2's `run` has no share option, so ADR-0025's "No share"
    holds without a flag.
+8. **`/oc` keeps checking out the PR head. That is an accepted
+   residual.**
+   - On `issue_comment` the job checks out a PR head it resolved itself
+     while it holds the provider key. CodeQL reports that shape as an
+     untrusted checkout in a privileged context, plus a TOCTOU (alerts 15
+     and 16 on #235).
+   - [ADR-0030](0030-codex-third-automated-reviewer.md) (since
+     superseded by ADR-0037) rejected the same shape for a `/codex`
+     trigger (Alternative 5). The old opencode action avoided the alerts
+     only because its checkout ran inside the action, where CodeQL could
+     not see it.
+   - The project lead kept the checkout on 2026-10-30, because a review
+     on demand needs the code around the diff.
+   - The risk is bounded by Decisions 2 and 3 and the author gate:
+     - only OWNER, MEMBER or COLLABORATOR can trigger the job;
+     - fork heads are refused;
+     - the checked-out SHA and the diff come from one API read;
+     - nothing from the checkout runs, and the agent has read-only
+       tools.
+   - A head in this repository moves only by someone with write access,
+     who could already edit this workflow in a pull request. Both alerts
+     were dismissed as "won't fix" with this justification.
 
 ## Consequences
 

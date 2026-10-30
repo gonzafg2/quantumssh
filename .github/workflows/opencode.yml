@@ -202,11 +202,13 @@ jobs:
           set -euo pipefail
           dir="$RUNNER_TEMP/pr"
           mkdir -p "$dir"
-          gh api "repos/$REPO/pulls/$PR" | jq --arg base "$BASE_SHA" --arg head "$HEAD_SHA" \
-            '{number, title, body, author: .user.login, base: .base.ref, head: .head.ref, base_sha: $base, head_sha: $head}' > "$dir/pr.json"
           # ponytail: the compare lists at most 250 commits; a PR with more
-          # reaches the agent with its first 250, and total_commits says so.
+          # reaches the agent with its first 250, and pr.json's
+          # total_commits says so.
           gh api "repos/$REPO/compare/$BASE_SHA...$HEAD_SHA" > "$RUNNER_TEMP/compare.json"
+          gh api "repos/$REPO/pulls/$PR" \
+            | jq --arg base "$BASE_SHA" --arg head "$HEAD_SHA" --argjson total "$(jq '.total_commits' "$RUNNER_TEMP/compare.json")" \
+              '{number, title, body, author: .user.login, base: .base.ref, head: .head.ref, base_sha: $base, head_sha: $head, total_commits: $total}' > "$dir/pr.json"
           jq -c '.commits[] | {sha, author: .commit.author.name, message: .commit.message, verified: .commit.verification.verified, verification_reason: .commit.verification.reason}' \
             "$RUNNER_TEMP/compare.json" > "$dir/commits.jsonl"
           echo "commits: $(jq '.total_commits' "$RUNNER_TEMP/compare.json") in the PR, $(wc -l < "$dir/commits.jsonl") fetched"
@@ -376,7 +378,7 @@ jobs:
           # permission the configuration does not grant is rejected.
           status=0
           opencode run --standalone --model "$MODEL" --format json \
-            "You are reviewing pull request #$PR of $REPO; its head commit is checked out in the working directory. The workflow saved the PR in $RUNNER_TEMP/pr: pr.json (title, description, base and head), diff.patch, commits.jsonl (one commit per line, with its signature verification in .verified), and the earlier comments and reviews in issue-comments.jsonl, review-comments.jsonl and reviews.jsonl. Read them with the read tool. You have read-only tools: no shell, no network and no GitHub token.
+            "You are reviewing pull request #$PR of $REPO; its head commit is checked out in the working directory. The workflow saved the PR in $RUNNER_TEMP/pr: pr.json (title, description, base, head and total_commits), diff.patch, commits.jsonl (one commit per line, with its signature verification in .verified), and the earlier comments and reviews in issue-comments.jsonl, review-comments.jsonl and reviews.jsonl. Read them with the read tool. You have read-only tools: no shell, no network and no GitHub token.
 
           $PROMPT" > "$out/events.jsonl" || status=$?
           if [ "$status" -ne 0 ]; then
