@@ -1,11 +1,12 @@
 <!--
-  Governance status (2026-10-08):
+  Governance status (2026-10-30):
   Non-authoritative design note (ADR-0027). Scopes the Phase-2 ("Usable",
   0.1.0) milestone; tracked in #109. It sequences the workstreams and
   records the one-way release-freeze constraint so each eventual RFC/ADR
   does not start from a blank page. It decides nothing.
   Authoritative decisions live in ADRs/RFCs. For Phase 2 so far:
-  RFC-0008 (SSH certificate authentication, Accepted — impl TBD),
+  RFC-0008 (SSH certificate authentication, Accepted; implementing
+  ADR-0050 and ADR-0051 Proposed, impl TBD),
   RFC-0010 + ADR-0029 (TOML config, Accepted; implemented in #128),
   ADR-0028 (runtime/concurrency, Accepted; implemented in #129),
   RFC-0012 (host-key cut-over to ssh-mldsa44-ed25519 before 0.1.0).
@@ -82,7 +83,7 @@ here.
 | **Interactive PTY** | `pty-req`, `shell`, `window-change`; `exit-signal` reporting | **ADR** extending [ADR-0023](../adr/0023-phase-1-channel-layer-scope.md) channel scope; forces the runtime decision below | Runtime decision (landed) |
 | **Runtime / concurrency** | Real concurrent connections; per-source rate-limits; half-open caps; graceful shutdown | **[ADR-0028](../adr/0028-phase-2-concurrent-connections-limits-graceful-shutdown.md) — Accepted**; implemented in [#129](https://github.com/gonzafg2/quantumssh/pull/129) (extends ADR-0022) | — |
 | **SFTP subsystem** | The `subsystem` request; second concurrent channel | **RFC or ADR** (new protocol surface) | Channel multiplexing (PTY/second-channel work) |
-| **SSH certificate auth** | Cert-based auth (threat-model §5.3.2 mitigant) | **RFC-0008 — already Accepted**; needs implementation | Config file (cert-trust surface) |
+| **SSH certificate auth** | Cert-based auth (threat-model §5.3.2 mitigant) | **RFC-0008 — already Accepted**; implementing [ADR-0050](../adr/0050-accept-openssh-user-certificates.md) and [ADR-0051](../adr/0051-certificate-audit-fields.md) Proposed; needs implementation | Config file (cert-trust surface) |
 | **systemd integration** | Service deployment | **[ADR-0043](../adr/0043-systemd-notify-service-and-reference-unit.md) — Accepted**; implemented in [#198](https://github.com/gonzafg2/quantumssh/pull/198) | Graceful shutdown |
 | **Release `0.1.0`** | First public release | tag + the freeze checklist below | All of the above + freezes |
 
