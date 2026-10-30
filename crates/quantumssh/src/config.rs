@@ -173,35 +173,61 @@ pub fn parse(text: &str, origin: &str) -> Result<ConfigFile, ConfigError> {
     let file: ConfigFile = toml::from_str(text)
         .map_err(|e| ConfigError::SchemaError(format!("{origin}: {}", schema_detail(&e, text))))?;
     if !SUPPORTED_SCHEMA_VERSIONS.contains(&file.schema_version) {
+        // "Newer" only when it is: a version below or between the
+        // supported ones is not one to upgrade for (RFC-0016 §5).
+        let why = if SUPPORTED_SCHEMA_VERSIONS
+            .iter()
+            .all(|&v| file.schema_version > v)
+        {
+            "is newer than this binary understands"
+        } else {
+            "is not a version this binary understands"
+        };
+        let supported = SUPPORTED_SCHEMA_VERSIONS.map(|v| v.to_string()).join(", ");
         return Err(ConfigError::VersionUnsupported(format!(
-            "{origin}: schema_version {} is newer than this binary understands (supported: 1)",
+            "{origin}: schema_version {} {why} (supported: {supported})",
             file.schema_version
         )));
     }
-    // Fail-closed zero rejection: a zero cap refuses everything, a
-    // zero rate never refills, a zero deadline cannot bound anything.
-    let zeros = [
+    // The RFC-0016 §1 ranges, fail-closed. At least 1: a zero cap refuses
+    // everything, a zero rate never refills, a zero deadline cannot bound
+    // anything. At most 2^63 - 1, TOML's largest integer: `toml` reads a
+    // larger one into a `u64` or `usize` field, which the format does not
+    // allow. The `u32` keys stop below that in the deserializer.
+    let widen = |n: usize| u64::try_from(n).unwrap_or(u64::MAX);
+    let max = i64::MAX.unsigned_abs();
+    let integers = [
+        (file.server.handshake_timeout, "server.handshake_timeout"),
+        (file.server.drain_timeout, "server.drain_timeout"),
         (
-            file.server.handshake_timeout == Some(0),
-            "server.handshake_timeout",
-        ),
-        (file.server.drain_timeout == Some(0), "server.drain_timeout"),
-        (
-            file.limits.max_connections == Some(0),
+            file.limits.max_connections.map(widen),
             "limits.max_connections",
         ),
-        (file.limits.max_half_open == Some(0), "limits.max_half_open"),
+        (file.limits.max_half_open.map(widen), "limits.max_half_open"),
         (
-            file.limits.max_per_source == Some(0),
+            file.limits.max_per_source.map(widen),
             "limits.max_per_source",
         ),
-        (file.limits.accept_rate == Some(0), "limits.accept_rate"),
-        (file.limits.accept_burst == Some(0), "limits.accept_burst"),
+        (file.limits.accept_rate.map(u64::from), "limits.accept_rate"),
+        (
+            file.limits.accept_burst.map(u64::from),
+            "limits.accept_burst",
+        ),
     ];
-    if let Some((_, key)) = zeros.iter().find(|(is_zero, _)| *is_zero) {
-        return Err(ConfigError::SchemaError(format!(
-            "{origin}: {key} must be at least 1"
-        )));
+    for (value, key) in integers {
+        match value {
+            Some(0) => {
+                return Err(ConfigError::SchemaError(format!(
+                    "{origin}: {key} must be at least 1"
+                )));
+            }
+            Some(v) if v > max => {
+                return Err(ConfigError::SchemaError(format!(
+                    "{origin}: {key} must be at most {max}"
+                )));
+            }
+            _ => {}
+        }
     }
     Ok(file)
 }
@@ -433,6 +459,98 @@ format = "human"
     fn newer_schema_version_refuses_to_start() {
         let err = parse("schema_version = 2", "test").unwrap_err();
         assert!(matches!(err, ConfigError::VersionUnsupported(_)), "{err}");
+        assert_eq!(
+            err.detail(),
+            "test: schema_version 2 is newer than this binary understands (supported: 1)"
+        );
+    }
+
+    #[test]
+    fn an_older_unknown_schema_version_is_not_called_newer() {
+        let err = parse("schema_version = 0", "test").unwrap_err();
+        assert!(matches!(err, ConfigError::VersionUnsupported(_)), "{err}");
+        assert_eq!(
+            err.detail(),
+            "test: schema_version 0 is not a version this binary understands (supported: 1)"
+        );
+    }
+
+    /// The RFC-0016 §1 key set: a file setting every version-1 key
+    /// parses, so renaming or removing one fails here.
+    #[test]
+    fn every_version_1_key_parses() {
+        let file = parse(
+            r#"
+schema_version = 1
+[server]
+listen = "[::1]:2222"
+host_key = "/etc/quantumssh/hostkey"
+handshake_timeout = 10
+drain_timeout = 20
+[auth]
+authorized_keys = "/etc/quantumssh/authorized_keys"
+[logging]
+format = "json"
+[limits]
+max_connections = 1
+max_half_open = 2
+max_per_source = 3
+accept_rate = 4
+accept_burst = 5
+"#,
+            "test",
+        )
+        .expect("every version-1 key");
+        assert_eq!(file.server.listen, Some("[::1]:2222".parse().unwrap()));
+        assert_eq!(
+            file.server.host_key.as_deref(),
+            Some("/etc/quantumssh/hostkey")
+        );
+        assert_eq!(file.server.handshake_timeout, Some(10));
+        assert_eq!(file.server.drain_timeout, Some(20));
+        assert_eq!(
+            file.auth.authorized_keys.as_deref(),
+            Some("/etc/quantumssh/authorized_keys")
+        );
+        assert_eq!(file.logging.format, Some(LogFormat::Json));
+        assert_eq!(file.limits.max_connections, Some(1));
+        assert_eq!(file.limits.max_half_open, Some(2));
+        assert_eq!(file.limits.max_per_source, Some(3));
+        assert_eq!(file.limits.accept_rate, Some(4));
+        assert_eq!(file.limits.accept_burst, Some(5));
+    }
+
+    /// RFC-0016 §1's ranges: each integer key takes 1 and its maximum,
+    /// and refuses 0, a negative value and one past the maximum.
+    #[test]
+    fn version_1_ranges_take_their_ends_and_refuse_past_them() {
+        // TOML integers are 64-bit signed, so no key exceeds i64::MAX.
+        let i64_max = i128::from(i64::MAX);
+        let usize_max = i128::try_from(usize::MAX).map_or(i64_max, |m| m.min(i64_max));
+        let u32_max = i128::from(u32::MAX);
+        for (section, key, max) in [
+            ("server", "handshake_timeout", i64_max),
+            ("server", "drain_timeout", i64_max),
+            ("limits", "max_connections", usize_max),
+            ("limits", "max_half_open", usize_max),
+            ("limits", "max_per_source", usize_max),
+            ("limits", "accept_rate", u32_max),
+            ("limits", "accept_burst", u32_max),
+        ] {
+            let text = |value: i128| format!("schema_version = 1\n[{section}]\n{key} = {value}");
+            for value in [1, max] {
+                if let Err(err) = parse(&text(value), "test") {
+                    panic!("{section}.{key} = {value}: {err}");
+                }
+            }
+            for value in [0, -1, max + 1] {
+                let err = parse(&text(value), "test").unwrap_err();
+                assert!(
+                    matches!(err, ConfigError::SchemaError(_)),
+                    "{section}.{key} = {value}: {err}"
+                );
+            }
+        }
     }
 
     #[test]

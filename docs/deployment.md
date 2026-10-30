@@ -103,6 +103,12 @@ These optional keys exist:
 ADR-0028 and ADR-0029 define them. The log format follows the stream:
 under systemd it is JSON.
 
+A version-1 file keeps its meaning on every later release that reads
+version 1: later releases only add keys and accepted forms, which an
+older binary refuses by name, and a change that would break a version-1
+file ships as `schema_version = 2`
+([RFC-0016](rfcs/0016-config-schema-v1.md)).
+
 ## 5. Install and start the unit
 
 ```sh
