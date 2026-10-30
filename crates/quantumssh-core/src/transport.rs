@@ -1111,10 +1111,18 @@ where
             )
     }
 
-    /// While a re-key is active, the instant it must finish by.
+    /// While a re-key is active, the instant it must finish by. `None`
+    /// too when the budget reaches past what `Instant` holds (the
+    /// handshake timeout takes up to 2^63 - 1 seconds, ADR-0029): a
+    /// deadline that far out never fires anyway.
     pub(crate) fn rekey_deadline(&self) -> Option<Instant> {
-        self.rekey_active()
-            .then(|| self.stage.rekey.started + self.stage.rekey.thresholds.completion_deadline)
+        if !self.rekey_active() {
+            return None;
+        }
+        let rekey = &self.stage.rekey;
+        rekey
+            .started
+            .checked_add(rekey.thresholds.completion_deadline)
     }
 
     /// While idle, the instant the interval trigger fires (so a quiet

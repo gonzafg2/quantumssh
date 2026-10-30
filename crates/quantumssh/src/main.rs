@@ -537,11 +537,21 @@ fn spawn_signal_listener(tx: broadcast::Sender<Instant>, drain: Duration) {
             "shutdown signal received; draining"
         );
         notify::notify(&notify::stopping(drain));
-        let _ = tx.send(Instant::now() + drain);
+        let _ = tx.send(drain_deadline(Instant::now(), drain));
         tokio::select! { _ = term.recv() => {}, _ = int.recv() => {} }
         info!("second shutdown signal received; aborting the drain");
         let _ = tx.send(Instant::now());
     }));
+}
+
+/// tokio's own stand-in for a deadline that never comes: 30 years.
+const FAR_FUTURE: Duration = Duration::from_hours(24 * 365 * 30);
+
+/// When a drain that starts at `now` ends. `drain_timeout` takes up to
+/// 2^63 - 1 seconds (ADR-0028), past what `Instant` holds, so a drain
+/// that long ends at [`FAR_FUTURE`] instead of overflowing.
+fn drain_deadline(now: Instant, drain: Duration) -> Instant {
+    now.checked_add(drain).unwrap_or_else(|| now + FAR_FUTURE)
 }
 
 async fn run(resolved: Resolved, config_file: String) -> ExitCode {
@@ -661,6 +671,15 @@ mod tests {
     #[test]
     fn zero_handshake_timeout_flag_rejected() {
         assert!(parse_cli(&args(&["--handshake-timeout", "0"])).is_err());
+    }
+
+    #[test]
+    fn the_longest_drain_ends_in_the_far_future() {
+        let now = Instant::now();
+        let thirty = Duration::from_secs(30);
+        assert_eq!(drain_deadline(now, thirty), now + thirty);
+        let longest = Duration::from_secs(i64::MAX.unsigned_abs());
+        assert_eq!(drain_deadline(now, longest), now + FAR_FUTURE);
     }
 
     fn file(text: &str) -> ConfigFile {

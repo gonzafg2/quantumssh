@@ -831,7 +831,12 @@ impl SealedClient {
 /// Runs a client-initiated re-key mid-session and confirms data flows under
 /// the new keys, for the given cipher.
 pub async fn rekey_roundtrip(cipher: &str) {
-    let (addr, host_key) = start_server_rekey(Duration::from_secs(30), test_rekey(u64::MAX)).await;
+    rekey_roundtrip_with(cipher, test_rekey(u64::MAX)).await;
+}
+
+/// [`rekey_roundtrip`] under the given re-key thresholds.
+pub async fn rekey_roundtrip_with(cipher: &str, rekey: RekeyThresholds) {
+    let (addr, host_key) = start_server_rekey(Duration::from_secs(30), rekey).await;
     let (mut stream, mut client, session_id, server_id) =
         authenticate_full(addr, &host_key, cipher).await;
 

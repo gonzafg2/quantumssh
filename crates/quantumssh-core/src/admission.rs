@@ -104,7 +104,7 @@ impl Bucket {
             return;
         }
         let capped = u32::try_from(added.min(u64::from(limits.accept_burst))).unwrap_or(u32::MAX);
-        self.level = (self.level + capped).min(limits.accept_burst);
+        self.level = self.level.saturating_add(capped).min(limits.accept_burst);
         if self.level == limits.accept_burst {
             // Full: the remainder is irrelevant, reset the clock.
             self.refilled_at = now;
@@ -399,6 +399,24 @@ mod tests {
         let later = now + Duration::from_secs(1);
         let _g3 = a.try_admit(v4(1), later).expect("refilled");
         assert_eq!(a.try_admit(v4(1), later).unwrap_err(), Refusal::AcceptRate);
+    }
+
+    /// `accept_burst` and `accept_rate` take any positive `u32`
+    /// (ADR-0028): a refill near the top must not overflow the level.
+    #[test]
+    fn a_refill_at_the_largest_burst_does_not_overflow() {
+        let mut l = limits();
+        l.max_connections = 100;
+        l.max_half_open = 100;
+        l.max_per_source = 100;
+        l.accept_rate = u32::MAX;
+        l.accept_burst = u32::MAX;
+        let a = Admission::new(l);
+        let now = Instant::now();
+        drop(a.try_admit(v4(1), now).expect("take one token"));
+        // One second refills far more than the one token missing.
+        let later = now + Duration::from_secs(1);
+        let _g = a.try_admit(v4(1), later).expect("refilled");
     }
 
     #[test]
