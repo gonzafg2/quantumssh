@@ -3,7 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-10-30 (accepted with the implementing PR [#235](https://github.com/gonzafg2/quantumssh/pull/235))
 - **Deciders:** Project lead
-- **Related:** Supersedes, in [ADR-0025](0025-opencode-second-automated-reviewer.md) §Decision, the reviewer's integration (`anomalyco/opencode/github`, posting as `opencode-agent[bot]`) and its "Pinned to a full commit SHA" bullet. Supersedes, in [ADR-0032](0032-opencode-reviewer-provider-model-variable-and-proof-of-review.md) §Decision, the proof-of-review and permissions bullets, and the sentence of its same-repository bullet that says the action checks out the PR head. Supersedes the opencode bullet of [ADR-0033](0033-proof-of-review-for-every-automated-reviewer.md) §Decision. [ADR-0045](0045-opencode-automatic-review-behind-a-repository-variable.md) (the automatic-review switch) and everything else in those ADRs stand. Closes [#166](https://github.com/gonzafg2/quantumssh/issues/166). Implementation: `.github/workflows/opencode.yml` (lands in the same PR, as ADR-0045 did).
+- **Related:** Supersedes, in [ADR-0025](0025-opencode-second-automated-reviewer.md) §Decision, the reviewer's integration (`anomalyco/opencode/github`, posting as `opencode-agent[bot]`) and its "Pinned to a full commit SHA" bullet. Supersedes, in [ADR-0032](0032-opencode-reviewer-provider-model-variable-and-proof-of-review.md) §Decision, the proof-of-review and permissions bullets, and the sentence of its same-repository bullet that says the action checks out the PR head. Supersedes the opencode bullet of [ADR-0033](0033-proof-of-review-for-every-automated-reviewer.md) §Decision, and the references in Decision 4 of [ADR-0045](0045-opencode-automatic-review-behind-a-repository-variable.md) to the pinned action, the permissions and the proof-of-review step. Each superseded ADR's Status line names what this one replaces. ADR-0045's switch, ADR-0032's providers, model variable and fork refusal, and ADR-0025's triggers, author gate and prompt stand. Closes [#166](https://github.com/gonzafg2/quantumssh/issues/166). Implementation: `.github/workflows/opencode.yml` (lands in the same PR, as ADR-0045 did).
 
 ## Context
 
@@ -53,11 +53,13 @@ OpenCode 2.2.3 was checked in a container before this decision:
    version from `github.com/anomalyco/opencode/releases/download/`, and
    checks it against the SHA-256 that GitHub publishes for the asset.
    Both values sit in the workflow, so a bump is a pull request. No
-   installer script runs, and no `api.github.com` call happens before the
-   review. This closes both halves of #166.
+   installer script runs, and no anonymous `api.github.com` call happens
+   before the review. This closes both halves of #166.
 2. **The review runs `opencode run --standalone --format json`.** The
    job checks out the head commit that the fork-refusal step read from
-   the API, so a push in between cannot swap the code under review.
+   the API. The diff and the commits the agent reads come from the
+   compare of that step's base and head, so a push in between cannot
+   swap the code under review or split it from the diff.
 3. **The agent gets read-only tools and nothing else.** The PR's diff,
    description and comments come from people this workflow does not vet
    (anyone can comment on a public PR), and the provider key sits in the
@@ -87,9 +89,11 @@ OpenCode 2.2.3 was checked in a container before this decision:
    reviews. The prompt starts with where those files are.
 4. **Two jobs, split on privilege, as ADR-0030's Codex workflow was.**
    - `review` holds `contents: read`, `pull-requests: read` and
-     `issues: read`, the provider secret and the model. It extracts the
-     last text part that carries `## PR Review:`, and hands the comment
-     to the next job as an artifact.
+     `issues: read`, the provider secret and the model. It takes the
+     agent's final text from the line that starts with `## PR Review:`,
+     requires a `**Decision**:` line, and hands the comment to the next
+     job as an artifact. Text the agent wrote between tool calls is
+     never published.
    - `post` holds `pull-requests: write`, has no checkout, no secret and
      no model, and posts the comment with `gh pr comment`.
 
@@ -107,7 +111,9 @@ OpenCode 2.2.3 was checked in a container before this decision:
    - the fork refusal on both paths, the model variable, its validation
      and the two providers, and the 30-minute ceiling;
    - the concurrency rules;
-   - the prompt and its `.github/REVIEW-FORMAT.md` contract.
+   - the prompt and its `.github/REVIEW-FORMAT.md` contract. The
+     contract gains one sentence: a reviewer without a shell reads the
+     comment files its workflow saved.
 
    The prompt changes only where it described tools the agent no longer
    has:
@@ -145,9 +151,10 @@ OpenCode 2.2.3 was checked in a container before this decision:
   will lag. A lag only matters when a fix is needed.
 - The agent cannot run commands: no `cargo`, no `git`, nothing from the
   shell. A review rests on the checkout and the fetched PR data.
-- `/oc` asks for a review and nothing else. The comment's text does not
-  reach the model, and OpenCode 1's reactions on the triggering comment
-  are gone.
+- `/oc` only starts a review. The text after the command is not read
+  as a command, but it reaches the model as an ordinary PR comment,
+  untrusted like every other. OpenCode 1's reactions on the triggering
+  comment are gone.
 
 ### Neutral
 

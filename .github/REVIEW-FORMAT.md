@@ -14,6 +14,9 @@ Before reviewing, read the existing comments on the PR:
 gh pr view <number> --comments
 ```
 
+A reviewer without a shell reads the comment and review files its workflow saved instead, when
+its prompt names them (opencode, ADR-0049).
+
 **If there are previous reviews** (from any of the reviewers, from Copilot, or from a human):
 
 - List every issue raised earlier and classify it: ✅ resolved · ❌ open · 🔄 partly resolved.
