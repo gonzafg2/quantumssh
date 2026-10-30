@@ -70,6 +70,11 @@ OpenCode 2.2.3 was checked in a container before this decision:
    - Outside the checkout the agent may read only `/etc` and the PR files.
    - The run has no `--auto`, so any request the configuration does not
      grant is rejected.
+   - The job deletes every symlink in the checkout. Read and grep follow
+     a symlink wherever it points, and the directory rules see only the
+     path inside the checkout. The repository tracks no symlinks.
+   - A report that contains the provider key fails the job and is never
+     posted.
 
    The workflow, not the model, fetches the PR before the run, as
    ADR-0030's Codex workflow did. It saves the PR, the diff, the commits

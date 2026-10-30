@@ -106,6 +106,14 @@ jobs:
           # no token stays in the checkout.
           persist-credentials: false
 
+      # The agent's read and grep tools follow a symlink in the checkout to
+      # wherever it points, and the external_directory rules below only see
+      # the path inside the checkout (checked with OpenCode 2.2.3). The
+      # repository tracks no symlinks, so removing every one costs a review
+      # nothing and closes that way out.
+      - name: Remove symlinks from the checkout
+        run: find . -type l -not -path './.git/*' -print -delete
+
       # opencode does fail without a credential, but with "undefined is not an
       # object (evaluating 'p.rest')", which says nothing. This step names the
       # cause. The model is the repository variable OPENCODE_MODEL, with no
@@ -344,6 +352,15 @@ jobs:
           # the report, is not part of it.
           jq -rs '[.[] | select(.type == "text") | .part.text | select(contains("## PR Review:"))]
                   | last // empty | .[index("## PR Review:"):]' "$out/events.jsonl" > "$out/review.md"
+          # Last line of defence: the agent has no tool that reaches the
+          # environment, but a report that carries the provider key is never
+          # handed to `post`. printf is a builtin, so the key is not in any
+          # process's arguments.
+          if grep -qF -f <(printf '%s\n' "$OPENCODE_GO_API_KEY$DEEPSEEK_API_KEY") "$out/review.md"; then
+            echo "::error::opencode's report contains the provider key; it is not published."
+            exit 1
+          fi
+
           if [ ! -s "$out/review.md" ]; then
             jq -r 'select(.type == "text") | .part.text' "$out/events.jsonl" | tail -n 40
             echo "::error::opencode finished without a report starting with '## PR Review:'. A green check with no comment is indistinguishable from a review that never happened, so the job fails on purpose. The agent's last text is printed above."
