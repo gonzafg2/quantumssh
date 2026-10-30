@@ -338,14 +338,22 @@ jobs:
           out="$RUNNER_TEMP/opencode"
           mkdir -p "$out"
           # `opencode run` exits non-zero when the provider refuses the
-          # request (no credit, bad key), so the job fails with its error.
+          # request (no credit, bad key). With `--format json` it reports the
+          # cause as an `error` event on stdout and writes nothing to stderr,
+          # so the step prints those events before failing.
           # `--standalone` runs a private server for this process instead of
           # the background service a workstation keeps. No `--auto`: a
           # permission the configuration does not grant is rejected.
+          status=0
           opencode run --standalone --model "$MODEL" --format json \
             "You are reviewing pull request #$PR of $REPO; its head commit is checked out in the working directory. The workflow saved the PR in $RUNNER_TEMP/pr: pr.json (title, description, base and head), diff.patch, commits.jsonl (one commit per line, with .commit.verification), and the earlier comments and reviews in issue-comments.jsonl, review-comments.jsonl and reviews.jsonl. Read them with the read tool. You have read-only tools: no shell, no network and no GitHub token.
 
-          $PROMPT" > "$out/events.jsonl"
+          $PROMPT" > "$out/events.jsonl" || status=$?
+          if [ "$status" -ne 0 ]; then
+            jq -r 'select(.type == "error") | "::error::opencode: \(.error.type // "error"): \(.error.message // .error)"' "$out/events.jsonl" || true
+            echo "::error::opencode exited with status $status."
+            exit "$status"
+          fi
 
           # The report is the last text part that carries the heading, from
           # the heading on: text the agent wrote between tool calls, before
