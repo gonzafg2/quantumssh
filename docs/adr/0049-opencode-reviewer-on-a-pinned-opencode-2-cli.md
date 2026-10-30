@@ -80,8 +80,8 @@ OpenCode 2.2.3 was checked in a container before this decision:
    - The job deletes every symlink in the checkout. Read and grep follow
      a symlink wherever it points, and the directory rules see only the
      path inside the checkout. The repository tracks no symlinks.
-   - A report that contains the provider key fails the job and is never
-     posted.
+   - If any text the agent wrote contains the provider key, the job
+     fails before that text is published or printed.
 
    The workflow, not the model, fetches the PR before the run, as
    ADR-0030's Codex workflow did. It saves the PR, the diff, the commits
@@ -143,9 +143,12 @@ OpenCode 2.2.3 was checked in a container before this decision:
      - the checked-out SHA and the diff come from one API read;
      - nothing from the checkout runs, and the agent has read-only
        tools.
-   - A head in this repository moves only by someone with write access,
-     who could already edit this workflow in a pull request. Both alerts
-     were dismissed as "won't fix" with this justification.
+   - A head in this repository moves only by someone with write access.
+     That person could already run an edited workflow through the
+     `pull_request` trigger, or merge one to `main`. This is the
+     maintainer-compromise actor of the threat model (§3.2.6, §5.5.2.b),
+     which this path does not widen.
+   - Both alerts were dismissed as "won't fix" with this justification.
 
 ## Consequences
 
@@ -168,6 +171,13 @@ OpenCode 2.2.3 was checked in a container before this decision:
   post as. The `## PR Review:` heading and the footer identify them.
   `.github/REVIEW-FORMAT.md` reads earlier reviews from any author, so
   its iteration check is unaffected.
+- The pinned digest comes from the same upstream release that serves the
+  binary, so a release compromised before a bump is trusted at that bump
+  (threat model §5.5.2.a). Three things bound it:
+  - a bump is a reviewed pull request;
+  - the binary runs only in `review`, whose token is read-only;
+  - what it could take is the provider key, not a token that writes to
+    this repository.
 - Bumping the CLI is manual: Dependabot does not track a release asset.
   OpenCode 2 releases often (2.2.0 to 2.2.3 in three days), so the pin
   will lag. A lag only matters when a fix is needed.

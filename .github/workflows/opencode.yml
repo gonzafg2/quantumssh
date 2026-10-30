@@ -408,6 +408,19 @@ jobs:
             exit "$status"
           fi
 
+          # Last line of defence: the agent has no tool that reaches the
+          # environment, but if any text it wrote carries the provider key,
+          # the job stops before that text is sliced into a report, handed to
+          # `post` or printed below. printf is a builtin, so the key is not in
+          # any process's arguments.
+          # The text goes to a file first: `jq | grep -q` under pipefail
+          # would read an early match as a failure when grep closes the pipe.
+          jq -r 'select(.type == "text") | .part.text' "$out/events.jsonl" > "$out/text.txt"
+          if grep -qF -f <(printf '%s\n' "$OPENCODE_GO_API_KEY$DEEPSEEK_API_KEY") "$out/text.txt"; then
+            echo "::error::opencode's text contains the provider key; nothing is published or printed."
+            exit 1
+          fi
+
           # The report is the agent's final text, from the line that starts
           # with the heading on. Only the final text counts: text the agent
           # wrote between tool calls is never published, even when it quotes
@@ -415,17 +428,8 @@ jobs:
           # instead of falling back to an earlier part.
           jq -rs '[.[] | select(.type == "text") | .part.text] | last // empty' "$out/events.jsonl" \
             | sed -n '/^## PR Review:/,$p' > "$out/review.md"
-          # Last line of defence: the agent has no tool that reaches the
-          # environment, but a report that carries the provider key is never
-          # handed to `post`. printf is a builtin, so the key is not in any
-          # process's arguments.
-          if grep -qF -f <(printf '%s\n' "$OPENCODE_GO_API_KEY$DEEPSEEK_API_KEY") "$out/review.md"; then
-            echo "::error::opencode's report contains the provider key; it is not published."
-            exit 1
-          fi
-
           if [ ! -s "$out/review.md" ] || ! grep -q '^\*\*Decision\*\*:' "$out/review.md"; then
-            jq -r 'select(.type == "text") | .part.text' "$out/events.jsonl" | tail -n 40
+            tail -n 40 "$out/text.txt"
             echo "::error::opencode's final answer is not a report: it needs a line starting with '## PR Review:' and a '**Decision**:' line (.github/REVIEW-FORMAT.md). A green check with no comment is indistinguishable from a review that never happened, so the job fails on purpose. The agent's last text is printed above."
             exit 1
           fi
