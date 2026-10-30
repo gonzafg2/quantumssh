@@ -327,6 +327,22 @@ jobs:
           # recorded the reversal ("continue providing API services for
           # DeepSeek V4 Pro after September 14, 2026"). Judge the reviewer by
           # the quality of its verdicts, not by the check being green.
+          # One log line per tool call and per model step, with the time
+          # since the start, so a slow review shows where it spends its time
+          # while it runs. The lines carry tool names, paths, patterns and
+          # token counts, never a tool's output.
+          PROGRESS_JQ: |
+            def at($ms): (($ms - $t0) / 1000 | floor) as $s
+              | "[\($s / 60 | floor)m\($s % 60 | tostring | if length < 2 then "0" + . else . end)s]";
+            foreach (inputs | fromjson? | objects) as $e (null;
+              if $e.type == "step_start" then $e.timestamp else . end;
+              if $e.type == "tool_use" then
+                "\(at($e.timestamp)) \($e.part.tool) \($e.part.state.status) \((($e.part.state.time.end // $e.timestamp) - ($e.part.state.time.start // $e.timestamp)) / 1000 | floor)s \($e.part.state.input | .description // .pattern // .path // .filePath // "" | tostring | .[0:100])"
+              elif $e.type == "step_finish" and . != null then
+                "\(at($e.timestamp)) step \(($e.timestamp - .) / 1000 | floor)s, tokens in \($e.part.tokens.input // 0) out \($e.part.tokens.output // 0)"
+              elif $e.type == "error" then
+                "\(at($e.timestamp)) error \($e.error.type // "")"
+              else empty end)
           PROMPT: |
             You are reviewing a PR for QuantumSSH — a memory-safe, post-quantum-first SSH server in Rust (pre-alpha). Read CLAUDE.md for the project's review criteria.
 
@@ -376,11 +392,14 @@ jobs:
           # `--standalone` runs a private server for this process instead of
           # the background service a workstation keeps. No `--auto`: a
           # permission the configuration does not grant is rejected.
+          # The events go to a file and, as they arrive, through
+          # PROGRESS_JQ, so the log shows where the review spends its time.
+          t0="$(date +%s%3N)"
           status=0
           opencode run --standalone --model "$MODEL" --format json \
             "You are reviewing pull request #$PR of $REPO; its head commit is checked out in the working directory. The workflow saved the PR in $RUNNER_TEMP/pr: pr.json (title, description, base, head and total_commits), diff.patch, commits.jsonl (one commit per line, with its signature verification in .verified), and the earlier comments and reviews in issue-comments.jsonl, review-comments.jsonl and reviews.jsonl. Read them with the read tool. You have read-only tools: no shell, no network and no GitHub token.
 
-          $PROMPT" > "$out/events.jsonl" || status=$?
+          $PROMPT" | tee "$out/events.jsonl" | jq -nrR --unbuffered --argjson t0 "$t0" "$PROGRESS_JQ" || status=$?
           if [ "$status" -ne 0 ]; then
             jq -r 'select(.type == "error") | "::error::opencode: \(.error.type // "error"): \(.error.message // .error)"' "$out/events.jsonl" || true
             echo "::error::opencode exited with status $status."
