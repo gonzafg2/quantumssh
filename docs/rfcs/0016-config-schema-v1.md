@@ -87,7 +87,8 @@ The ranges are the accepted set version 1 freezes. TOML integers are
 64-bit signed, so no key takes more than 2⁶³ − 1. The binary checks that
 bound itself, because the `toml` parser reads a larger integer into an
 unsigned field. A value outside a range (zero, negative, or above the
-maximum) is a `schema_error`, and so is a value of the wrong TOML type. Accepting a wider range or another form
+maximum) is a `schema_error`, and so is a value of the wrong TOML type.
+Accepting a wider range or another form
 later, such as a hostname for `listen`, is an additive widening under
 §2. Accepting a narrower one is breaking.
 
