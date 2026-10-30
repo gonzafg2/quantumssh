@@ -84,9 +84,10 @@ are optional:
 | `limits.accept_burst` | integer, 1 to 2³² − 1 | `10` | ADR-0028 |
 
 The ranges are the accepted set version 1 freezes. TOML integers are
-64-bit signed, so no key can exceed 2⁶³ − 1 in a file. A value outside one
-(zero, negative, or above the maximum) is a `schema_error`, and so is a
-value of the wrong TOML type. Accepting a wider range or another form
+64-bit signed, so no key takes more than 2⁶³ − 1. The binary checks that
+bound itself, because the `toml` parser reads a larger integer into an
+unsigned field. A value outside a range (zero, negative, or above the
+maximum) is a `schema_error`, and so is a value of the wrong TOML type. Accepting a wider range or another form
 later, such as a hostname for `listen`, is an additive widening under
 §2. Accepting a narrower one is breaking.
 
@@ -157,6 +158,8 @@ The implementing PR:
 - adds a golden test that parses a file setting every §1 key, so a
   rename or removal fails the build. It also checks each range's ends.
   The wrong-type case is already covered (`type_mismatch_is_schema_error`);
+- refuses a value above 2⁶³ − 1 in the `u64` and `usize` keys. Today the
+  binary accepts one, because `toml` reads it into the unsigned field;
 - makes the `version_unsupported` message stop calling every unknown
   version "newer". It says `schema_version 0 is newer than this binary
   understands (supported: 1)` today. The message should build the
