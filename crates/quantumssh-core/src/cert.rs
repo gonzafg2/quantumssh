@@ -83,7 +83,8 @@ pub(crate) struct CertIdentity {
 }
 
 /// A certificate that passed every ADR-0050 §5 check.
-#[derive(Debug)]
+///
+/// `Debug` shows the fingerprint, never the key (threat model §4.3).
 pub(crate) struct Certificate {
     /// The certified key, which signs the userauth request.
     pub(crate) key: VerifyingKey,
@@ -94,6 +95,16 @@ pub(crate) struct Certificate {
     pub(crate) identity: CertIdentity,
     /// The certificate carries `permit-pty`.
     pub(crate) permit_pty: bool,
+}
+
+impl fmt::Debug for Certificate {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Certificate")
+            .field("fingerprint", &self.fingerprint)
+            .field("identity", &self.identity)
+            .field("permit_pty", &self.permit_pty)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Why a certificate was refused: the fixed reason of ADR-0050 §5's
@@ -669,5 +680,9 @@ mod tests {
         let debug = format!("{:?}", trusted(&[&ca()]));
         assert!(debug.contains("count"));
         assert!(!debug.contains("blob"));
+        let cert = check(&Spec::default()).expect("accepted");
+        let debug = format!("{cert:?}");
+        assert!(debug.contains(&cert.fingerprint));
+        assert!(!debug.contains("VerifyingKey"));
     }
 }
