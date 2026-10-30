@@ -147,12 +147,13 @@ impl Refusal {
 
 /// Runs ADR-0050 §5's checks, in its order, on the certificate `blob` a
 /// `publickey` request carries for `user`, at `now` (seconds since the
-/// Unix epoch).
+/// Unix epoch). `None` is a clock before the epoch, which is before every
+/// `valid after`: the certificate is refused, never checked against 0.
 pub(crate) fn verify(
     blob: &[u8],
     cas: &TrustedUserCaKeys,
     user: &str,
-    now: u64,
+    now: Option<u64>,
 ) -> Result<Certificate, Refusal> {
     let cert = Parsed::parse(blob).ok_or(Refusal::Malformed)?;
     let ca = auth::lookup(&cas.keys, cert.ca_key).ok_or(Refusal::UntrustedCa)?;
@@ -167,6 +168,7 @@ pub(crate) fn verify(
     if cert.role != ROLE_USER {
         return Err(Refusal::NotUserCertificate);
     }
+    let now = now.ok_or(Refusal::NotYetValid)?;
     if now < cert.valid_after {
         return Err(Refusal::NotYetValid);
     }
@@ -430,7 +432,7 @@ mod tests {
     }
 
     fn check(spec: &Spec) -> Result<Certificate, Refusal> {
-        verify(&spec.blob(), &trusted(&[&ca()]), USER, NOW)
+        verify(&spec.blob(), &trusted(&[&ca()]), USER, Some(NOW))
     }
 
     #[test]
@@ -477,7 +479,7 @@ mod tests {
             ca: other.clone(),
             ..Spec::default()
         };
-        assert!(verify(&spec.blob(), &trusted(&[&ca(), &other]), USER, NOW).is_ok());
+        assert!(verify(&spec.blob(), &trusted(&[&ca(), &other]), USER, Some(NOW)).is_ok());
     }
 
     #[test]
@@ -492,7 +494,7 @@ mod tests {
             - 1;
         blob[at] ^= 1;
         assert_eq!(
-            verify(&blob, &trusted(&[&ca()]), USER, NOW).unwrap_err(),
+            verify(&blob, &trusted(&[&ca()]), USER, Some(NOW)).unwrap_err(),
             Refusal::BadCaSignature
         );
     }
@@ -532,6 +534,20 @@ mod tests {
             ..Spec::default()
         };
         assert_eq!(check(&at_end).unwrap_err(), Refusal::Expired);
+    }
+
+    #[test]
+    fn a_clock_before_the_epoch_refuses_even_an_always_valid_certificate() {
+        // Fail closed: the time is unknown, not 0 (#237 review).
+        let spec = Spec {
+            valid_after: 0,
+            valid_before: 1,
+            ..Spec::default()
+        };
+        assert_eq!(
+            verify(&spec.blob(), &trusted(&[&ca()]), USER, None).unwrap_err(),
+            Refusal::NotYetValid
+        );
     }
 
     #[test]
@@ -653,7 +669,7 @@ mod tests {
         let cas = trusted(&[&ca()]);
         for len in 0..blob.len() {
             assert_eq!(
-                verify(&blob[..len], &cas, USER, NOW).unwrap_err(),
+                verify(&blob[..len], &cas, USER, Some(NOW)).unwrap_err(),
                 Refusal::Malformed,
                 "length {len}"
             );

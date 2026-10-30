@@ -350,7 +350,8 @@ pub(crate) fn resolve(
     let verified = trusted_cas.map_or(Err(cert::Refusal::UntrustedCa), |cas| {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map_or(0, |d| d.as_secs());
+            .ok()
+            .map(|d| d.as_secs());
         cert::verify(key_blob, cas, user, now)
     });
     match verified {

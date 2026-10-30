@@ -1475,7 +1475,8 @@ mod tests {
 
     #[test]
     fn exec_events_carry_the_certificate_fields() {
-        // ADR-0051: all four, on both `exec.*` events.
+        // ADR-0051: all four, on `exec.finished`. The binary's
+        // `audit_log` test checks them on `exec.started` too, end to end.
         let scope = ChildScope::default();
         let capture = Fields::default();
         let seen = capture.0.clone();

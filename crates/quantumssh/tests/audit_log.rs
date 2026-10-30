@@ -308,13 +308,6 @@ async fn a_certificate_session_adds_the_four_cert_fields() {
         value(succeeded, "authenticated_identity"),
         fingerprint(&cert_user_key())
     );
-    assert_eq!(value(succeeded, "cert_key_id"), "testuser@ci");
-    assert_eq!(value(succeeded, "cert_serial"), "7");
-    assert_eq!(
-        value(succeeded, "cert_ca_fingerprint"),
-        fingerprint(&test_ca())
-    );
-    assert_eq!(value(succeeded, "cert_principal"), "testuser");
     let session = [
         "peer_addr",
         "authenticated_identity",
@@ -323,7 +316,13 @@ async fn a_certificate_session_adds_the_four_cert_fields() {
         "request_type",
         "pty",
     ];
-    line_of(&seen, "exec.started", &[&session[..], &cert].concat());
+    let started = line_of(&seen, "exec.started", &[&session[..], &cert].concat());
+    for line in [succeeded, started] {
+        assert_eq!(value(line, "cert_key_id"), "testuser@ci");
+        assert_eq!(value(line, "cert_serial"), "7");
+        assert_eq!(value(line, "cert_ca_fingerprint"), fingerprint(&test_ca()));
+        assert_eq!(value(line, "cert_principal"), "testuser");
+    }
     let finished = [
         &session[..],
         &["exit_status", "bytes_received", "bytes_sent"],
