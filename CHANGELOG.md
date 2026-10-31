@@ -89,6 +89,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A configuration integer above 2⁶³ − 1, such as
+  `handshake_timeout = 9223372036854775808`, is now refused as a
+  `schema_error`, like a zero. TOML caps integers at 64-bit signed, but
+  the parser read a larger value into the unsigned fields. The
+  `version_unsupported` message no longer calls a version below the
+  supported ones "newer"
+  ([RFC-0016](docs/rfcs/0016-config-schema-v1.md)).
 - Audit events (`auth.*`, `exec.*`, `kex.failed`, `rekey.completed`) now
   carry the connection's `peer_addr`, as ADR-0024 states. The audit
   layer filtered out the `connection` span along with every other

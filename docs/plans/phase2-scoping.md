@@ -10,7 +10,8 @@
   RFC-0010 + ADR-0029 (TOML config, Accepted; implemented in #128),
   ADR-0028 (runtime/concurrency, Accepted; implemented in #129),
   RFC-0012 (host-key cut-over to ssh-mldsa44-ed25519 before 0.1.0),
-  RFC-0015 (negotiation profile version 1, Accepted).
+  RFC-0015 (negotiation profile version 1, Accepted),
+  RFC-0016 (config-file schema version 1, Accepted; implemented in #233).
   This file is retained for rationale and is not a source of truth.
 -->
 # Phase-2 ("Usable") — scoping note (non-normative)
@@ -139,10 +140,11 @@ ADR/RFC (the config-file schema is scoped above as an RFC) — not in this note:
       `ssh-ed25519` ([RFC-0012](../rfcs/0012-composite-host-key-cutover.md)).
       Part of the profile above, listed on its own because it needs an
       implementation and three subsidiary ADRs before the tag.
-- [ ] **Config-file schema** stable enough to extend compatibly (it, too, is a
+- [x] **Config-file schema** stable enough to extend compatibly (it, too, is a
       public interface once shipped).
-      Reviewed on 2026-10-29: version 1 and its compatibility rule are
-      proposed in [RFC-0016](../rfcs/0016-config-schema-v1.md) (Draft).
+      **Done:** version 1 and its compatibility rule are
+      [RFC-0016](../rfcs/0016-config-schema-v1.md), Accepted 2026-10-31
+      and implemented in [#233](https://github.com/gonzafg2/quantumssh/pull/233).
 
 ## Cross-phase: what Phase 3 waits on
 

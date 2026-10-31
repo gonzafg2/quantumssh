@@ -1,10 +1,10 @@
 # RFC 0016: Configuration-file schema version 1 — the contract `0.1.0` freezes, and when `schema_version` moves
 
-- **Status:** Draft
+- **Status:** Accepted (2026-10-31)
 - **Authors:** Gonzalo Fleming Garrido
 - **Created:** 2026-10-29
 - **Roadmap issue:** [#109](https://github.com/gonzafg2/quantumssh/issues/109)
-- **Implementation PR:** TBD
+- **Implementation PR:** [#233](https://github.com/gonzafg2/quantumssh/pull/233)
 
 ## Summary
 
