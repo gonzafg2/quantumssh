@@ -31,7 +31,7 @@ pub const SSH_MSG_KEXINIT: u8 = 20;
 /// `SSH_MSG_NEWKEYS` (RFC 4253 §7.3).
 pub const SSH_MSG_NEWKEYS: u8 = 21;
 /// Hybrid KEX initiation, client → server
-/// (`draft-ietf-sshm-mlkem-hybrid-kex`; shares number 30).
+/// (RFC 10042 §2.2; shares number 30).
 pub const SSH_MSG_KEX_HYBRID_INIT: u8 = 30;
 /// Hybrid KEX reply, server → client.
 pub const SSH_MSG_KEX_HYBRID_REPLY: u8 = 31;
@@ -590,7 +590,7 @@ mod tests {
 }
 
 // ---------------------------------------------------------------------------
-// Hybrid key exchange (draft-ietf-sshm-mlkem-hybrid-kex)
+// Hybrid key exchange (RFC 10042)
 // ---------------------------------------------------------------------------
 
 use ml_kem::{B32, EncapsulationKey, MlKem768};
@@ -604,16 +604,16 @@ pub const MLKEM_EK_LEN: usize = 1184;
 pub const MLKEM_CT_LEN: usize = 1088;
 /// X25519 public-key length (RFC 7748).
 pub const X25519_LEN: usize = 32;
-/// `C_INIT`: client's concatenated `EK_PQ ‖ PK_CL` (draft §3).
+/// `C_INIT`: client's concatenated `EK_PQ ‖ PK_CL` (RFC 10042 §2.1).
 pub const CLIENT_INIT_LEN: usize = MLKEM_EK_LEN + X25519_LEN;
-/// `S_REPLY`: server's concatenated `CT_PQ ‖ PK_CL` (draft §3).
+/// `S_REPLY`: server's concatenated `CT_PQ ‖ PK_CL` (RFC 10042 §2.1).
 pub const SERVER_REPLY_LEN: usize = MLKEM_CT_LEN + X25519_LEN;
 
 /// Outcome of the server side of the hybrid exchange.
 pub struct HybridOutcome {
     /// `CT_PQ ‖ S_CL` — sent back in `SSH_MSG_KEX_HYBRID_REPLY`.
     pub server_reply: Vec<u8>,
-    /// `K = SHA-256(K_PQ ‖ K_CL)` — the draft encodes the combined
+    /// `K = SHA-256(K_PQ ‖ K_CL)` — RFC 10042 §2.5 encodes the combined
     /// secret as a **fixed-length byte string**, not an mpint
     /// (the encoding ADR-0019 mandates an explicit test for).
     pub shared_secret: Zeroizing<[u8; 32]>,
@@ -641,6 +641,16 @@ impl std::fmt::Debug for HybridOutcome {
 /// on wrong length, an invalid ML-KEM key, a non-contributory X25519
 /// exchange, or OS randomness failure.
 pub fn hybrid_exchange(client_init: &[u8]) -> Result<HybridOutcome, KexError> {
+    hybrid_exchange_with(client_init, getrandom::fill)
+}
+
+/// [`hybrid_exchange`] drawing its randomness from `fill`: the
+/// encapsulation seed `m` first, then the X25519 secret. Only the
+/// known-answer tests pass anything but `getrandom::fill`.
+fn hybrid_exchange_with(
+    client_init: &[u8],
+    mut fill: impl FnMut(&mut [u8]) -> Result<(), getrandom::Error>,
+) -> Result<HybridOutcome, KexError> {
     if client_init.len() != CLIENT_INIT_LEN {
         return Err(KexError::Rejected(Rejection::kex_failed(
             "bad-hybrid-init-length",
@@ -655,8 +665,7 @@ pub fn hybrid_exchange(client_init: &[u8]) -> Result<HybridOutcome, KexError> {
     let ek = EncapsulationKey::<MlKem768>::new(&ek_array)
         .map_err(|_| KexError::Rejected(Rejection::kex_failed("invalid-mlkem-key")))?;
     let mut m = B32::default();
-    getrandom::fill(m.as_mut_slice())
-        .map_err(|_| KexError::Rejected(Rejection::kex_failed("rng-failure")))?;
+    fill(m.as_mut_slice()).map_err(|_| KexError::Rejected(Rejection::kex_failed("rng-failure")))?;
     let (ct, mut k_pq) = ek.encapsulate_deterministic(&m);
     // `m` regenerates K_PQ given the public EK; erase it once consumed
     // (threat model §4.3).
@@ -676,7 +685,7 @@ pub fn hybrid_exchange(client_init: &[u8]) -> Result<HybridOutcome, KexError> {
         .try_into()
         .map_err(|_| KexError::Rejected(Rejection::kex_failed("bad-hybrid-init-length")))?;
     let mut secret_bytes = Zeroizing::new([0u8; 32]);
-    getrandom::fill(secret_bytes.as_mut())
+    fill(secret_bytes.as_mut())
         .map_err(|_| KexError::Rejected(Rejection::kex_failed("rng-failure")))?;
     let server_secret = X25519Secret::from(*secret_bytes);
     let server_public = X25519Public::from(&server_secret);
@@ -700,7 +709,7 @@ pub fn hybrid_exchange(client_init: &[u8]) -> Result<HybridOutcome, KexError> {
     })
 }
 
-/// Inputs to the exchange hash `H` (draft-ietf-sshm-mlkem-hybrid-kex,
+/// Inputs to the exchange hash `H` (RFC 10042 §2.5,
 /// following the RFC 4253 §8 pattern with `K` as a string).
 pub struct ExchangeHashInputs<'a> {
     /// Client identification line, without CRLF.
@@ -732,8 +741,8 @@ impl std::fmt::Debug for ExchangeHashInputs<'_> {
 ///
 /// The full `I_C`/`I_S` KEXINIT payloads are bound into the hash —
 /// the anti-downgrade binding the threat model §5.2.2 mandates a
-/// mutation test for. `K` enters as a **string**, per the hybrid
-/// draft (unlike classical DH's mpint).
+/// mutation test for. `K` enters as a **string**, per RFC 10042 §2.5
+/// (unlike classical DH's mpint).
 #[must_use]
 pub fn exchange_hash(inputs: &ExchangeHashInputs<'_>) -> [u8; 32] {
     let mut w = Writer::new();
@@ -752,7 +761,7 @@ pub fn exchange_hash(inputs: &ExchangeHashInputs<'_>) -> [u8; 32] {
 }
 
 /// Derives key material per RFC 4253 §7.2 with `HASH = SHA-256` and
-/// `K` encoded as a string (hybrid draft).
+/// `K` encoded as a string (RFC 10042 §2.5).
 ///
 /// `letter` selects the key class (`b'A'`–`b'F'`); output is extended
 /// (`K2 = HASH(K ‖ H ‖ K1)`, …) until `needed` bytes are available.
@@ -813,6 +822,68 @@ mod hybrid_tests {
         c_init.extend_from_slice(ek.to_bytes().as_slice());
         c_init.extend_from_slice(x_public.as_bytes());
         (c_init, dk, x_secret)
+    }
+
+    /// Known answers derived from NIST ACVP (ML-KEM-768) and RFC 7748
+    /// §6.1 (X25519) by `scripts/derive-hybrid-kex-vectors.py` (#216).
+    const VECTORS: &str = include_str!("../tests/vectors/mlkem768x25519-sha256.txt");
+
+    fn vector(name: &str) -> Vec<u8> {
+        let prefix = format!("{name} = ");
+        let hex = VECTORS
+            .lines()
+            .find_map(|line| line.strip_prefix(&prefix))
+            .unwrap_or_else(|| panic!("no {name} vector"));
+        (0..hex.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).expect("hex"))
+            .collect()
+    }
+
+    /// With ACVP's `m` and RFC 7748's `b` as its randomness, the server
+    /// half produces `S_REPLY` and `K = SHA-256(K_PQ ‖ K_CL)` byte for
+    /// byte: the ML-KEM ciphertext, the X25519 public key and both
+    /// shared secrets in RFC 10042 §2.1 and §2.4's order and encoding.
+    #[test]
+    fn hybrid_exchange_matches_the_derived_vectors() {
+        let draws = [vector("m"), vector("server_x25519_b")];
+        let mut next = draws.iter();
+        let outcome = hybrid_exchange_with(&vector("client_init"), |buf: &mut [u8]| {
+            buf.copy_from_slice(next.next().expect("two draws"));
+            Ok(())
+        })
+        .unwrap();
+        assert!(next.next().is_none(), "exactly two draws");
+        assert_eq!(outcome.server_reply, vector("server_reply"));
+        assert_eq!(outcome.shared_secret.as_slice(), vector("k"));
+    }
+
+    /// `H` over the derived `C_INIT`, `S_REPLY` and `K`, framed as RFC
+    /// 10042 §2.5 lists the fields.
+    #[test]
+    fn exchange_hash_matches_the_derived_vector() {
+        let k: [u8; 32] = vector("k").try_into().unwrap();
+        let h = exchange_hash(&ExchangeHashInputs {
+            client_id: &vector("client_id"),
+            server_id: &vector("server_id"),
+            client_kexinit: &vector("client_kexinit"),
+            server_kexinit: &vector("server_kexinit"),
+            host_key_blob: &vector("host_key_blob"),
+            client_init: &vector("client_init"),
+            server_reply: &vector("server_reply"),
+            shared_secret: &k,
+        });
+        assert_eq!(h.as_slice(), vector("h"));
+    }
+
+    /// The 64-byte letter-C key (RFC 4253 §7.2), so the extension step
+    /// runs, with `K` as a string (RFC 10042 §2.5).
+    #[test]
+    fn derive_key_matches_the_derived_vector() {
+        let k: [u8; 32] = vector("k").try_into().unwrap();
+        let h: [u8; 32] = vector("h").try_into().unwrap();
+        let key = derive_key(&k, &h, b'C', &h, 64);
+        assert_eq!(key.as_slice(), vector("key_c"));
     }
 
     #[test]

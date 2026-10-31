@@ -41,7 +41,8 @@ use tokio::time::Instant;
 use tracing::{debug, info, warn};
 use zeroize::Zeroizing;
 
-use crate::auth::{self, AuthorizedKeys};
+use crate::auth::{self, Authenticated, AuthorizedKeys};
+use crate::cert::{self, TrustedUserCaKeys};
 use crate::cipher::PacketCipher;
 use crate::host_key::HostKey;
 use crate::kex::{
@@ -157,10 +158,10 @@ pub struct UserAuth {
 pub struct AuthAccepted {
     rx: PacketCipher,
     tx: PacketCipher,
-    /// The authenticated key fingerprint (`SHA256:…`), threaded from
-    /// `authenticate()` so the `exec.*` audit events can attribute the
-    /// command to the key that authorised it (ADR-0024).
-    identity: String,
+    /// Who authenticated, threaded from `authenticate()` so the `exec.*`
+    /// audit events can attribute the command to the key that authorised
+    /// it (ADR-0024, ADR-0051), and the PTY permission (ADR-0050 §6).
+    authenticated: Authenticated,
     /// The session id (first `H`) and peer id line, carried for re-keying
     /// (ADR-0026): a re-key derives keys with this session id and binds
     /// `client_id` into the new exchange hash.
@@ -178,7 +179,7 @@ pub struct AuthAccepted {
 pub struct Session {
     rx: PacketCipher,
     tx: PacketCipher,
-    identity: String,
+    authenticated: Authenticated,
     /// Bytes read from the wire but not yet framed into a packet.
     /// Bounded to one full frame (`4 + body_len`) at a time; progress
     /// survives `select!` cancellation.
@@ -635,9 +636,12 @@ where
     ///
     /// Reads `SSH_MSG_USERAUTH_REQUEST` messages until a valid Ed25519
     /// signature authenticates the peer, and advances the machine to
-    /// [`AuthAccepted`]. Every other method or non-Ed25519 key type is
-    /// refused with `SSH_MSG_USERAUTH_FAILURE`; unknown keys get a
-    /// `SSH_MSG_USERAUTH_PK_OK` probe. After
+    /// [`AuthAccepted`]. The key is a bare one listed in
+    /// `authorized_keys`, or a certificate signed by one of
+    /// `trusted_cas` (ADR-0050). Every other method or key type is
+    /// refused with `SSH_MSG_USERAUTH_FAILURE`, as is an unknown key or a
+    /// refused certificate; a known one answers a probe with
+    /// `SSH_MSG_USERAUTH_PK_OK`. After
     /// [`auth::MAX_AUTH_ATTEMPTS`] failures, the connection is
     /// terminated with `SSH_DISCONNECT_BY_APPLICATION` (11).
     ///
@@ -658,6 +662,7 @@ where
     pub async fn authenticate(
         mut self,
         authorized_keys: &AuthorizedKeys,
+        trusted_cas: Option<&TrustedUserCaKeys>,
     ) -> Result<Expect<S, AuthAccepted>, TransportError> {
         // Two counters with distinct jobs: `attempts` is the hard
         // rate-limiter — every USERAUTH_REQUEST spends one, including a
@@ -681,7 +686,7 @@ where
                     .await);
             }
 
-            let Ok(_user_name) = r
+            let Ok(user_name) = r
                 .string(auth::USER_NAME_BOUND)
                 .and_then(|s| std::str::from_utf8(s).map_err(|_| wire::WireError::Truncated))
             else {
@@ -750,7 +755,7 @@ where
                     .await);
             };
 
-            if key_algorithm != auth::KEY_ALGORITHM {
+            if key_algorithm != auth::KEY_ALGORITHM && key_algorithm != cert::CERT_ALGORITHM {
                 attempts += 1;
                 failures += 1;
                 warn!(
@@ -772,7 +777,12 @@ where
                 continue;
             }
 
-            let Ok(key_blob) = r.string(auth::KEY_BLOB_BOUND) else {
+            let key_blob_bound = if key_algorithm == cert::CERT_ALGORITHM {
+                cert::CERT_BLOB_BOUND
+            } else {
+                auth::KEY_BLOB_BOUND
+            };
+            let Ok(key_blob) = r.string(key_blob_bound) else {
                 return Err(self
                     .reject_sealed(protocol_error("malformed-userauth-request"))
                     .await);
@@ -819,7 +829,13 @@ where
                         .await);
                 }
 
-                let Some(ak) = authorized_keys.lookup(key_blob) else {
+                let Some(candidate) = auth::resolve(
+                    key_algorithm,
+                    key_blob,
+                    user_name,
+                    authorized_keys,
+                    trusted_cas,
+                ) else {
                     attempts += 1;
                     failures += 1;
                     warn!(
@@ -846,21 +862,29 @@ where
                     session_id,
                     payload_without_sig,
                     raw_sig,
-                    &ak.verifying_key,
+                    &candidate.verifying_key,
                 ) == Ok(())
                 {
                     let success = auth::build_success_payload();
                     self.write_sealed(&success).await?;
+                    let authenticated = candidate.authenticated;
+                    // ADR-0051: the four `cert_*` fields are present on a
+                    // certificate authentication only.
+                    let cert = authenticated.certificate.as_ref();
                     info!(
                         target: "audit",
-                        authenticated_identity = %ak.fingerprint,
+                        authenticated_identity = %authenticated.fingerprint,
                         auth_method = method,
+                        cert_key_id = cert.map(|c| c.key_id.as_str()),
+                        cert_serial = cert.map(|c| c.serial.as_str()),
+                        cert_ca_fingerprint = cert.map(|c| c.ca_fingerprint.as_str()),
+                        cert_principal = cert.map(|c| c.principal.as_str()),
                         "auth.succeeded"
                     );
                     let stage = AuthAccepted {
                         rx: self.stage.rx,
                         tx: self.stage.tx,
-                        identity: ak.fingerprint.clone(),
+                        authenticated,
                         session_id: self.stage.session_id,
                         client_id: self.stage.client_id,
                     };
@@ -905,7 +929,14 @@ where
             // model §5.3.1). A known-key probe is not a failure, so it
             // does not touch `failures` or emit `auth.failed`.
             attempts += 1;
-            let known = authorized_keys.lookup(key_blob).is_some();
+            let known = auth::resolve(
+                key_algorithm,
+                key_blob,
+                user_name,
+                authorized_keys,
+                trusted_cas,
+            )
+            .is_some();
             if !known {
                 // An unknown-key probe is a failure like any other.
                 failures += 1;
@@ -925,7 +956,7 @@ where
                     .await);
             }
             if known {
-                let pk_ok = auth::build_pk_ok(auth::KEY_ALGORITHM, key_blob);
+                let pk_ok = auth::build_pk_ok(key_algorithm, key_blob);
                 self.write_sealed(&pk_ok).await?;
             } else {
                 let failure = auth::build_failure_payload(false);
@@ -963,7 +994,7 @@ where
             stage: Session {
                 rx: self.stage.rx,
                 tx: self.stage.tx,
-                identity: self.stage.identity,
+                authenticated: self.stage.authenticated,
                 inbuf: Vec::new(),
                 host_key,
                 client_id: self.stage.client_id,
@@ -1065,9 +1096,10 @@ where
         self.write_sealed(payload).await
     }
 
-    /// The authenticated key fingerprint, for `exec.*` audit events.
-    pub(crate) fn identity(&self) -> &str {
-        &self.stage.identity
+    /// Who authenticated, for the `exec.*` audit events and the PTY
+    /// gate.
+    pub(crate) const fn authenticated(&self) -> &Authenticated {
+        &self.stage.authenticated
     }
 
     /// Sends an encrypted `SSH_MSG_DISCONNECT` with `PROTOCOL_ERROR`
@@ -1111,10 +1143,18 @@ where
             )
     }
 
-    /// While a re-key is active, the instant it must finish by.
+    /// While a re-key is active, the instant it must finish by. `None`
+    /// too when the budget reaches past what `Instant` holds (the
+    /// handshake timeout takes up to 2^63 - 1 seconds, ADR-0029): a
+    /// deadline that far out never fires anyway.
     pub(crate) fn rekey_deadline(&self) -> Option<Instant> {
-        self.rekey_active()
-            .then(|| self.stage.rekey.started + self.stage.rekey.thresholds.completion_deadline)
+        if !self.rekey_active() {
+            return None;
+        }
+        let rekey = &self.stage.rekey;
+        rekey
+            .started
+            .checked_add(rekey.thresholds.completion_deadline)
     }
 
     /// While idle, the instant the interval trigger fires (so a quiet
