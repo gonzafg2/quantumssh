@@ -1,5 +1,5 @@
 <!--
-  Governance status (2026-10-30):
+  Governance status (2026-10-31):
   Non-authoritative design note (ADR-0027). Scopes the Phase-2 ("Usable",
   0.1.0) milestone; tracked in #109. It sequences the workstreams and
   records the one-way release-freeze constraint so each eventual RFC/ADR
@@ -9,7 +9,8 @@
   ADR-0051 Accepted, implemented in #237),
   RFC-0010 + ADR-0029 (TOML config, Accepted; implemented in #128),
   ADR-0028 (runtime/concurrency, Accepted; implemented in #129),
-  RFC-0012 (host-key cut-over to ssh-mldsa44-ed25519 before 0.1.0).
+  RFC-0012 (host-key cut-over to ssh-mldsa44-ed25519 before 0.1.0),
+  RFC-0015 (negotiation profile version 1, Accepted).
   This file is retained for rationale and is not a source of truth.
 -->
 # Phase-2 ("Usable") — scoping note (non-normative)
@@ -128,8 +129,12 @@ ADR/RFC (the config-file schema is scoped above as an RFC) — not in this note:
       [RFC-0014](../rfcs/0014-audit-log-schema-v1.md), implemented with
       [ADR-0046](../adr/0046-audit-log-schema-v1-supersessions-and-encoder.md);
       `connection.refused` keeps its `limit` field.
-- [ ] **Negotiation profile** (KEXINIT name-lists) reviewed as a
+- [x] **Negotiation profile** (KEXINIT name-lists) reviewed as a
       to-be-frozen contract ([ADR-0021](../adr/0021-phase-1-negotiation-profile.md)).
+      **Done:** version 1 is
+      [RFC-0015](../rfcs/0015-negotiation-profile-v1.md), Accepted
+      2026-10-31. Its §5 preconditions for the tag include the host-key
+      item below.
 - [ ] **Host-key algorithm** is the composite `ssh-mldsa44-ed25519`, not
       `ssh-ed25519` ([RFC-0012](../rfcs/0012-composite-host-key-cutover.md)).
       Part of the profile above, listed on its own because it needs an
