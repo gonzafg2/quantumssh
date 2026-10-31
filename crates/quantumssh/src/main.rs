@@ -13,7 +13,8 @@ use std::time::Duration;
 use std::sync::Arc;
 
 use quantumssh_core::admission::Limits;
-use quantumssh_core::auth::AuthorizedKeys;
+use quantumssh_core::auth::{AuthError, AuthorizedKeys};
+use quantumssh_core::cert::TrustedUserCaKeys;
 use quantumssh_core::host_key::HostKey;
 use quantumssh_core::server::{Config, Server};
 use quantumssh_core::transport::RekeyThresholds;
@@ -156,6 +157,8 @@ struct Resolved {
     listen: SocketAddr,
     host_key_path: Option<String>,
     authorized_keys_path: Option<String>,
+    /// ADR-0050 §3 — config-file-only.
+    trusted_user_ca_keys_path: Option<String>,
     handshake_timeout: Duration,
     log_format: LogFormat,
     /// ADR-0028 admission knobs — config-file-only (RFC-0010:
@@ -263,6 +266,7 @@ fn resolve(
         listen,
         host_key_path,
         authorized_keys_path,
+        trusted_user_ca_keys_path: file.and_then(|f| f.auth.trusted_user_ca_keys.clone()),
         handshake_timeout,
         log_format,
         limits,
@@ -408,9 +412,15 @@ fn load_host_key(path: &str, config_file: &str) -> Option<Arc<HostKey>> {
     }
 }
 
-/// `StrictModes`, then read once at startup (ADR-0022). Logs and
-/// returns `None` on failure.
-fn load_authorized_keys(path: &str, config_file: &str) -> Option<Arc<AuthorizedKeys>> {
+/// `StrictModes`, then read once at startup (ADR-0022): `authorized_keys`
+/// or `trusted_user_ca_keys` (`name`), whose load failure is the
+/// `invalid_<name>` class. Logs and returns `None` on failure.
+fn load_key_file<T>(
+    path: &str,
+    name: &str,
+    load: fn(&Path) -> Result<T, AuthError>,
+    config_file: &str,
+) -> Option<Arc<T>> {
     // Same canonical-read rule as the host key.
     let canon = match config::check_trusted_file(Path::new(path), TrustedClass::Input) {
         Ok(canon) => canon,
@@ -419,12 +429,12 @@ fn load_authorized_keys(path: &str, config_file: &str) -> Option<Arc<AuthorizedK
             return None;
         }
     };
-    match AuthorizedKeys::load(&canon) {
+    match load(&canon) {
         Ok(k) => Some(Arc::new(k)),
         Err(e) => {
             config_error(
-                "invalid_authorized_keys",
-                &format!("cannot load authorized_keys {}: {e}", canon.display()),
+                &format!("invalid_{name}"),
+                &format!("cannot load {name} {}: {e}", canon.display()),
                 config_file,
             );
             None
@@ -537,11 +547,21 @@ fn spawn_signal_listener(tx: broadcast::Sender<Instant>, drain: Duration) {
             "shutdown signal received; draining"
         );
         notify::notify(&notify::stopping(drain));
-        let _ = tx.send(Instant::now() + drain);
+        let _ = tx.send(drain_deadline(Instant::now(), drain));
         tokio::select! { _ = term.recv() => {}, _ = int.recv() => {} }
         info!("second shutdown signal received; aborting the drain");
         let _ = tx.send(Instant::now());
     }));
+}
+
+/// tokio's own stand-in for a deadline that never comes: 30 years.
+const FAR_FUTURE: Duration = Duration::from_hours(24 * 365 * 30);
+
+/// When a drain that starts at `now` ends. `drain_timeout` takes up to
+/// 2^63 - 1 seconds (ADR-0028), past what `Instant` holds, so a drain
+/// that long ends at [`FAR_FUTURE`] instead of overflowing.
+fn drain_deadline(now: Instant, drain: Duration) -> Instant {
+    now.checked_add(drain).unwrap_or_else(|| now + FAR_FUTURE)
 }
 
 async fn run(resolved: Resolved, config_file: String) -> ExitCode {
@@ -564,8 +584,27 @@ async fn run(resolved: Resolved, config_file: String) -> ExitCode {
         );
         return ExitCode::FAILURE;
     };
-    let Some(authorized_keys) = load_authorized_keys(&authorized_keys_path, &config_file) else {
+    let Some(authorized_keys) = load_key_file(
+        &authorized_keys_path,
+        "authorized_keys",
+        AuthorizedKeys::load,
+        &config_file,
+    ) else {
         return ExitCode::FAILURE;
+    };
+    let trusted_user_ca_keys = match resolved.trusted_user_ca_keys_path {
+        None => None,
+        Some(path) => {
+            let Some(cas) = load_key_file(
+                &path,
+                "trusted_user_ca_keys",
+                TrustedUserCaKeys::load,
+                &config_file,
+            ) else {
+                return ExitCode::FAILURE;
+            };
+            Some(cas)
+        }
     };
 
     let config = Config {
@@ -573,6 +612,7 @@ async fn run(resolved: Resolved, config_file: String) -> ExitCode {
         handshake_timeout: resolved.handshake_timeout,
         host_key,
         authorized_keys,
+        trusted_user_ca_keys,
         // ADR-0026 BSI defaults (1 GiB / 1 h); the re-key completion budget
         // mirrors the handshake budget.
         rekey: RekeyThresholds::bsi_defaults(resolved.handshake_timeout),
@@ -661,6 +701,15 @@ mod tests {
     #[test]
     fn zero_handshake_timeout_flag_rejected() {
         assert!(parse_cli(&args(&["--handshake-timeout", "0"])).is_err());
+    }
+
+    #[test]
+    fn the_longest_drain_ends_in_the_far_future() {
+        let now = Instant::now();
+        let thirty = Duration::from_secs(30);
+        assert_eq!(drain_deadline(now, thirty), now + thirty);
+        let longest = Duration::from_secs(i64::MAX.unsigned_abs());
+        assert_eq!(drain_deadline(now, longest), now + FAR_FUTURE);
     }
 
     fn file(text: &str) -> ConfigFile {

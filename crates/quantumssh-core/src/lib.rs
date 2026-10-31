@@ -15,6 +15,7 @@
 
 pub mod admission;
 pub mod auth;
+pub mod cert;
 mod channel;
 pub mod cipher;
 mod exec;

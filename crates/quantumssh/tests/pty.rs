@@ -267,3 +267,25 @@ async fn a_refused_second_pty_req_keeps_the_first_pty() {
     );
     assert_eq!(exit, Some(0));
 }
+
+/// The `pty-req` reply on a session a test certificate authenticated,
+/// with or without `permit-pty`.
+async fn pty_reply_with_cert(permit_pty: bool) -> u8 {
+    let (addr, host_key) =
+        start_server_with_ca(Some(PathBuf::from(env!("CARGO_BIN_EXE_quantumssh")))).await;
+    let cert_blob = user_cert(&test_ca(), &[b"testuser"], u64::MAX, permit_pty);
+    let (mut stream, mut client) = authenticate_with_cert(addr, &host_key, &cert_blob).await;
+    client.write_sealed(&mut stream, &channel_open(0)).await;
+    let chan = expect_open_confirmation(&mut client, &mut stream).await;
+    client
+        .write_sealed(&mut stream, &channel_pty_req(chan, b"xterm", 80, 24, &[]))
+        .await;
+    expect_reply(&mut client, &mut stream).await
+}
+
+#[tokio::test]
+async fn a_certificate_gets_a_pty_only_with_permit_pty() {
+    // ADR-0050 §6 feeds the ADR-0038 §3 gate.
+    assert_eq!(pty_reply_with_cert(true).await, CH_SUCCESS);
+    assert_eq!(pty_reply_with_cert(false).await, CH_FAILURE);
+}

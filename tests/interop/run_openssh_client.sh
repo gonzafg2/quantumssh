@@ -34,7 +34,18 @@ ssh-keygen -t ed25519 -N "" -f "$WORK/hostkey" -q
 ssh-keygen -t ed25519 -N "" -f "$WORK/clientkey" -q
 cat "$WORK/clientkey.pub" > "$WORK/authorized_keys"
 
-"$BIN" --listen "127.0.0.1:$PORT" \
+# A user CA the server trusts (ADR-0050 §3), and a key that only its
+# certificates authorize: it is not in authorized_keys.
+ssh-keygen -t ed25519 -N "" -f "$WORK/ca" -q
+cp "$WORK/ca.pub" "$WORK/trusted_user_ca_keys"
+ssh-keygen -t ed25519 -N "" -f "$WORK/certkey" -q
+# The gate opens its connections back to back, more than ADR-0028's
+# default burst of 10 admits from one source.
+printf 'schema_version = 1\n\n[auth]\ntrusted_user_ca_keys = "%s"\n\n[limits]\naccept_burst = 32\n' \
+    "$WORK/trusted_user_ca_keys" > "$WORK/config.toml"
+
+"$BIN" --config "$WORK/config.toml" \
+       --listen "127.0.0.1:$PORT" \
        --host-key "$WORK/hostkey" \
        --authorized-keys "$WORK/authorized_keys" \
        --log-format human \
@@ -132,5 +143,38 @@ cmp -s "$WORK/payload" "$WORK/scp-up" || fail "scp: uploaded bytes differ"
 scp "${COPY_OPTS[@]}" "tester@127.0.0.1:$WORK/scp-up" "$WORK/scp-down" || fail "scp: download exited $?"
 cmp -s "$WORK/payload" "$WORK/scp-down" || fail "scp: downloaded bytes differ"
 echo "ok: openssh_scp"
+
+# 8. User certificates (ADR-0050 §8): `ssh-keygen -s` signs for the
+# `tester` principal with a validity window, and the exec round trip runs
+# on the certificate alone. A certificate for another principal, an
+# expired one, and one from a CA the server does not trust are refused.
+ssh-keygen -t ed25519 -N "" -f "$WORK/untrusted_ca" -q
+sign() { # sign <name> <ca> <principal> <validity>: writes $WORK/<name>-cert.pub
+    cp "$WORK/certkey.pub" "$WORK/$1.pub"
+    ssh-keygen -q -s "$WORK/$2" -I "tester@interop" -n "$3" -V "$4" "$WORK/$1.pub"
+}
+sign valid ca tester -5m:+5m
+sign other ca someone-else -5m:+5m
+sign expired ca tester 20200101:20200102
+sign untrusted untrusted_ca tester -5m:+5m
+CERT_OPTS=(-i "$WORK/certkey" -p "$PORT"
+    -o StrictHostKeyChecking=no
+    -o UserKnownHostsFile=/dev/null
+    -o PasswordAuthentication=no
+    -o IdentitiesOnly=yes
+    -o ConnectTimeout=10)
+out="$(ssh "${CERT_OPTS[@]}" -o CertificateFile="$WORK/valid-cert.pub" \
+    tester@127.0.0.1 'echo cert-ok')" || fail "cert: ssh exited $?"
+[ "$out" = "cert-ok" ] || fail "cert: output '$out' != 'cert-ok'"
+grep -q "cert_key_id=tester@interop" "$WORK/server.log" \
+    || fail "cert: auth.succeeded lacks cert_key_id (ADR-0051)"
+echo "ok: openssh_cert"
+for refused in other expired untrusted; do
+    if ssh "${CERT_OPTS[@]}" -o CertificateFile="$WORK/$refused-cert.pub" \
+           tester@127.0.0.1 'true' 2>/dev/null; then
+        fail "cert: the $refused certificate was NOT refused"
+    fi
+done
+echo "ok: openssh_cert_refusals"
 
 echo "INTEROP PASS"

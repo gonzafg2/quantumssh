@@ -121,6 +121,9 @@ pub struct ServerSection {
 pub struct AuthSection {
     /// `authorized_keys` path.
     pub authorized_keys: Option<String>,
+    /// CA keys for user certificates (ADR-0050 §3); unset accepts no
+    /// certificate. File-only: no flag sets it (RFC-0010).
+    pub trusted_user_ca_keys: Option<String>,
 }
 
 /// `[logging]`.
@@ -246,7 +249,8 @@ pub fn load(path: &Path) -> Result<ConfigFile, ConfigError> {
 /// additionally not be group/world-readable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrustedClass {
-    /// Config file, `authorized_keys`: integrity only.
+    /// Config file, `authorized_keys`, `trusted_user_ca_keys`: integrity
+    /// only.
     Input,
     /// The private host key: integrity plus confidentiality.
     Secret,
@@ -352,6 +356,7 @@ host_key = "/etc/quantumssh/hostkey"
 handshake_timeout = 10
 [auth]
 authorized_keys = "/etc/quantumssh/authorized_keys"
+trusted_user_ca_keys = "/etc/quantumssh/trusted_user_ca_keys"
 [logging]
 format = "human"
 "#,
@@ -359,6 +364,10 @@ format = "human"
         )
         .expect("valid config");
         assert_eq!(file.schema_version, 1);
+        assert_eq!(
+            file.auth.trusted_user_ca_keys.as_deref(),
+            Some("/etc/quantumssh/trusted_user_ca_keys")
+        );
         assert_eq!(file.server.listen, Some("0.0.0.0:2222".parse().unwrap()));
         assert_eq!(file.server.handshake_timeout, Some(10));
         assert_eq!(file.logging.format, Some(LogFormat::Human));
@@ -369,6 +378,7 @@ format = "human"
         let file = parse("schema_version = 1", "test").expect("minimal config");
         assert!(file.server.listen.is_none());
         assert!(file.auth.authorized_keys.is_none());
+        assert!(file.auth.trusted_user_ca_keys.is_none());
         assert!(file.logging.format.is_none());
     }
 
