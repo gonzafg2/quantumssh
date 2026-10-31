@@ -1,6 +1,6 @@
 # RFC 0015: Negotiation profile version 1 — the `SSH_MSG_KEXINIT` contract `0.1.0` freezes
 
-- **Status:** Draft
+- **Status:** Accepted (2026-10-31)
 - **Authors:** Gonzalo Fleming Garrido
 - **Created:** 2026-10-29
 - **Roadmap issue:** [#109](https://github.com/gonzafg2/quantumssh/issues/109)
