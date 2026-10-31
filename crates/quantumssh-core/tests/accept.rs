@@ -15,6 +15,7 @@ use support::*;
 use ed25519_dalek::SigningKey;
 use quantumssh_core::admission::Limits;
 use quantumssh_core::auth;
+use quantumssh_core::cert;
 use quantumssh_core::kex;
 use quantumssh_core::transport::RekeyThresholds;
 use quantumssh_core::wire::{Reader, Writer};
@@ -718,6 +719,98 @@ async fn auth_pk_ok_then_signed_succeeds() {
     assert_eq!(success, vec![auth::SSH_MSG_USERAUTH_SUCCESS]);
 }
 
+/// Sends the userauth `request` (built for the session id) on a fresh
+/// connection and returns the server's reply.
+async fn userauth_reply(
+    addr: std::net::SocketAddr,
+    host_key: &quantumssh_core::host_key::HostKey,
+    request: impl Fn(&[u8; 32]) -> Vec<u8>,
+) -> Vec<u8> {
+    let mut stream = connect(addr).await;
+    let (mut client, session_id, _server_id) = establish(
+        &mut stream,
+        host_key,
+        OPENSSH_KEX_PLAIN,
+        "chacha20-poly1305@openssh.com",
+        "chacha20-poly1305@openssh.com",
+    )
+    .await;
+    client
+        .write_sealed(&mut stream, &service_request_payload())
+        .await;
+    assert_eq!(client.read_sealed(&mut stream).await.first(), Some(&6));
+    client
+        .write_sealed(&mut stream, &request(&session_id))
+        .await;
+    client.read_sealed(&mut stream).await
+}
+
+fn signed_cert_request(session_id: &[u8; 32], cert_blob: &[u8]) -> Vec<u8> {
+    signed_auth_request_for(
+        &cert_user_key(),
+        session_id,
+        cert::CERT_ALGORITHM.as_bytes(),
+        cert_blob,
+    )
+}
+
+#[tokio::test]
+async fn certificate_probe_gets_pk_ok_naming_the_certificate_then_signs_in() {
+    // ADR-0050 §5: the probe and the signed request run the same checks.
+    let cert_blob = user_cert(&test_ca(), &[b"testuser"], u64::MAX, true);
+    let (addr, host_key) = start_server_with_ca(None).await;
+
+    let pk_ok = userauth_reply(addr, &host_key, |_| {
+        probe_auth_request_for(cert::CERT_ALGORITHM.as_bytes(), &cert_blob)
+    })
+    .await;
+    let mut r = Reader::new(&pk_ok);
+    assert_eq!(r.byte().unwrap(), auth::SSH_MSG_USERAUTH_PK_OK);
+    assert_eq!(r.string(64).unwrap(), cert::CERT_ALGORITHM.as_bytes());
+    assert_eq!(r.string(4096).unwrap(), cert_blob.as_slice());
+
+    let success = userauth_reply(addr, &host_key, |sid| signed_cert_request(sid, &cert_blob)).await;
+    assert_eq!(success, vec![auth::SSH_MSG_USERAUTH_SUCCESS]);
+}
+
+#[tokio::test]
+async fn refused_certificates_fail_like_an_unknown_key() {
+    // ADR-0050 §5: the client learns no reason.
+    let ca = test_ca();
+    let untrusted = SigningKey::from_bytes(&[93u8; 32]);
+    let (addr, host_key) = start_server_with_ca(None).await;
+    for cert_blob in [
+        user_cert(&ca, &[b"someone-else"], u64::MAX, true),
+        user_cert(&ca, &[b"testuser"], 1, true),
+        user_cert(&untrusted, &[b"testuser"], u64::MAX, true),
+    ] {
+        let reply =
+            userauth_reply(addr, &host_key, |sid| signed_cert_request(sid, &cert_blob)).await;
+        assert_eq!(reply, auth::build_failure_payload(false));
+    }
+}
+
+#[tokio::test]
+async fn certificates_fail_without_trusted_user_ca_keys() {
+    // ADR-0050 §3: the key is optional, and unset accepts no certificate.
+    let cert_blob = user_cert(&test_ca(), &[b"testuser"], u64::MAX, true);
+    let (addr, host_key) = start_server(Duration::from_secs(30)).await;
+    let reply = userauth_reply(addr, &host_key, |sid| signed_cert_request(sid, &cert_blob)).await;
+    assert_eq!(reply, auth::build_failure_payload(false));
+}
+
+#[tokio::test]
+async fn a_bare_key_still_signs_in_next_to_trusted_cas() {
+    let signing = SigningKey::from_bytes(&[77u8; 32]);
+    let key_blob = auth_test_blob(&signing.verifying_key());
+    let (addr, host_key) = start_server_with_ca(None).await;
+    let reply = userauth_reply(addr, &host_key, |sid| {
+        signed_auth_request(&signing, sid, &key_blob)
+    })
+    .await;
+    assert_eq!(reply, vec![auth::SSH_MSG_USERAUTH_SUCCESS]);
+}
+
 /// Records the `failure_count` of every `auth.failed` audit event. The
 /// test runtime is single-threaded, so the spawned server's events reach
 /// the thread's default subscriber.
@@ -920,6 +1013,16 @@ async fn client_initiated_rekey_chacha() {
 async fn client_initiated_rekey_gcm() {
     // Guards the AES-GCM invocation-counter reset across a re-key.
     rekey_roundtrip("aes256-gcm@openssh.com").await;
+}
+
+#[tokio::test]
+async fn rekey_under_the_longest_handshake_budget() {
+    // The binary's re-key budget is its handshake timeout, which takes
+    // any positive TOML integer of seconds (ADR-0029), up to 2^63 - 1:
+    // the deadline must not overflow `Instant`.
+    let mut rekey = test_rekey(u64::MAX);
+    rekey.completion_deadline = Duration::from_secs(i64::MAX.unsigned_abs());
+    rekey_roundtrip_with("chacha20-poly1305@openssh.com", rekey).await;
 }
 
 #[tokio::test]

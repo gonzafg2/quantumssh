@@ -753,7 +753,7 @@ recording side; the cryptanalytic side has no specific ATT&CK
 technique because ATT&CK assumes a defender-relevant time horizon.
 
 **Test handle.** The default key exchange must be
-`mlkem768x25519-sha256` (per `draft-ietf-sshm-mlkem-hybrid-kex`).
+`mlkem768x25519-sha256` (per RFC 10042).
 Algorithm negotiation must not permit any non-hybrid post-quantum
 or non-post-quantum-only exchange in the default profile. Both
 halves of the hybrid must contribute to the derived key; failure
@@ -831,8 +831,7 @@ sessions.
 **ATT&CK reference.** No specific ATT&CK technique; this is an
 implementation-cryptanalysis vector.
 
-**Test handle.** The current `draft-ietf-sshm-mlkem-hybrid-kex`
-(version -10, 26 February 2026) does not itself publish
+**Test handle.** RFC 10042 (August 2026) does not itself publish
 hybrid-combiner test vectors; the substitute is layered.
 Component-level vectors must be reproduced byte-for-byte: NIST
 ACVP-Server vectors for the ML-KEM-768 half
@@ -842,8 +841,7 @@ X25519 half. Hybrid-combiner output (`K = HASH(K_PQ || K_CL)`)
 and the SSH-level exchange hash `H` must be testable against
 fixed inputs; internally-captured golden vectors against an
 OpenSSH 10.x peer using a fixed-RNG test profile (analogous
-to OpenSSH's `TEST_SSH_FIXED_KEX_SEED`) close the gap until the
-IETF draft adopts an appendix of canonical vectors.
+to OpenSSH's `TEST_SSH_FIXED_KEX_SEED`) close that gap.
 
 ### 5.3 Authentication
 
@@ -894,8 +892,9 @@ Keys), `T1078` (Valid Accounts).
 once the key is in the attacker's hands: from the server's
 viewpoint, the attacker is the legitimate user. QuantumSSH's
 contribution is to make compensating controls discoverable —
-short-lived certificates (a Phase 2 feature designed in
-[RFC-0008](rfcs/0008-ssh-certificate-authentication.md)), audit-
+short-lived certificates (designed in
+[RFC-0008](rfcs/0008-ssh-certificate-authentication.md), implemented
+per [ADR-0050](adr/0050-accept-openssh-user-certificates.md)), audit-
 record fidelity, and configurable per-key restrictions
 (`from=`, `command=`, `no-port-forwarding`, equivalents in
 QuantumSSH's own syntax; not yet implemented, and until they are,
@@ -1211,9 +1210,9 @@ repeating it.
 ### 6.1 Cryptographic posture
 
 - **Hybrid post-quantum key exchange by default.**
-  `mlkem768x25519-sha256` from `draft-ietf-sshm-mlkem-hybrid-kex` is
-  the only key exchange offered in the default profile. Failure of
-  either half aborts the handshake; there is no silent fallback.
+  `mlkem768x25519-sha256` from RFC 10042 is the only key exchange
+  offered in the default profile. Failure of either half
+  aborts the handshake; there is no silent fallback.
   Defends §5.2.1, §5.2.2.
 - **Ed25519 host keys.** RFC 8709. Compact fingerprints, modern
   curve, no parameter-choice attack surface. Defends §5.2.3.
@@ -1301,7 +1300,19 @@ repeating it.
 
 - **Public-key only — no other method is compiled in.** Defends §5.3.1.
 - **Authentication-event records include key fingerprint.** Defends
-  §5.3.3 post-hoc detection.
+  §5.3.3 post-hoc detection. A certificate authentication adds its
+  key ID, serial, CA fingerprint and principal
+  ([ADR-0051](adr/0051-certificate-audit-fields.md)).
+- **User certificates from operator-listed CAs.** OpenSSH user
+  certificates for Ed25519 keys, from the CAs in
+  `[auth] trusted_user_ca_keys`
+  ([ADR-0050](adr/0050-accept-openssh-user-certificates.md)). Short
+  lifetimes narrow §5.3.2's window, because expiry is the only
+  revocation. The certificate parser runs before authentication on
+  bounded input, and a certificate that carries any critical option is
+  refused until that option is enforced. Until Phase 3 maps principals
+  to accounts, the CA file is the access boundary: every certificate a
+  trusted CA issued gets in, whatever its principal.
 - **No `authorized_keys` writes from the server.** Defends §5.3.3
   in-band.
 - **Per-key restrictions (planned).** `from=`, `command=`, forwarding
@@ -1364,9 +1375,8 @@ operators must account for. The principal items, by category, are:
 
 - **Compromise of the user's endpoint or private key** (§5.3.2)
   remains the dominant lateral-movement risk and is not addressable
-  server-side; certificate-based authentication and short-lived
-  credentials, both Phase-2 RFC items, narrow the window but do not
-  close it.
+  server-side; certificate-based authentication with short-lived
+  certificates (ADR-0050) narrows the window but does not close it.
 - **Compromise of the host or operator account** (§5.5.4, §8.1)
   defeats QuantumSSH by hypothesis; host-level controls are the
   operator's responsibility.
@@ -1501,9 +1511,9 @@ or continue using OpenSSH on those endpoints during the transition.
 
 NSA CNSA 2.0 mandates **ML-KEM-1024** and **ML-DSA-87** for U.S.
 National Security Systems. QuantumSSH's default,
-`mlkem768x25519-sha256`, uses ML-KEM-**768** — consistent with the
-IETF hybrid PQ KEX draft and with the OpenSSH 10.0 default, but
-*below* CNSA 2.0's NSS requirement. QuantumSSH is not targeting
+`mlkem768x25519-sha256`, uses ML-KEM-**768** — consistent with
+RFC 10042 and with the OpenSSH 10.0 default, but *below*
+CNSA 2.0's NSS requirement. QuantumSSH is not targeting
 NSS deployments; operators in that space should consult the
 controlling authority and the current CNSA 2.0 advisory before
 relying on any open-source SSH implementation.
@@ -1599,10 +1609,10 @@ full rationale and operational counterpart.
 - IETF RFC 9142, *Key Exchange (KEX) Method Updates and
   Recommendations for Secure Shell (SSH)*, January 2022.
   <https://datatracker.ietf.org/doc/html/rfc9142>
-- IETF Internet-Draft, *PQ/T Hybrid Key Exchange with ML-KEM in SSH*,
-  `draft-ietf-sshm-mlkem-hybrid-kex` (version -10, 26 February
-  2026). Active draft as of acceptance of this document.
-  <https://datatracker.ietf.org/doc/draft-ietf-sshm-mlkem-hybrid-kex/>
+- IETF RFC 10042, *Post-Quantum/Traditional Hybrid Key Exchange with
+  the Module-Lattice-Based Key-Encapsulation Mechanism for Use in SSH*,
+  August 2026.
+  <https://datatracker.ietf.org/doc/html/rfc10042>
 - NIST FIPS 203, *Module-Lattice-Based Key-Encapsulation Mechanism
   Standard*, 13 August 2024.
   <https://csrc.nist.gov/pubs/fips/203/final>

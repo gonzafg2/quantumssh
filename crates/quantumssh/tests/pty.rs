@@ -95,7 +95,9 @@ async fn exec_on_a_pty_gets_a_controlling_terminal_term_size_and_modes() {
     // RFC 4254 §8: opcode 53 (ECHO) = 0, then TTY_OP_END.
     let modes = [53, 0, 0, 0, 0, 0];
     let (mut stream, mut client, chan) = open_with_pty(addr, &host_key, 100, 40, &modes).await;
-    let command: &[u8] = b"tty; stty size; echo term=$TERM; \
+    // `[ -t 0 ]`, not `tty`: macOS's `ttyname` finds the name by reading
+    // `/dev`, which misses the entry while other PTYs come and go (#221).
+    let command: &[u8] = b"[ -t 0 ] && echo stdin-tty; stty size; echo term=$TERM; \
         : < /dev/tty && echo ctty-ok; \
         stty -a | grep -q -- '-echo ' && echo echo-off";
     client
@@ -103,7 +105,7 @@ async fn exec_on_a_pty_gets_a_controlling_terminal_term_size_and_modes() {
         .await;
     let (out, _err, exit) = collect_session(&mut client, &mut stream, chan).await;
     for expected in [
-        "/dev/",
+        "stdin-tty",
         "40 100",
         "term=xterm-256color",
         "ctty-ok",
@@ -246,7 +248,8 @@ async fn hang_up_kills_the_group_even_when_the_leader_exits_in_the_grace() {
 #[tokio::test]
 async fn a_refused_second_pty_req_keeps_the_first_pty() {
     // ADR-0038 §2: a second `pty-req` is refused and leaves the granted
-    // PTY in place for the child.
+    // PTY in place for the child. The child reports the size, not `tty`,
+    // whose name lookup is unreliable on macOS (#221).
     let (addr, host_key) = start().await;
     let (mut stream, mut client, chan) = open_with_pty(addr, &host_key, 80, 24, &[]).await;
     client
@@ -254,13 +257,35 @@ async fn a_refused_second_pty_req_keeps_the_first_pty() {
         .await;
     assert_eq!(expect_reply(&mut client, &mut stream).await, CH_FAILURE);
     client
-        .write_sealed(&mut stream, &channel_exec(chan, b"tty"))
+        .write_sealed(&mut stream, &channel_exec(chan, b"stty size"))
         .await;
     let (out, _err, exit) = collect_session(&mut client, &mut stream, chan).await;
     assert!(
-        contains(&out, "/dev/"),
+        contains(&out, "24 80"),
         "the child runs on the first PTY: {:?}",
         String::from_utf8_lossy(&out)
     );
     assert_eq!(exit, Some(0));
+}
+
+/// The `pty-req` reply on a session a test certificate authenticated,
+/// with or without `permit-pty`.
+async fn pty_reply_with_cert(permit_pty: bool) -> u8 {
+    let (addr, host_key) =
+        start_server_with_ca(Some(PathBuf::from(env!("CARGO_BIN_EXE_quantumssh")))).await;
+    let cert_blob = user_cert(&test_ca(), &[b"testuser"], u64::MAX, permit_pty);
+    let (mut stream, mut client) = authenticate_with_cert(addr, &host_key, &cert_blob).await;
+    client.write_sealed(&mut stream, &channel_open(0)).await;
+    let chan = expect_open_confirmation(&mut client, &mut stream).await;
+    client
+        .write_sealed(&mut stream, &channel_pty_req(chan, b"xterm", 80, 24, &[]))
+        .await;
+    expect_reply(&mut client, &mut stream).await
+}
+
+#[tokio::test]
+async fn a_certificate_gets_a_pty_only_with_permit_pty() {
+    // ADR-0050 §6 feeds the ADR-0038 §3 gate.
+    assert_eq!(pty_reply_with_cert(true).await, CH_SUCCESS);
+    assert_eq!(pty_reply_with_cert(false).await, CH_FAILURE);
 }
