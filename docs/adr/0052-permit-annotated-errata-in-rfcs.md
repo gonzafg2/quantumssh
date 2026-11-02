@@ -1,7 +1,7 @@
 # ADR 0052: Permit annotated post-acceptance errata in RFCs
 
-- **Status:** Proposed
-- **Date:** — (set on acceptance; drafted 2026-11-02)
+- **Status:** Accepted
+- **Date:** 2026-11-02 (accepted with the implementing PR [#243](https://github.com/gonzafg2/quantumssh/pull/243))
 - **Deciders:** Project lead
 - **Related:** Extends [ADR-0015](0015-permit-annotated-errata-in-adrs.md)'s errata mechanism from ADRs to RFCs, and updates the "After acceptance" section of [`docs/rfcs/README.md`](../rfcs/README.md). Its first use corrects [RFC-0015](../rfcs/0015-negotiation-profile-v1.md) and [RFC-0016](../rfcs/0016-config-schema-v1.md) in the same PR, after the opencode reviews of [#223](https://github.com/gonzafg2/quantumssh/pull/223), [#224](https://github.com/gonzafg2/quantumssh/pull/224) and [#233](https://github.com/gonzafg2/quantumssh/pull/233).
 

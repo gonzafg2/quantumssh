@@ -6,14 +6,32 @@
 - **Roadmap issue:** [#109](https://github.com/gonzafg2/quantumssh/issues/109)
 - **Implementation PR:** [#233](https://github.com/gonzafg2/quantumssh/pull/233)
 
+> **Post-acceptance errata** (per [ADR-0052](../adr/0052-permit-annotated-errata-in-rfcs.md)):
+>
+> - **2026-11-02** ([PR #243](https://github.com/gonzafg2/quantumssh/pull/243)): three statements were wrong at acceptance,
+>   as the opencode reviews of #224 and #233 found:
+>   - The version-1 key set omitted `auth.trusted_user_ca_keys`. The key
+>     shipped on 2026-10-30 with #237, and
+>     [ADR-0050](../adr/0050-accept-openssh-user-certificates.md) §3
+>     places it in schema version 1. §1 gains its row, and the Summary,
+>     the Motivation and §4 name ADR-0050 with ADR-0028 and ADR-0029.
+>   - §4 said that no ADR-0028 decision changes. §3 changes one:
+>     ADR-0028 calls tuning a default "a config change, not a
+>     re-decision of this ADR", and §3 requires an ADR that supersedes
+>     that part. §4 now says so, and ADR-0028's Status records it.
+>   - §3 read as if an ADR were all a default change needs. The RFC
+>     that `docs/rfcs/README.md` requires for a default change users
+>     would notice still applies, and §3 now says so.
+
 ## Summary
 
 Cutting `0.1.0` makes the TOML configuration file a public interface:
 operators will write files against it and keep them across upgrades.
 This RFC freezes the file as **schema version 1**:
 
-- **The keys** are [ADR-0029](../adr/0029-phase-2-config-file-v1-schema-parser-strictmodes.md)'s
-  and [ADR-0028](../adr/0028-phase-2-concurrent-connections-limits-graceful-shutdown.md)'s,
+- **The keys** are [ADR-0029](../adr/0029-phase-2-config-file-v1-schema-parser-strictmodes.md)'s,
+  [ADR-0028](../adr/0028-phase-2-concurrent-connections-limits-graceful-shutdown.md)'s
+  and [ADR-0050](../adr/0050-accept-openssh-user-certificates.md)'s,
   unchanged.
 - **The rule** says when `schema_version` moves: only on a breaking
   change. An additive change keeps version 1.
@@ -39,9 +57,10 @@ A review on 2026-10-29 checked the shipped schema
 after the tag:
 
 - **The names hold.** `host_key` names no algorithm, so RFC-0012's
-  composite key needs no rename. The keys already announced
-  (`[auth] trusted_user_ca_keys` for RFC-0008, `[session] accept_env`
-  for ADR-0023) are new keys in new or existing sections.
+  composite key needs no rename. `[auth] trusted_user_ca_keys`
+  (RFC-0008) has already shipped under ADR-0050 and is in §1. The key
+  still announced, `[session] accept_env` for ADR-0023, is a new key in
+  a new section.
 - **Three keys are single-valued and may need lists:** `listen`
   (several addresses), `host_key` (two keys during an RFC-0007
   migration) and `authorized_keys`. Accepting "a string or a list"
@@ -76,6 +95,7 @@ are optional:
 | `server.handshake_timeout` | integer seconds, 1 to 2⁶³ − 1 | `30` | ADR-0029 |
 | `server.drain_timeout` | integer seconds, 1 to 2⁶³ − 1 | `30` | ADR-0028 |
 | `auth.authorized_keys` | path | none (required by flag or file) | ADR-0029 |
+| `auth.trusted_user_ca_keys` | path | none (unset: certificates are refused) | ADR-0050 |
 | `logging.format` | `"json"` or `"human"` | `json` unless stderr is a terminal | ADR-0029 |
 | `limits.max_connections` | integer, 1 to 2⁶³ − 1 (2³² − 1 on a 32-bit platform) | `256` | ADR-0028 |
 | `limits.max_half_open` | integer, 1 to 2⁶³ − 1 (2³² − 1 on a 32-bit platform) | `100` | ADR-0028 |
@@ -141,16 +161,21 @@ change what a file that omits the key means, so:
 
 - **a default change needs a new or superseding ADR, and a CHANGELOG
   entry.** Accepted ADRs are not edited in place, so changing an
-  ADR-0028 limit supersedes that part of ADR-0028;
+  ADR-0028 limit supersedes that part of ADR-0028. A default change
+  that users would notice also needs an RFC (`docs/rfcs/README.md`,
+  "When you need an RFC");
 - **a change that widens exposure is listed under Security.** Examples
   are a wider `listen` address, higher `limits`, or a longer timeout.
 
 ### 4. What this changes in accepted decisions
 
-None of ADR-0028's or ADR-0029's decisions change. This RFC refines
-RFC-0010 §5 by stating which changes need a new version. It records
-the version-1 key set as this RFC's §1 without editing those documents
-(`README.md`, "After acceptance").
+§3 changes one ADR-0028 rule. ADR-0028 calls tuning a default "a
+config change, not a re-decision of this ADR"; under §3 it needs an ADR
+that supersedes that part of ADR-0028. No other ADR-0028 or ADR-0029
+decision changes. This RFC refines RFC-0010 §5 by stating which changes
+need a new version. It records the version-1 key set, the keys of
+ADR-0028, ADR-0029 and ADR-0050, as this RFC's §1 without editing those
+documents (`README.md`, "After acceptance").
 
 ### 5. Implementation outline (non-normative)
 

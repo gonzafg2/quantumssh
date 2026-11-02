@@ -1,6 +1,6 @@
 # RFC 0012: Cut host authentication over to `ssh-mldsa44-ed25519` before `0.1.0`
 
-- **Status:** Accepted (2026-10-28)
+- **Status:** Accepted (2026-10-28); its rule that the host-key slot holds one name is refined by [RFC-0015](0015-negotiation-profile-v1.md) §4, which allows a registered IETF name for the same composite as an alias
 - **Authors:** Gonzalo Fleming Garrido
 - **Created:** 2026-10-08
 - **Roadmap issue:** [`#109`](https://github.com/gonzafg2/quantumssh/issues/109) (Phase 2; the `0.1.0` freeze checklist)
