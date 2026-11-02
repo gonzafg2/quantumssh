@@ -35,8 +35,8 @@ useradd --system --create-home --home-dir /var/lib/quantumssh \
 chmod 0700 /var/lib/quantumssh
 install -m 0755 "$BIN" /usr/local/bin/quantumssh
 install -d -m 0755 /etc/quantumssh
-ssh-keygen -q -t ed25519 -N "" -f /etc/quantumssh/ssh_host_ed25519_key
-chown quantumssh:quantumssh /etc/quantumssh/ssh_host_ed25519_key
+ssh-keygen -q -t mldsa44-ed25519 -N "" -f /etc/quantumssh/ssh_host_mldsa44_ed25519_key
+chown quantumssh:quantumssh /etc/quantumssh/ssh_host_mldsa44_ed25519_key
 WORK="$(mktemp -d)"
 ssh-keygen -q -t ed25519 -N "" -f "$WORK/client"
 install -m 0644 "$WORK/client.pub" /etc/quantumssh/authorized_keys
@@ -45,7 +45,7 @@ schema_version = 1
 
 [server]
 listen        = "127.0.0.1:$PORT"
-host_key      = "/etc/quantumssh/ssh_host_ed25519_key"
+host_key      = "/etc/quantumssh/ssh_host_mldsa44_ed25519_key"
 drain_timeout = $DRAIN
 
 [auth]

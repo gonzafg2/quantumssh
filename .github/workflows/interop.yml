@@ -3,9 +3,10 @@ name: Interop
 # OpenSSH interop hard gate (ADR-0020): every PR must drive a real
 # OpenSSH 10.x client through connect → publickey auth → exec → clean
 # close against the quantumssh release binary. The default Ubuntu runner
-# ships OpenSSH 9.6p1 (no mlkem768x25519-sha256), so the job runs in a
-# Debian trixie container with openssh-client pinned to the exact build
-# named below (OpenSSH 10.0p2, package 1:10.0p1-7+deb13u4; ADR-0034).
+# ships OpenSSH 9.6p1 (no mlkem768x25519-sha256, no
+# ssh-mldsa44-ed25519), so the job runs in a Debian forky container with
+# openssh-client pinned to the exact build named below (OpenSSH 10.6p1,
+# package 1:10.6p1-1; ADR-0048 on ADR-0034's mechanics).
 
 on:
   push:
@@ -27,16 +28,18 @@ jobs:
   openssh-interop:
     name: openssh-interop
     runs-on: ubuntu-latest
-    # ADR-0020 / ADR-0034: the base image is pinned by digest (the
-    # `debian:trixie-slim` tag is mutable) and the packages come from the
+    # ADR-0020 / ADR-0034 / ADR-0048: the base image is pinned by digest
+    # (the `debian:forky-slim` tag is mutable) and the packages come from the
     # snapshot.debian.org archive state that image was built from, with
     # openssh-client at an exact version and `ssh -V` asserted verbatim in
     # the install step. Bumping the digest, the snapshot timestamp, the
     # package version or the asserted string is one reviewed event
-    # ("OpenSSH version bump"); the four move together.
+    # ("OpenSSH version bump"); the four move together. The client floor
+    # is 10.6p1, the first release that offers ssh-mldsa44-ed25519
+    # (ADR-0048); a bump below it supersedes that ADR.
     container:
-      # debian:trixie-20260623-slim
-      image: debian@sha256:28de0877c2189802884ccd20f15ee41c203573bd87bb6b883f5f46362d24c5c2
+      # debian:forky-20261027-slim
+      image: debian@sha256:04db4720574d184e24353e77e46dbbe4377edad01c9ba50a67aa1473cef9b9d4
     steps:
       - name: Install OpenSSH client + build prerequisites
         env:
@@ -48,11 +51,11 @@ jobs:
           # client; an older one cannot satisfy libc6-dev (#98). To bump:
           # new digest → read its timestamp into SNAPSHOT → resolve the
           # package version there → re-pin the `ssh -V` string.
-          SNAPSHOT: 20260623T000000Z
-          OPENSSH_CLIENT_VERSION: '1:10.0p1-7+deb13u4'
+          SNAPSHOT: 20261027T000000Z
+          OPENSSH_CLIENT_VERSION: '1:10.6p1-1'
           # Exact `ssh -V` of that package from that snapshot. OpenSSL is
           # part of the string, so it pins the library build as well.
-          SSH_V_EXPECTED: 'OpenSSH_10.0p2 Debian-7+deb13u4, OpenSSL 3.5.6 7 Apr 2026'
+          SSH_V_EXPECTED: 'OpenSSH_10.6p1 Debian-1, OpenSSL 3.6.5 29 Sep 2026'
         run: |
           set -euo pipefail
           grep -q "snapshot.debian.org/archive/debian/${SNAPSHOT}" /etc/apt/sources.list.d/debian.sources \
@@ -61,18 +64,18 @@ jobs:
           # one from the live mirror first would reintroduce the mixed-state
           # failure of #98. apt verifies the Release signatures (Signed-By);
           # TLS would add confidentiality only. Check-Valid-Until off: the
-          # archived Release files of trixie-updates and trixie-security are
+          # archived Release files of forky-updates and forky-security are
           # past their seven-day validity window.
           cat > /etc/apt/sources.list.d/debian.sources <<EOF
           Types: deb
           URIs: http://snapshot.debian.org/archive/debian/${SNAPSHOT}/
-          Suites: trixie trixie-updates
+          Suites: forky forky-updates
           Components: main
           Signed-By: /usr/share/keyrings/debian-archive-keyring.pgp
 
           Types: deb
           URIs: http://snapshot.debian.org/archive/debian-security/${SNAPSHOT}/
-          Suites: trixie-security
+          Suites: forky-security
           Components: main
           Signed-By: /usr/share/keyrings/debian-archive-keyring.pgp
           EOF
@@ -86,9 +89,12 @@ jobs:
           ssh -V 2>&1
           [ "$(ssh -V 2>&1)" = "$SSH_V_EXPECTED" ] \
             || { echo "::error::ssh -V is not the pinned client; expected '$SSH_V_EXPECTED'"; exit 1; }
-          # The hybrid KEX must be offered, or the gate cannot test it.
+          # The hybrid KEX and the composite host key must be offered, or
+          # the gate cannot test them.
           ssh -Q kex | grep -qx "mlkem768x25519-sha256" \
             || { echo "::error::mlkem768x25519-sha256 not offered by this client"; exit 1; }
+          ssh -Q key | grep -qx "ssh-mldsa44-ed25519" \
+            || { echo "::error::ssh-mldsa44-ed25519 not offered by this client"; exit 1; }
 
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

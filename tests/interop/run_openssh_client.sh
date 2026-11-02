@@ -3,10 +3,12 @@
 #
 # Drives a *real* OpenSSH client through connect → publickey auth → exec
 # → clean close against the quantumssh release binary. Reproducible both
-# locally (any OpenSSH 10.x that speaks mlkem768x25519-sha256) and in the
-# pinned CI container. Asserts the three hard subset checks ADR-0020
-# names — openssh_smoke, openssh_verbose_kex, negative_no_hybrid — plus
-# exit-status propagation (ADR-0023).
+# locally (OpenSSH 10.6 or later, which speaks mlkem768x25519-sha256 and
+# ssh-mldsa44-ed25519) and in the pinned CI container. Asserts the three
+# hard subset checks ADR-0020 names — openssh_smoke, openssh_verbose_kex,
+# negative_no_hybrid — the two ADR-0047 adds for the composite host key —
+# openssh_hostkey_composite, negative_ed25519_hostkey — plus exit-status
+# propagation (ADR-0023).
 #
 # Env overrides: QUANTUMSSH_BIN (default ./target/release/quantumssh),
 # QUANTUMSSH_PORT (default 2222).
@@ -29,14 +31,15 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# Fresh host key and client key; authorize the client key.
-ssh-keygen -t ed25519 -N "" -f "$WORK/hostkey" -q
+# Fresh composite host key (ADR-0047) and Ed25519 client key; authorize
+# the client key.
+ssh-keygen -t mldsa44-ed25519 -N "" -f "$WORK/hostkey" -q
 ssh-keygen -t ed25519 -N "" -f "$WORK/clientkey" -q
 cat "$WORK/clientkey.pub" > "$WORK/authorized_keys"
 
-# A user CA the server trusts (ADR-0050 §3), and a key that only its
-# certificates authorize: it is not in authorized_keys.
-ssh-keygen -t ed25519 -N "" -f "$WORK/ca" -q
+# A user CA the server trusts (ADR-0050 §3), composite only (§4), and a
+# key that only its certificates authorize: it is not in authorized_keys.
+ssh-keygen -t mldsa44-ed25519 -N "" -f "$WORK/ca" -q
 cp "$WORK/ca.pub" "$WORK/trusted_user_ca_keys"
 ssh-keygen -t ed25519 -N "" -f "$WORK/certkey" -q
 # The gate opens its connections back to back, more than ADR-0028's
@@ -78,11 +81,16 @@ out="$(ssh "${SSH_OPTS[@]}" tester@127.0.0.1 'echo hello')" || fail "smoke: ssh 
 [ "$out" = "hello" ] || fail "smoke: output '$out' != 'hello'"
 echo "ok: openssh_smoke"
 
-# 2. openssh_verbose_kex: the negotiated KEX is the hybrid.
-ssh -v "${SSH_OPTS[@]}" tester@127.0.0.1 'true' 2>&1 \
-    | grep -q "kex: algorithm: mlkem768x25519-sha256" \
+# 2. openssh_verbose_kex: the negotiated KEX is the hybrid, and the host
+# key algorithm is the composite (ADR-0047, openssh_hostkey_composite).
+verbose="$(ssh -v "${SSH_OPTS[@]}" tester@127.0.0.1 'true' 2>&1)" \
+    || fail "verbose_kex: ssh exited $?"
+grep -q "kex: algorithm: mlkem768x25519-sha256" <<<"$verbose" \
     || fail "verbose_kex: hybrid KEX not negotiated"
 echo "ok: openssh_verbose_kex"
+grep -q "kex: host key algorithm: ssh-mldsa44-ed25519" <<<"$verbose" \
+    || fail "hostkey_composite: ssh-mldsa44-ed25519 not negotiated"
+echo "ok: openssh_hostkey_composite"
 
 # 3. negative_no_hybrid: a classical-only client is rejected (no downgrade).
 if ssh "${SSH_OPTS[@]}" -o KexAlgorithms=curve25519-sha256 \
@@ -90,6 +98,14 @@ if ssh "${SSH_OPTS[@]}" -o KexAlgorithms=curve25519-sha256 \
     fail "negative_no_hybrid: classical-only client was NOT rejected"
 fi
 echo "ok: negative_no_hybrid"
+
+# 3b. negative_ed25519_hostkey (ADR-0047): a client limited to ssh-ed25519
+# host keys finds no common algorithm; nothing falls back.
+if ssh "${SSH_OPTS[@]}" -o HostKeyAlgorithms=ssh-ed25519 \
+       tester@127.0.0.1 'true' 2>/dev/null; then
+    fail "negative_ed25519_hostkey: an ssh-ed25519-only client was NOT rejected"
+fi
+echo "ok: negative_ed25519_hostkey"
 
 # 4. exit-status propagation (ADR-0023): `exit 3` reports 3.
 rc=0
@@ -148,7 +164,7 @@ echo "ok: openssh_scp"
 # `tester` principal with a validity window, and the exec round trip runs
 # on the certificate alone. A certificate for another principal, an
 # expired one, and one from a CA the server does not trust are refused.
-ssh-keygen -t ed25519 -N "" -f "$WORK/untrusted_ca" -q
+ssh-keygen -t mldsa44-ed25519 -N "" -f "$WORK/untrusted_ca" -q
 sign() { # sign <name> <ca> <principal> <validity>: writes $WORK/<name>-cert.pub
     cp "$WORK/certkey.pub" "$WORK/$1.pub"
     ssh-keygen -q -s "$WORK/$2" -I "tester@interop" -n "$3" -V "$4" "$WORK/$1.pub"
