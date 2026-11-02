@@ -843,9 +843,12 @@ ACVP-Server vectors for the ML-KEM-768 half
 `ML-KEM-encapDecap-FIPS203`) and RFC 7748 §6.1 vectors for the
 X25519 half. Hybrid-combiner output (`K = HASH(K_PQ || K_CL)`)
 and the SSH-level exchange hash `H` must be testable against
-fixed inputs; internally-captured golden vectors against an
-OpenSSH 10.x peer using a fixed-RNG test profile (analogous
-to OpenSSH's `TEST_SSH_FIXED_KEX_SEED`) close that gap.
+fixed inputs; a golden vector captured against an OpenSSH 10.x
+peer with a fixed-RNG test profile closes that gap
+(`crates/quantumssh-core/tests/vectors/mlkem768x25519-sha256-openssh.txt`).
+The profile preloads a fixed-seed `getrandom(3)`,
+`scripts/fixed-getrandom.c`, into the unchanged release binary,
+so no build of the server carries a fixed-RNG path.
 
 ### 5.3 Authentication
 
