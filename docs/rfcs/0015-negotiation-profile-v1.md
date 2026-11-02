@@ -6,6 +6,24 @@
 - **Roadmap issue:** [#109](https://github.com/gonzafg2/quantumssh/issues/109)
 - **Implementation PR:** TBD
 
+> **Post-acceptance errata** (per [ADR-0052](../adr/0052-permit-annotated-errata-in-rfcs.md)):
+>
+> - **2026-11-02** ([PR #243](https://github.com/gonzafg2/quantumssh/pull/243)): four statements were wrong at acceptance,
+>   as the opencode review of #223 found:
+>   - §6 said this RFC changes no accepted decision. §4's alias rule
+>     refines [RFC-0012](0012-composite-host-key-cutover.md)'s rule that
+>     the host-key slot holds one name. §6 now says so.
+>   - The Summary and §6 described ADR-0021's slot 2 as already
+>     superseded. ADR-0047, which supersedes it, was `Proposed` at
+>     acceptance and became `Accepted` with [#242](https://github.com/gonzafg2/quantumssh/pull/242).
+>   - The Motivation said a test pins the profile list by list. At
+>     acceptance `our_kexinit_matches_the_adr_0021_profile` checked only
+>     part of the KEX list; [#242](https://github.com/gonzafg2/quantumssh/pull/242) makes it compare every list of the
+>     initial and the re-key KEXINIT exactly.
+>   - §3 said a list's order changes nothing a client can observe. The
+>     order is on the wire and in the exchange hash; what it does not
+>     change is which algorithm is negotiated.
+
 ## Summary
 
 Cutting `0.1.0` turns the server's `SSH_MSG_KEXINIT` offer into a
@@ -15,8 +33,8 @@ profile version 1**:
 
 - **The lists** are [ADR-0021](../adr/0021-phase-1-negotiation-profile.md)'s,
   unchanged, except the server host key, which
-  [RFC-0012](0012-composite-host-key-cutover.md) already moves to
-  `ssh-mldsa44-ed25519` before the tag.
+  [RFC-0012](0012-composite-host-key-cutover.md) moves to
+  `ssh-mldsa44-ed25519` before the tag, through ADR-0047.
 - **The rules** say which later changes are additive and which break
   the contract.
 - **The preconditions** list what must hold before the tag, beyond the
@@ -41,7 +59,8 @@ standards and the current OpenSSH:
 
 - **The code matches ADR-0021 list by list**
   (`crates/quantumssh-core/src/kex.rs`, `KEX_LIST` to
-  `COMPRESSION_LIST`, pinned by `our_kexinit_matches_the_adr_0021_profile`).
+  `COMPRESSION_LIST`; since [#242](https://github.com/gonzafg2/quantumssh/pull/242), `our_kexinit_matches_the_adr_0021_profile`
+  compares every list exactly).
 - **The KEX is now an RFC.** `draft-ietf-sshm-mlkem-hybrid-kex`
   became [RFC 10042](https://www.rfc-editor.org/rfc/rfc10042)
   (Informational, August 2026). The method name, `K = HASH(K_PQ ‖ K_CL)`
@@ -143,8 +162,9 @@ connects:
   under §4;
 - **adding a user-authentication algorithm** to `server-sig-algs`;
 - **reordering a list.** Selection follows the client's order (RFC 4253
-  §7.1), so order changes nothing a client can observe. The order is
-  still kept stable, as ADR-0021 says.
+  §7.1), so order does not change which algorithm is negotiated. It is
+  on the wire and in the exchange hash, and it is kept stable, as
+  ADR-0021 says.
 
 "Additive" describes the wire contract, not the size of the change.
 The negotiation code returns the single entries `KEX_ALGORITHM` and
@@ -207,10 +227,15 @@ an additive change:
 
 ### 6. Changes to accepted decisions
 
-None. ADR-0021's decisions stand. This RFC makes them a versioned
-contract and adds §3–§5. RFC-0012 already supersedes ADR-0021's slot 2
-through its own subsidiary ADR, and this RFC only records the result in
-§1.
+ADR-0021's decisions stand. This RFC makes them a versioned contract
+and adds §3–§5. RFC-0012 supersedes ADR-0021's slot 2 through
+[ADR-0047](../adr/0047-host-key-algorithm-ssh-mldsa44-ed25519.md), and
+this RFC records the result in §1.
+
+One rule of RFC-0012 is refined: the host-key slot holds one name. Under
+§4, a registered IETF name for the same composite may sit next to
+`ssh-mldsa44-ed25519` as an alias. It names the same algorithm, so it
+does not reopen the `ssh-ed25519` path RFC-0012 closes.
 
 ## Drawbacks
 

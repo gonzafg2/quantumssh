@@ -499,6 +499,7 @@ handshake_timeout = 10
 drain_timeout = 20
 [auth]
 authorized_keys = "/etc/quantumssh/authorized_keys"
+trusted_user_ca_keys = "/etc/quantumssh/trusted_user_ca_keys"
 [logging]
 format = "json"
 [limits]
@@ -521,6 +522,10 @@ accept_burst = 5
         assert_eq!(
             file.auth.authorized_keys.as_deref(),
             Some("/etc/quantumssh/authorized_keys")
+        );
+        assert_eq!(
+            file.auth.trusted_user_ca_keys.as_deref(),
+            Some("/etc/quantumssh/trusted_user_ca_keys")
         );
         assert_eq!(file.logging.format, Some(LogFormat::Json));
         assert_eq!(file.limits.max_connections, Some(1));
