@@ -53,6 +53,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking for clients and host keys:** the host key is the composite
+  post-quantum `ssh-mldsa44-ed25519` (ML-DSA-44 with Ed25519; a host
+  signature is valid only when both halves verify), and it is the only
+  host-key algorithm offered. Clients need OpenSSH 10.6 or later, and
+  older ones fail with "no matching host key type". Generate the host
+  key with `ssh-keygen -t mldsa44-ed25519`; an `ssh-ed25519` host key
+  stops the server with `invalid_host_key`. Clients that trusted the
+  old Ed25519 host key must remove it from `known_hosts`. User keys
+  stay `ssh-ed25519`, and `server-sig-algs` still names it
+  ([RFC-0012](docs/rfcs/0012-composite-host-key-cutover.md),
+  [ADR-0047](docs/adr/0047-host-key-algorithm-ssh-mldsa44-ed25519.md),
+  with ML-DSA from `ml-dsa` 0.1.2 under
+  [ADR-0035](docs/adr/0035-ml-dsa-crate-rustcrypto.md)).
+- `trusted_user_ca_keys` accepts `ssh-mldsa44-ed25519` CAs only; an
+  `ssh-ed25519` CA line stops the server with
+  `invalid_trusted_user_ca_keys`. Certified user keys stay Ed25519
+  ([ADR-0050](docs/adr/0050-accept-openssh-user-certificates.md) §4).
+- The OpenSSH interop gate runs OpenSSH 10.6p1 from Debian forky, and
+  checks that the composite host key is negotiated and that a client
+  limited to `ssh-ed25519` is refused
+  ([ADR-0048](docs/adr/0048-openssh-interop-client-on-debian-forky.md)).
 - The JSON log is now the audit-log schema, version 1
   ([RFC-0014](docs/rfcs/0014-audit-log-schema-v1.md),
   [ADR-0046](docs/adr/0046-audit-log-schema-v1-supersessions-and-encoder.md)):

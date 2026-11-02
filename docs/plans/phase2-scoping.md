@@ -1,5 +1,5 @@
 <!--
-  Governance status (2026-10-31):
+  Governance status (2026-11-02):
   Non-authoritative design note (ADR-0027). Scopes the Phase-2 ("Usable",
   0.1.0) milestone; tracked in #109. It sequences the workstreams and
   records the one-way release-freeze constraint so each eventual RFC/ADR
@@ -9,7 +9,8 @@
   ADR-0051 Accepted, implemented in #237),
   RFC-0010 + ADR-0029 (TOML config, Accepted; implemented in #128),
   ADR-0028 (runtime/concurrency, Accepted; implemented in #129),
-  RFC-0012 (host-key cut-over to ssh-mldsa44-ed25519 before 0.1.0),
+  RFC-0012 (host-key cut-over to ssh-mldsa44-ed25519, Accepted;
+  ADR-0035, ADR-0047 and ADR-0048 Accepted with the implementation),
   RFC-0015 (negotiation profile version 1, Accepted),
   RFC-0016 (config-file schema version 1, Accepted; implemented in #233).
   This file is retained for rationale and is not a source of truth.
@@ -136,10 +137,16 @@ ADR/RFC (the config-file schema is scoped above as an RFC) — not in this note:
       [RFC-0015](../rfcs/0015-negotiation-profile-v1.md), Accepted
       2026-10-31. Its §5 preconditions for the tag include the host-key
       item below.
-- [ ] **Host-key algorithm** is the composite `ssh-mldsa44-ed25519`, not
+- [x] **Host-key algorithm** is the composite `ssh-mldsa44-ed25519`, not
       `ssh-ed25519` ([RFC-0012](../rfcs/0012-composite-host-key-cutover.md)).
       Part of the profile above, listed on its own because it needs an
       implementation and three subsidiary ADRs before the tag.
+      **Done:** the cut-over landed with
+      [ADR-0035](../adr/0035-ml-dsa-crate-rustcrypto.md),
+      [ADR-0047](../adr/0047-host-key-algorithm-ssh-mldsa44-ed25519.md)
+      and [ADR-0048](../adr/0048-openssh-interop-client-on-debian-forky.md),
+      which also meets RFC-0015 §5's tag preconditions: the gate runs
+      OpenSSH 10.6p1 through its re-key step.
 - [x] **Config-file schema** stable enough to extend compatibly (it, too, is a
       public interface once shipped).
       **Done:** version 1 and its compatibility rule are

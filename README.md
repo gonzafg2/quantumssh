@@ -20,7 +20,7 @@ We are not forking OpenSSH. We are not adding PQ algorithms as an option. We are
 
 🚧 **Pre-alpha — Phase 1 complete; Phase 2 in progress.**
 
-Phase 0 (foundation) and Phase 1 (walking skeleton) are done: the greenfield SSH-2 server in Rust accepts OpenSSH 10.x clients end-to-end (hybrid `mlkem768x25519-sha256`, Ed25519 host keys, publickey auth, single-command `exec`, structured `tracing`, CI interop gate). Crates are at `0.0.1`; there is no public `0.1.0` tag yet.
+Phase 0 (foundation) and Phase 1 (walking skeleton) are done: the greenfield SSH-2 server in Rust accepts OpenSSH 10.x clients end-to-end (hybrid `mlkem768x25519-sha256`, Ed25519 host keys at the time, publickey auth, single-command `exec`, structured `tracing`, CI interop gate). Crates are at `0.0.1`; there is no public `0.1.0` tag yet.
 
 Phase 2 (“Usable”) is underway — tracked in [#109](https://github.com/gonzafg2/quantumssh/issues/109). Landed so far: TOML configuration file and StrictModes checks, concurrent accept loop with admission control, graceful shutdown, interactive PTY sessions, systemd integration, SFTP, and OpenSSH user certificates. Still open before `0.1.0`: the one-way freeze of the negotiation profile and audit-log schema.
 
@@ -50,7 +50,7 @@ QuantumSSH is built around four technical commitments and one structural one.
 
 **Memory-safe by construction.** Written in Rust. No first-party `unsafe`, anywhere: the workspace sets `unsafe_code = "forbid"` ([ADR-0018](./docs/adr/0018-phase-1-unsafe-code-forbid-workspace.md)), with no `#[allow]` escape. The borrow checker is a feature, not a tax.
 
-**Post-quantum by default, not by opt-in.** Hybrid key exchange (ML-KEM + X25519) is the default and only supported family. Users do not need to know what PQ means or how to configure it. The right thing happens out of the box. Signatures — host keys and user authentication — remain classical Ed25519 for now: they carry no harvest-now-decrypt-later exposure, and the IETF post-quantum signature standard for SSH has not settled. That ordering is deliberate; see the [threat model §6.1](./docs/threat-model.md#61-cryptographic-posture).
+**Post-quantum by default, not by opt-in.** Hybrid key exchange (ML-KEM + X25519) is the default and only supported family. Users do not need to know what PQ means or how to configure it. The right thing happens out of the box. Host keys are post-quantum too: the composite `ssh-mldsa44-ed25519` (ML-DSA-44 and Ed25519, both required) is the only host-key algorithm ([RFC-0012](./docs/rfcs/0012-composite-host-key-cutover.md)), so clients need OpenSSH 10.6 or later. User authentication remains classical Ed25519 for now: it carries no harvest-now-decrypt-later exposure. That ordering is deliberate; see the [threat model §6.1](./docs/threat-model.md#61-cryptographic-posture).
 
 **Zero legacy.** No SSH-1. No RSA. No DSA. No ECDSA over NIST curves. No CBC modes. No `diffie-hellman-group1/14-sha1`. No `ssh-rsa`. No password authentication. No compression. None of it is compiled in, not merely configured off, and the line moves with what NIST and the IETF disallow ([RFC-0009](./docs/rfcs/0009-zero-legacy-moving-frontier.md)). We refuse to inherit 25 years of "it's still there because someone's old router needs it."
 
@@ -109,7 +109,7 @@ Tracked in [#9](https://github.com/gonzafg2/quantumssh/issues/9) (closed). Stack
 Acceptance criteria (all met):
 - ✅ Server listens on a port, accepts a connection
 - ✅ Hybrid PQ key exchange (`mlkem768x25519-sha256` — only algorithm offered)
-- ✅ Ed25519 host key
+- ✅ Ed25519 host key (replaced before `0.1.0` by the composite `ssh-mldsa44-ed25519`, [RFC-0012](./docs/rfcs/0012-composite-host-key-cutover.md))
 - ✅ Public-key authentication only
 - ✅ Single-command execution
 - ✅ Structured logging via `tracing`

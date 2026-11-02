@@ -56,7 +56,7 @@ hard review rules:
    deprecated-but-not-yet-disallowed primitive is **not** legacy — deprecation
    only starts a managed migration ([RFC-0007](docs/rfcs/0007-cryptographic-primitive-migration-procedure.md));
    do not reject a PR that keeps such a primitive in use during its migration
-   window (e.g. `ssh-ed25519` under [RFC-0006](docs/rfcs/0006-post-quantum-host-key-signatures.md)).
+   window.
 4. **Small surface, sharp edges.** *Reject* features beyond the current
    phase's scope unless they are opt-in behind an explicit flag. *Reject* any
    new dependency that is not justified in the PR and does not pass
@@ -134,7 +134,7 @@ authoritative reference; the operative rules a reviewer applies:
 | [`docs/plans/`](docs/plans/) | Mutable, non-authoritative milestone design notes ([ADR-0027](docs/adr/0027-docs-plans-governance-category.md)) |
 | [`docs/infrastructure.md`](docs/infrastructure.md), [`docs/operations.md`](docs/operations.md) | Ops topology and verification recipes |
 | `deny.toml`, `clippy.toml`, `rust-toolchain.toml`, `Cargo.toml` | Tooling and workspace config |
-| `crates/quantumssh-core/` | The library — modules `wire`, `kex`, `cipher`, `host_key`, `transport` (type-state machine), `auth`, `cert`, `channel`, `exec`, `pty`, `server`, `sftp` |
+| `crates/quantumssh-core/` | The library — modules `wire`, `kex`, `cipher`, `composite` (the `ssh-mldsa44-ed25519` signature), `host_key`, `transport` (type-state machine), `auth`, `cert`, `channel`, `exec`, `pty`, `server`, `sftp` |
 | `crates/quantumssh/` | The thin binary entrypoint over the library (two crates, flat — [ADR-0017](docs/adr/0017-phase-1-workspace-topology-two-crates-flat.md)) |
 | `tests/interop/` | `run_openssh_client.sh` — the OpenSSH interop gate driver (ADR-0020) |
 | `scripts/` | Maintenance scripts, such as `extract-acvp-mlkem768.py`, which regenerates the ML-KEM-768 ACVP vectors in `crates/quantumssh-core/tests/vectors/` |

@@ -58,9 +58,9 @@ composite host key.
    RustCrypto/signatures#1386, pinned exactly with an `=` requirement in
    the workspace `Cargo.toml`. **0.1.1 is not acceptable**: its signing
    path predates the constant-time fixes, and the signer is reachable
-   before authentication (Context). This ADR stays `Proposed` until
-   that release exists. It flips to `Accepted` in the PR that introduces
-   the dependency, and that PR records the exact version here.
+   before authentication (Context). That release is **0.1.2**
+   (2026-10-31): its CHANGELOG lists #1386 under Security ("Fixed
+   constant time issues"), and the workspace pins `ml-dsa = "=0.1.2"`.
 2. **Features.** `default-features = false, features = ["zeroize",
    "rand_core"]`, following the workspace convention (ADR-0019). Each
    feature has its own reason:
@@ -77,8 +77,8 @@ composite host key.
      (`from_seed`, `sign_randomized`, `verify_with_context`) does not
      need it, and enabled surface is kept to what is used.
 
-   A `cargo check` of `quantumssh-core` with this feature set against
-   0.1.1 compiles.
+   A `cargo check` of `quantumssh-core` with this feature set compiled
+   against 0.1.1, and the implementation builds on it against 0.1.2.
 3. **Signing mode: hedged, with `getrandom::SysRng`.** We call
    `sign_randomized` with `ctx = "COMPSIG-MLDSA44-Ed25519-SHA512"` and
    `&mut getrandom::SysRng` as the RNG.
@@ -131,6 +131,14 @@ composite host key.
      is enabled for dev-dependencies only. If it removes them, the
      harness moves to the replacement API. Both are re-checked against
      the pinned release.
+   - **The external interface with a context string.** The same file
+     also runs ACVP's ML-DSA-44 `sigGen` (deterministic) and `sigVer`
+     groups for FIPS 204's external, pure interface, through
+     `sign_deterministic` and `verify_with_context`: the
+     `0 ‖ len(ctx) ‖ ctx ‖ M` framing the composite signs through.
+     The vectors are `crates/quantumssh-core/tests/vectors/ml-dsa-44-acvp.txt`,
+     extracted by `scripts/extract-acvp-mldsa44.py`, and the test is
+     `tests/acvp_mldsa44.rs`.
    - **The external framing.** What production calls is
      `sign_randomized` with `ctx = Label` and the composite `M'`. The
      LAMPS draft's composite test vectors cover it where they are
@@ -166,30 +174,28 @@ composite host key.
   publish a release with #1386, the cut-over and with it `0.1.0` wait
   (RFC-0012 §Ordering). A git dependency is not an escape hatch:
   `deny.toml` sets `allow-git = []`.
-- **Three new crates in `Cargo.lock`** with 0.1.1: `ml-dsa`, `shake`
-  0.1.0 and `sponge-cursor` 0.1.0. All three are RustCrypto crates
-  licensed Apache-2.0 OR MIT, which `deny.toml` allows. The exact set is
-  re-checked against the pinned release.
+- **One new crate in `Cargo.lock`** with 0.1.2: `ml-dsa` itself,
+  licensed Apache-2.0 OR MIT, which `deny.toml` allows. `shake` and
+  `sponge-cursor`, which 0.1.1 would also have added, are already
+  locked through `ml-kem` 0.3.3. Two crates `ml-kem` shares move:
+  `ctutils` 0.4.6 → 0.4.7 and `module-lattice` 0.2.3 → 0.2.4, and the
+  ML-KEM-768 ACVP vectors still pass on them.
 - **Crate-internal secret state is not erased.** This ADR records it as
-  the residual RFC-0012 §Key material asks for. Two sources:
+  the residual RFC-0012 §Key material asks for. Two sources were
+  surveyed against 0.1.1; 0.1.2 closes one:
   - **Signing temporaries.** The `zeroize` feature erases only the key
-    structures (`signing.rs:646-655` on upstream `master`, after #1386).
-    The per-signature temporaries `sign_randomized` creates are plain
-    buffers: `rnd` (`signing.rs:397-401`), and `rhopp` and the mask `y`
-    inside `raw_sign_mu` (`signing.rs:316-329`). They live inside the
+    structures. The per-signature temporaries `sign_randomized` creates
+    are plain buffers in 0.1.2: `rnd` in `raw_sign_randomized`, and
+    `rhopp` and the mask `y` in `try_raw_sign_mu`. They live inside the
     crate, out of the caller's reach. QuantumSSH's own state follows
-    the RFC-0012 rule in full; these temporaries do not.
-  - **SHAKE state.** In 0.1.1 the `zeroize` feature forwards to
-    `hybrid-array` and `module-lattice` but not to the `shake`
-    dependency, which 0.1.1 declares with `default-features = false`
-    and no `zeroize`. The sponge state that absorbs the seed and `rnd`
-    is therefore not erased either.
-
-  Both residuals fall within threat-model §4.3's best-effort erasure.
-  Closing the first needs upstream zeroization of signing temporaries.
-  Closing the second needs a direct `shake` dependency added only to
-  switch on a feature. Neither is done here; both are re-checked
-  against the pinned release.
+    the RFC-0012 rule in full; these temporaries do not. This residual
+    stands, within threat-model §4.3's best-effort erasure, until
+    upstream zeroizes them.
+  - **SHAKE state.** In 0.1.1 the `zeroize` feature did not reach the
+    `shake` dependency, so the sponge that absorbs the seed and `rnd`
+    was not erased. 0.1.2 wires `shake/zeroize` into it
+    (RustCrypto/signatures#1473), which closes this residual without a
+    direct `shake` dependency.
 - **One feature added to an existing dependency.** The workspace's
   `getrandom` gains `sys_rng` (item 3). No new crate, since `rand_core`
   0.10.1 is already resolved.
@@ -254,4 +260,4 @@ unauthenticated peer can drive and time.
 - Alternatives: [RustSec `libcrux-ml-dsa`](https://rustsec.org/packages/libcrux-ml-dsa.html); [RUSTSEC-2026-0166](https://rustsec.org/advisories/RUSTSEC-2026-0166.html) (`pqcrypto-mldsa` unmaintained); [`aws-lc-rs` `PqdsaKeyPair`](https://docs.rs/aws-lc-rs/1.18.1/aws_lc_rs/signature/struct.PqdsaKeyPair.html).
 - Hedged signing in OpenSSH: `ssh-mldsa-eddsa.c` at tag `V_10_6_P1` of [openssh-portable](https://github.com/openssh/openssh-portable).
 - Roadmap: Phase 2 — [`#109`](https://github.com/gonzafg2/quantumssh/issues/109).
-- Implementation: TBD — the PR that adds the dependency, pins the exact version, and flips this ADR to `Accepted`.
+- Implementation: the RFC-0012 implementation PR, which adds the dependency, pins `=0.1.2`, and flips this ADR to `Accepted`.

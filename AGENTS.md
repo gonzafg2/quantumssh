@@ -70,8 +70,7 @@ warnings.
   ([RFC-0009](docs/rfcs/0009-zero-legacy-moving-frontier.md),
   [RFC-0007](docs/rfcs/0007-cryptographic-primitive-migration-procedure.md)).
   A deprecated-but-not-yet-disallowed primitive is **not** legacy — do not
-  reject a PR that keeps one in use during its migration window (e.g.
-  `ssh-ed25519` under [RFC-0006](docs/rfcs/0006-post-quantum-host-key-signatures.md)).
+  reject a PR that keeps one in use during its migration window.
 - **Only KEX**: `mlkem768x25519-sha256`. Failure of either hybrid half
   aborts — never silently fall back.
 - **Strict-kex required.** No `SSH_MSG_IGNORE`/`DEBUG` before KEXINIT.
