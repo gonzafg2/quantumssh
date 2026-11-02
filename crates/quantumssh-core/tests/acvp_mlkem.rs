@@ -14,69 +14,14 @@ use ml_kem::kem::{Decapsulate as _, KeyExport as _};
 use ml_kem::ExpandedKeyEncoding as _;
 use ml_kem::{Ciphertext, DecapsulationKey, EncapsulationKey, MlKem768};
 
+mod acvp;
+
+use acvp::Case;
+
 const VECTORS: &str = include_str!("vectors/ml-kem-768-acvp.txt");
 
-/// One case: its section, `tcId` and `name = value` fields.
-struct Case {
-    section: String,
-    tc_id: u32,
-    fields: Vec<(String, String)>,
-}
-
-impl Case {
-    fn hex(&self, name: &str) -> Vec<u8> {
-        let value = self.text(name);
-        assert_eq!(value.len() % 2, 0, "tcId {}: odd hex in {name}", self.tc_id);
-        (0..value.len())
-            .step_by(2)
-            .map(|i| u8::from_str_radix(&value[i..i + 2], 16).expect("hex"))
-            .collect()
-    }
-
-    fn text(&self, name: &str) -> &str {
-        self.fields.iter().find(|(n, _)| n == name).map_or_else(
-            || panic!("tcId {}: no {name}", self.tc_id),
-            |(_, v)| v.as_str(),
-        )
-    }
-
-    fn passes(&self) -> bool {
-        match self.text("testPassed") {
-            "true" => true,
-            "false" => false,
-            other => panic!("tcId {}: testPassed = {other}", self.tc_id),
-        }
-    }
-}
-
 fn cases(section: &str) -> Vec<Case> {
-    let mut all = Vec::new();
-    let mut current = String::new();
-    for line in VECTORS.lines().map(str::trim) {
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        if let Some(name) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
-            name.clone_into(&mut current);
-            continue;
-        }
-        let (name, value) = line.split_once(" = ").expect("name = value");
-        if name == "tcId" {
-            all.push(Case {
-                section: current.clone(),
-                tc_id: value.parse().expect("tcId"),
-                fields: Vec::new(),
-            });
-        } else {
-            all.last_mut()
-                .expect("field before tcId")
-                .fields
-                .push((name.to_owned(), value.to_owned()));
-        }
-    }
-    let selected: Vec<Case> = all.into_iter().filter(|c| c.section == section).collect();
-    assert!(!selected.is_empty(), "no [{section}] cases");
-    selected
+    acvp::cases(VECTORS, section)
 }
 
 fn encapsulation_key(bytes: &[u8]) -> Option<EncapsulationKey<MlKem768>> {

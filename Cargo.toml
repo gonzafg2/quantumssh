@@ -50,6 +50,7 @@ toml  = { version = "1.1", default-features = false, features = ["std", "serde",
 # explanation" and ADR-0019. All pure-Rust, no FFI; `hmac` is
 # deliberately absent (ADR-0021: AEAD-only, no exercised MAC path).
 ml-kem        = { version = "0.3.0", default-features = false, features = ["zeroize"] }            # ADR-0019
+ml-dsa        = { version = "=0.1.2", default-features = false, features = ["zeroize", "rand_core"] }  # ADR-0035: first stable release with RustCrypto/signatures#1386
 x25519-dalek  = { version = "3.0.0", default-features = false, features = ["static_secrets", "zeroize"] }  # ADR-0036
 ed25519-dalek = { version = "3.0.0", default-features = false, features = ["zeroize"] }                    # ADR-0036
 sha2          = { version = "0.11", default-features = false }

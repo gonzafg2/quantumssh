@@ -6,7 +6,7 @@
 - **Roadmap issue:** [`#109`](https://github.com/gonzafg2/quantumssh/issues/109) (Phase 2; the `0.1.0` freeze checklist)
 - **Implements:** [RFC-0006](0006-post-quantum-host-key-signatures.md) — the "separate implementation RFC" its §Reference-level explanation requires once both adoption gates fire.
 - **Docs updated in this PR:** `docs/threat-model.md` §5.2.3, §6.1, §7, §9 (status of the migration); `docs/plans/phase2-scoping.md` (freeze checklist item).
-- **Implementation PR:** TBD — after acceptance and the crate ADR; it carries the profile and interop ADRs and the ADR-0020 fixtures atomically ([§Ordering](#ordering)).
+- **Implementation PR:** [#242](https://github.com/gonzafg2/quantumssh/pull/242) — it carries the profile and interop ADRs and the ADR-0020 fixtures atomically ([§Ordering](#ordering)).
 
 ## Summary
 

@@ -126,6 +126,37 @@ async fn non_hybrid_client_is_disconnected_with_code_3() {
     w.put_byte(kex::SSH_MSG_KEXINIT);
     w.put_bytes(&[7u8; 16]);
     w.put_name_list("curve25519-sha256,kex-strict-c-v00@openssh.com");
+    w.put_name_list("ssh-mldsa44-ed25519");
+    w.put_name_list("chacha20-poly1305@openssh.com");
+    w.put_name_list("chacha20-poly1305@openssh.com");
+    w.put_name_list("hmac-sha2-256");
+    w.put_name_list("hmac-sha2-256");
+    w.put_name_list("none");
+    w.put_name_list("none");
+    w.put_name_list("");
+    w.put_name_list("");
+    w.put_boolean(false);
+    w.put_uint32(0);
+    write_packet(&mut stream, &w.into_bytes()).await;
+
+    expect_disconnect(&mut stream, kex::DISCONNECT_KEY_EXCHANGE_FAILED).await;
+}
+
+/// ADR-0047: a client limited to `ssh-ed25519` host keys gets no
+/// fallback.
+#[tokio::test]
+async fn an_ed25519_only_client_is_disconnected_with_code_3() {
+    let (addr, _) = start_server(Duration::from_secs(30)).await;
+    let mut stream = connect(addr).await;
+    read_server_id(&mut stream).await;
+    stream.write_all(CLIENT_ID).await.unwrap();
+    stream.write_all(b"\r\n").await.unwrap();
+    let _i_s = read_packet(&mut stream).await;
+
+    let mut w = Writer::new();
+    w.put_byte(kex::SSH_MSG_KEXINIT);
+    w.put_bytes(&[7u8; 16]);
+    w.put_name_list("mlkem768x25519-sha256,kex-strict-c-v00@openssh.com");
     w.put_name_list("ssh-ed25519");
     w.put_name_list("chacha20-poly1305@openssh.com");
     w.put_name_list("chacha20-poly1305@openssh.com");
@@ -155,7 +186,7 @@ async fn missing_strict_kex_is_disconnected_with_code_3() {
     w.put_byte(kex::SSH_MSG_KEXINIT);
     w.put_bytes(&[7u8; 16]);
     w.put_name_list("mlkem768x25519-sha256"); // no kex-strict-c
-    w.put_name_list("ssh-ed25519");
+    w.put_name_list("ssh-mldsa44-ed25519");
     w.put_name_list("chacha20-poly1305@openssh.com");
     w.put_name_list("chacha20-poly1305@openssh.com");
     w.put_name_list("hmac-sha2-256");
@@ -777,7 +808,7 @@ async fn certificate_probe_gets_pk_ok_naming_the_certificate_then_signs_in() {
 async fn refused_certificates_fail_like_an_unknown_key() {
     // ADR-0050 §5: the client learns no reason.
     let ca = test_ca();
-    let untrusted = SigningKey::from_bytes(&[93u8; 32]);
+    let untrusted = CompositeKey::from_seeds(&[93u8; 64]);
     let (addr, host_key) = start_server_with_ca(None).await;
     for cert_blob in [
         user_cert(&ca, &[b"someone-else"], u64::MAX, true),

@@ -73,12 +73,16 @@ pub enum AuthError {
         /// What went wrong.
         reason: String,
     },
-    /// The key type on the line is not `ssh-ed25519`.
+    /// The key type on the line is not the one the file holds:
+    /// `ssh-ed25519` in `authorized_keys`, `ssh-mldsa44-ed25519` in
+    /// `trusted_user_ca_keys` (ADR-0050 §4).
     UnsupportedKeyType {
         /// 1-indexed line number.
         line: usize,
         /// The algorithm name found.
         found: String,
+        /// The algorithm the file requires.
+        expected: &'static str,
     },
     /// The line carries an options field, which is not enforced (ADR-0040).
     KeyOptions {
@@ -94,10 +98,14 @@ impl fmt::Display for AuthError {
         match self {
             Self::Io(e) => write!(f, "cannot read the file: {e}"),
             Self::MalformedLine { line, reason } => write!(f, "line {line}: {reason}"),
-            Self::UnsupportedKeyType { line, found } => {
+            Self::UnsupportedKeyType {
+                line,
+                found,
+                expected,
+            } => {
                 write!(
                     f,
-                    "line {line}: unsupported key type '{found}' (need ssh-ed25519)"
+                    "line {line}: unsupported key type '{found}' (need {expected})"
                 )
             }
             Self::KeyOptions { line } => write!(
@@ -188,10 +196,63 @@ pub(crate) fn lookup<'k>(keys: &'k [AuthorizedKey], key_blob: &[u8]) -> Option<&
     keys.iter().find(|k| k.blob == key_blob)
 }
 
-/// Loads an `authorized_keys`-format file: the rules and errors of
-/// [`AuthorizedKeys::load`], shared with `trusted_user_ca_keys`
-/// (ADR-0050 §3).
-pub(crate) fn load_key_file(path: &Path) -> Result<Vec<AuthorizedKey>, AuthError> {
+/// One key line of an `authorized_keys`-format file: the wire blob, its
+/// `SHA256:` fingerprint, and the key `parse` built from its bytes.
+pub(crate) struct KeyLine<K> {
+    pub(crate) blob: Vec<u8>,
+    pub(crate) fingerprint: String,
+    pub(crate) key: K,
+}
+
+/// Loads an `authorized_keys` file of `ssh-ed25519` keys: the rules and
+/// errors of [`AuthorizedKeys::load`].
+fn load_key_file(path: &Path) -> Result<Vec<AuthorizedKey>, AuthError> {
+    let lines = load_key_lines(path, KEY_ALGORITHM, 64, |line_no, key_bytes| {
+        let arr: [u8; 32] = key_bytes.try_into().map_err(|_| AuthError::MalformedLine {
+            line: line_no,
+            reason: format!(
+                "expected 32-byte Ed25519 key, got {} bytes",
+                key_bytes.len()
+            ),
+        })?;
+        let verifying_key =
+            VerifyingKey::from_bytes(&arr).map_err(|_| AuthError::MalformedLine {
+                line: line_no,
+                reason: "invalid Ed25519 key bytes".into(),
+            })?;
+        // A small-order key accepts forged signatures under the
+        // non-strict check; `verify_auth_signature` already uses
+        // `verify_strict`, and refusing the key here as well fails a
+        // bad `authorized_keys` loudly instead of keeping it loaded.
+        if verifying_key.is_weak() {
+            return Err(AuthError::MalformedLine {
+                line: line_no,
+                reason: "small-order (weak) Ed25519 key".into(),
+            });
+        }
+        Ok(verifying_key)
+    })?;
+    Ok(lines
+        .into_iter()
+        .map(|l| AuthorizedKey {
+            blob: l.blob,
+            fingerprint: l.fingerprint,
+            verifying_key: l.key,
+        })
+        .collect())
+}
+
+/// Loads an `authorized_keys`-format file whose every key is of type
+/// `algorithm`, at most `key_bound` bytes, and accepted by `parse`. The
+/// line rules are shared by `authorized_keys` and `trusted_user_ca_keys`
+/// (ADR-0050 §3): `#` comments and empty lines are skipped, an options
+/// field fails the load (ADR-0040), and the file must hold a key.
+pub(crate) fn load_key_lines<K>(
+    path: &Path,
+    algorithm: &'static str,
+    key_bound: usize,
+    parse: impl Fn(usize, &[u8]) -> Result<K, AuthError>,
+) -> Result<Vec<KeyLine<K>>, AuthError> {
     let content = std::fs::read_to_string(path).map_err(|e| AuthError::Io(e.to_string()))?;
 
     let mut keys = Vec::new();
@@ -215,10 +276,11 @@ pub(crate) fn load_key_file(path: &Path) -> Result<Vec<AuthorizedKey>, AuthError
             line: line_no,
             reason: "no key type found".into(),
         })?;
-        if algo != KEY_ALGORITHM {
+        if algo != algorithm {
             return Err(AuthError::UnsupportedKeyType {
                 line: line_no,
                 found: algo.into(),
+                expected: algorithm,
             });
         }
 
@@ -241,16 +303,16 @@ pub(crate) fn load_key_file(path: &Path) -> Result<Vec<AuthorizedKey>, AuthError
                 line: line_no,
                 reason: "blob truncated or oversized".into(),
             })?;
-        if parsed_algo != KEY_ALGORITHM.as_bytes() {
+        if parsed_algo != algorithm.as_bytes() {
             return Err(AuthError::MalformedLine {
                 line: line_no,
                 reason: format!(
-                    "blob algorithm is '{}', expected 'ssh-ed25519'",
+                    "blob algorithm is '{}', expected '{algorithm}'",
                     String::from_utf8_lossy(parsed_algo)
                 ),
             });
         }
-        let key_bytes = r.string(64).map_err(|_| AuthError::MalformedLine {
+        let key_bytes = r.string(key_bound).map_err(|_| AuthError::MalformedLine {
             line: line_no,
             reason: "missing key bytes in blob".into(),
         })?;
@@ -259,39 +321,13 @@ pub(crate) fn load_key_file(path: &Path) -> Result<Vec<AuthorizedKey>, AuthError
             reason: format!("trailing data in blob: {e}"),
         })?;
 
-        if key_bytes.len() != 32 {
-            return Err(AuthError::MalformedLine {
-                line: line_no,
-                reason: format!(
-                    "expected 32-byte Ed25519 key, got {} bytes",
-                    key_bytes.len()
-                ),
-            });
-        }
-        let mut arr = [0u8; 32];
-        arr.copy_from_slice(key_bytes);
-        let verifying_key =
-            VerifyingKey::from_bytes(&arr).map_err(|_| AuthError::MalformedLine {
-                line: line_no,
-                reason: "invalid Ed25519 key bytes".into(),
-            })?;
-        // A small-order key accepts forged signatures under the
-        // non-strict check; `verify_auth_signature` already uses
-        // `verify_strict`, and refusing the key here as well fails a
-        // bad `authorized_keys` loudly instead of keeping it loaded.
-        if verifying_key.is_weak() {
-            return Err(AuthError::MalformedLine {
-                line: line_no,
-                reason: "small-order (weak) Ed25519 key".into(),
-            });
-        }
-
+        let key = parse(line_no, key_bytes)?;
         let fingerprint = host_key::fingerprint_sha256(&blob);
 
-        keys.push(AuthorizedKey {
+        keys.push(KeyLine {
             blob,
             fingerprint,
-            verifying_key,
+            key,
         });
     }
 
@@ -527,7 +563,7 @@ mod tests {
         let err = AuthorizedKeys::load(&path).unwrap_err();
         assert!(matches!(
             err,
-            AuthError::UnsupportedKeyType { line: 1, ref found } if found == "ecdsa-sha2-nistp256"
+            AuthError::UnsupportedKeyType { line: 1, ref found, expected: "ssh-ed25519" } if found == "ecdsa-sha2-nistp256"
         ));
     }
 

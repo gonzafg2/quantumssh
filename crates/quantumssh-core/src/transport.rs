@@ -419,7 +419,13 @@ where
             server_reply: &outcome.server_reply,
             shared_secret: &outcome.shared_secret,
         }));
-        let signature = host_key.sign(exchange_hash.as_ref());
+        // A failed hedged signature fails the exchange closed, as a
+        // failed `getrandom` does in `kex` (ADR-0035 §3).
+        let Ok(signature) = host_key.sign(exchange_hash.as_ref()) else {
+            return Err(self
+                .reject_plain(Rejection::kex_failed("rng-failure"))
+                .await);
+        };
 
         let mut reply = Writer::new();
         reply.put_byte(kex::SSH_MSG_KEX_HYBRID_REPLY);
@@ -506,7 +512,9 @@ where
             w.put_byte(SSH_MSG_EXT_INFO);
             w.put_uint32(1);
             w.put_string(b"server-sig-algs");
-            w.put_string(kex::HOST_KEY_LIST.as_bytes());
+            // The user-authentication algorithm, not the host key's:
+            // user keys stay Ed25519 (ADR-0047).
+            w.put_string(auth::KEY_ALGORITHM.as_bytes());
             next.write_sealed(&w.into_bytes()).await?;
         }
 
@@ -1349,7 +1357,11 @@ where
             server_reply: &outcome.server_reply,
             shared_secret: &outcome.shared_secret,
         }));
-        let signature = self.stage.host_key.sign(h_r.as_ref());
+        let Ok(signature) = self.stage.host_key.sign(h_r.as_ref()) else {
+            return Err(self
+                .rekey_reject(Rejection::kex_failed("rng-failure"))
+                .await);
+        };
 
         // Derive the new pair with the ORIGINAL session id and the NEW H_r.
         let (new_rx, new_tx) = derive_cipher_pair(

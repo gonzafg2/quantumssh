@@ -58,9 +58,11 @@ OPTIONS:
                                   schema v1). Optional; flags override
                                   its values (CLI > config > default)
     --listen <ADDR>               Address to bind (default: 127.0.0.1:2222)
-    --host-key <PATH>             Ed25519 host key file (openssh-key-v1,
-                                  unencrypted; ssh-keygen -t ed25519).
-                                  Required (flag or [server].host_key).
+    --host-key <PATH>             ssh-mldsa44-ed25519 host key file
+                                  (openssh-key-v1, unencrypted;
+                                  ssh-keygen -t mldsa44-ed25519, OpenSSH
+                                  10.6 or later). Required (flag or
+                                  [server].host_key).
     --authorized-keys <PATH>      authorized_keys file (one ssh-ed25519
                                   key per line). Required (flag or
                                   [auth].authorized_keys).

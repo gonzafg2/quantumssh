@@ -55,7 +55,9 @@ the [README roadmap](../README.md#roadmap) for the current phase) is
 designed to support:
 
 - Hybrid post-quantum key exchange (`mlkem768x25519-sha256`) — Phase 1.
-- Ed25519 host keys (RFC 8709) — Phase 1.
+- Composite `ssh-mldsa44-ed25519` host keys
+  (`draft-ietf-sshm-composite-sigs`) — Phase 2, replacing Phase 1's
+  Ed25519 ([RFC-0012](rfcs/0012-composite-host-key-cutover.md)).
 - Public-key user authentication only — Phase 1.
 - Single-command execution — Phase 1. Interactive PTY and SFTP — Phase 2.
 
@@ -129,9 +131,11 @@ fact-of-authentication is exposed to the operator by design).
 
 ### 2.3 Host key material
 
-**What.** The host's long-term private signing key (Ed25519 by
-default), which the server uses to authenticate itself to clients
-during the SSH transport handshake.
+**What.** The host's long-term private signing key (the composite
+`ssh-mldsa44-ed25519`: an ML-DSA-44 seed and an Ed25519 seed,
+[RFC-0012](rfcs/0012-composite-host-key-cutover.md)), which the server
+uses to authenticate itself to clients during the SSH transport
+handshake.
 
 **Where.** On-disk under operator control, and in process memory while
 the server is running.
@@ -810,10 +814,10 @@ host-key fingerprint in operationally usable forms so the
 operator can publish it. SSHFP records under a DNSSEC-signed
 zone are one such form; the publication itself and the DNSSEC
 operation are the operator's responsibility, not the server's.
-The host key is Ed25519 until the
-[RFC-0012](rfcs/0012-composite-host-key-cutover.md) cut-over and the
-composite `ssh-mldsa44-ed25519` after it; either way its SHA-256
-fingerprint is compact enough for out-of-band verification. SSHFP
+The host key is the composite `ssh-mldsa44-ed25519`
+([RFC-0012](rfcs/0012-composite-host-key-cutover.md)); its SHA-256
+fingerprint is as compact as an Ed25519 key's, enough for out-of-band
+verification. SSHFP
 publication of the composite key waits for an SSHFP algorithm
 number (RFC-0012 §Drawbacks).
 
@@ -1214,14 +1218,20 @@ repeating it.
   offered in the default profile. Failure of either half
   aborts the handshake; there is no silent fallback.
   Defends §5.2.1, §5.2.2.
-- **Ed25519 host keys.** RFC 8709. Compact fingerprints, modern
-  curve, no parameter-choice attack surface. Defends §5.2.3.
-- **Signatures are classical, by deliberate sequencing.** Both
-  authentication surfaces — the `ssh-ed25519` host keys accepted
-  RFC-0003 selects, and the user-authentication algorithm
+- **Composite post-quantum host keys.** `ssh-mldsa44-ed25519`
+  (`draft-ietf-sshm-composite-sigs`) is the only host-key algorithm
+  offered ([ADR-0047](adr/0047-host-key-algorithm-ssh-mldsa44-ed25519.md)).
+  Every host signature pairs ML-DSA-44 with Ed25519 and is valid only
+  when both halves verify, so a defect confined to the ML-DSA half
+  degrades host authentication to Ed25519 alone, not below it.
+  Fingerprints stay compact. Defends §5.2.3.
+- **User-authentication signatures are classical, by deliberate
+  sequencing.** The user-authentication algorithm
   [ADR-0021](adr/0021-phase-1-negotiation-profile.md) fixes
-  (`ssh-ed25519` only) — rely on elliptic-curve signatures that a
+  (`ssh-ed25519` only) relies on elliptic-curve signatures that a
   cryptographically relevant quantum computer (CRQC) would break.
+  Host authentication was in the same position until the RFC-0012
+  cut-over, and the reasoning below is why it could move second.
   Unlike key exchange, signatures carry no retroactive exposure: a
   future CRQC cannot forge an authentication that already happened.
   A passive recorder does capture the host *public* key — every SSH
@@ -1243,9 +1253,9 @@ repeating it.
   of RFC-0006's adoption gates fired in 2026: the SSHM working group
   adopted `draft-ietf-sshm-composite-sigs` on 2026-08-22, and
   OpenSSH 10.6 shipped `ssh-mldsa44-ed25519` on 2026-10-06.
-  [RFC-0012](rfcs/0012-composite-host-key-cutover.md) decides the
-  cut-over to that composite, as the only host-key algorithm, before
-  `0.1.0`. The residual exposure and the migration trigger are
+  [RFC-0012](rfcs/0012-composite-host-key-cutover.md) made that
+  composite the only host-key algorithm before `0.1.0`. The residual
+  exposure and the migration trigger are
   recorded in §7; the migration path is defined in
   [RFC-0006](rfcs/0006-post-quantum-host-key-signatures.md) (the
   composite target, drafted as `ssh-mldsa44-ed25519@openssh.com`
@@ -1414,11 +1424,11 @@ operators must account for. The principal items, by category, are:
   adoption are listed in §9); the migration path is defined in
   [RFC-0006](rfcs/0006-post-quantum-host-key-signatures.md). Both
   gates fired by October 2026 (§6.1):
-  [RFC-0012](rfcs/0012-composite-host-key-cutover.md) cuts host
-  authentication over to `ssh-mldsa44-ed25519` before `0.1.0`,
-  tracked under issue #109. Until that cut-over lands, the host-key
-  half of the exposure described here stands. The user-key half
-  persists beyond it: user authentication stays classical
+  [RFC-0012](rfcs/0012-composite-host-key-cutover.md) cut host
+  authentication over to `ssh-mldsa44-ed25519` before `0.1.0`, which
+  closes the host-key half of the exposure described here, provided
+  clients remove the old Ed25519 key from `known_hosts`. The user-key
+  half persists: user authentication stays classical
   `ssh-ed25519`, and post-quantum user keys are a separate, still
   open decision (RFC-0006 §Future possibilities).
 - **Implementation flaws not caught by review, tests, or fuzzing.**
@@ -1688,8 +1698,8 @@ full rationale and operational counterpart.
   composite as `draft-ietf-sshm-composite-sigs` on 2026-08-22, with
   the final identifier `ssh-mldsa44-ed25519`, and OpenSSH 10.6
   shipped it on 2026-10-06;
-  [RFC-0012](rfcs/0012-composite-host-key-cutover.md) decides the
-  cut-over, tracked under issue #109.
+  [RFC-0012](rfcs/0012-composite-host-key-cutover.md) cut the host
+  key over to it before `0.1.0`.
   <https://datatracker.ietf.org/doc/draft-ietf-sshm-composite-sigs/>
 
 ### Project-internal references
