@@ -114,6 +114,11 @@ a majority of the maintainer team (after the transition described in
 - If a future change makes an old RFC obsolete, the new RFC explicitly
   links to and supersedes the old one. We do not edit accepted RFCs in
   place; we layer new ones on top.
+- The one exception is a **factual erratum**: a claim that was wrong
+  when the RFC was accepted is corrected in place, under a
+  `Post-acceptance errata` banner that gives the date, the PR and what
+  changed ([ADR-0052](../adr/0052-permit-annotated-errata-in-rfcs.md)).
+  A decision change still needs a new RFC.
 
 ## A note on language
 
