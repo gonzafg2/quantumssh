@@ -58,8 +58,9 @@ pub const KEX_LIST: &str = "mlkem768x25519-sha256,kex-strict-s-v00@openssh.com";
 /// omitted (ADR-0021: the pseudo-algorithms are ignored on re-key, and
 /// OpenSSH omits them). Just the one real KEX.
 pub const KEX_LIST_REKEY: &str = "mlkem768x25519-sha256";
-/// `server_host_key_algorithms` (ADR-0021 §2).
-pub const HOST_KEY_LIST: &str = "ssh-ed25519";
+/// `server_host_key_algorithms`: the composite alone (ADR-0047, which
+/// supersedes ADR-0021 §2).
+pub const HOST_KEY_LIST: &str = "ssh-mldsa44-ed25519";
 /// `encryption_algorithms_*`, both directions (ADR-0021 §3–4).
 pub const ENCRYPTION_LIST: &str = "chacha20-poly1305@openssh.com,aes256-gcm@openssh.com";
 /// `mac_algorithms_*`, both directions — nominal only, never
@@ -83,7 +84,7 @@ pub struct Rejection {
 }
 
 impl Rejection {
-    const fn kex_failed(reason: &'static str) -> Self {
+    pub(crate) const fn kex_failed(reason: &'static str) -> Self {
         Self {
             reason,
             disconnect_code: DISCONNECT_KEY_EXCHANGE_FAILED,
@@ -143,7 +144,7 @@ pub struct Negotiated {
     /// Always [`KEX_ALGORITHM`] — kept explicit for the
     /// `kex.completed` log event.
     pub kex_algorithm: &'static str,
-    /// Always `ssh-ed25519` in Phase 1.
+    /// Always [`HOST_KEY_LIST`]'s one name, `ssh-mldsa44-ed25519`.
     pub host_key_algorithm: &'static str,
     /// Cipher for client→server, client's preference.
     pub cipher_c2s: String,
@@ -326,7 +327,7 @@ pub fn negotiate(peer: &PeerKexInit<'_>, initial: bool) -> Result<Negotiated, Ke
     // FIRST kex algorithm and FIRST host-key algorithm match the
     // negotiated ones (RFC 4253 §7.1). With our single-entry lists,
     // that means first-real-kex == hybrid and first-host-key ==
-    // ssh-ed25519; a wrong guess means the transport silently skips
+    // ssh-mldsa44-ed25519; a wrong guess means the transport silently skips
     // the peer's next KEX packet.
     let skip_guessed_packet = peer.first_kex_packet_follows && {
         let first_kex = peer.kex_algorithms.names().next();
@@ -369,17 +370,46 @@ mod tests {
     }
 
     const OPENSSH_KEX: &str = "mlkem768x25519-sha256,sntrup761x25519-sha512,curve25519-sha256,ext-info-c,kex-strict-c-v00@openssh.com";
-    const OPENSSH_HOSTKEYS: &str = "ssh-ed25519,rsa-sha2-512,rsa-sha2-256";
+    // OpenSSH 10.6 lists the composite last (`myproposal.h`).
+    const OPENSSH_HOSTKEYS: &str = "ssh-ed25519,rsa-sha2-512,rsa-sha2-256,ssh-mldsa44-ed25519";
     const OPENSSH_CIPHERS: &str = "chacha20-poly1305@openssh.com,aes128-ctr,aes256-ctr,aes128-gcm@openssh.com,aes256-gcm@openssh.com";
+
+    /// Asserts every name-list of our KEXINIT `payload` against the
+    /// negotiation profile, version 1 (RFC-0015 §1), written out as
+    /// literals: a changed constant fails here, not only a missing name.
+    fn assert_profile_v1(payload: &[u8], kex_algorithms: &str) {
+        let mut r = Reader::new(payload);
+        assert_eq!(r.byte().unwrap(), SSH_MSG_KEXINIT);
+        for _ in 0..16 {
+            r.byte().unwrap(); // cookie
+        }
+        let lists = [
+            kex_algorithms,
+            "ssh-mldsa44-ed25519",
+            "chacha20-poly1305@openssh.com,aes256-gcm@openssh.com",
+            "chacha20-poly1305@openssh.com,aes256-gcm@openssh.com",
+            "hmac-sha2-512-etm@openssh.com",
+            "hmac-sha2-512-etm@openssh.com",
+            "none",
+            "none",
+            "",
+            "",
+        ];
+        for expected in lists {
+            assert_eq!(r.string(NAME_LIST_BOUND).unwrap(), expected.as_bytes());
+        }
+        assert!(!r.boolean().unwrap(), "first_kex_packet_follows");
+        assert_eq!(r.uint32().unwrap(), 0, "reserved");
+        r.finish().unwrap();
+    }
 
     #[test]
     fn our_kexinit_matches_the_adr_0021_profile() {
         let payload = build_kexinit().unwrap();
-        let parsed = parse_kexinit(&payload).unwrap();
-        assert!(parsed.kex_algorithms.contains(KEX_ALGORITHM));
-        assert!(parsed.kex_algorithms.contains(STRICT_KEX_SERVER));
-        assert!(!parsed.kex_algorithms.contains(STRICT_KEX_CLIENT));
-        assert!(!parsed.first_kex_packet_follows);
+        assert_profile_v1(
+            &payload,
+            "mlkem768x25519-sha256,kex-strict-s-v00@openssh.com",
+        );
         // Two distinct builds differ (random cookie).
         let second = build_kexinit().unwrap();
         assert_ne!(payload, second);
@@ -388,13 +418,9 @@ mod tests {
 
     #[test]
     fn rekey_kexinit_omits_strict_marker() {
-        let payload = build_rekey_kexinit().unwrap();
-        let parsed = parse_kexinit(&payload).unwrap();
         // The real KEX is offered; the strict-kex marker is NOT (ADR-0021:
         // markers are absent/ignored on re-key KEXINITs).
-        assert!(parsed.kex_algorithms.contains(KEX_ALGORITHM));
-        assert!(!parsed.kex_algorithms.contains(STRICT_KEX_SERVER));
-        assert!(!parsed.first_kex_packet_follows);
+        assert_profile_v1(&build_rekey_kexinit().unwrap(), "mlkem768x25519-sha256");
     }
 
     #[test]
@@ -403,7 +429,7 @@ mod tests {
         let peer = parse_kexinit(&payload).unwrap();
         let n = negotiate(&peer, true).unwrap();
         assert_eq!(n.kex_algorithm, "mlkem768x25519-sha256");
-        assert_eq!(n.host_key_algorithm, "ssh-ed25519");
+        assert_eq!(n.host_key_algorithm, "ssh-mldsa44-ed25519");
         // Client's list puts chacha20 first → client preference wins.
         assert_eq!(n.cipher_c2s, "chacha20-poly1305@openssh.com");
         assert!(n.ext_info);
@@ -562,10 +588,10 @@ mod tests {
         let peer = parse_kexinit(&wrong).unwrap();
         assert!(negotiate(&peer, true).unwrap().skip_guessed_packet);
 
-        // Right guess: hybrid first, ssh-ed25519 first.
+        // Right guess: hybrid first, ssh-mldsa44-ed25519 first.
         let right = client_kexinit(
             "mlkem768x25519-sha256,kex-strict-c-v00@openssh.com",
-            "ssh-ed25519",
+            "ssh-mldsa44-ed25519",
             OPENSSH_CIPHERS,
             true,
         );
@@ -576,6 +602,21 @@ mod tests {
         let none = client_kexinit(OPENSSH_KEX, OPENSSH_HOSTKEYS, OPENSSH_CIPHERS, false);
         let peer = parse_kexinit(&none).unwrap();
         assert!(!negotiate(&peer, true).unwrap().skip_guessed_packet);
+    }
+
+    /// ADR-0047: a client that cannot verify the composite, such as one
+    /// limited to `ssh-ed25519`, fails negotiation; nothing falls back.
+    #[test]
+    fn a_client_without_the_composite_host_key_is_refused() {
+        for hostkeys in ["ssh-ed25519", "ssh-mldsa44-ed25519@openssh.com,ssh-ed25519"] {
+            let payload = client_kexinit(OPENSSH_KEX, hostkeys, OPENSSH_CIPHERS, false);
+            let peer = parse_kexinit(&payload).unwrap();
+            let Err(KexError::Rejected(rejection)) = negotiate(&peer, true) else {
+                panic!("{hostkeys} negotiated");
+            };
+            assert_eq!(rejection.reason, "no-host-key-algorithm");
+            assert_eq!(rejection.disconnect_code, DISCONNECT_KEY_EXCHANGE_FAILED);
+        }
     }
 
     #[test]

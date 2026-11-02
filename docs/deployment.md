@@ -58,16 +58,24 @@ group or others, and its owner must be root or the account.
 |---|---|---|---|
 | `/etc/quantumssh/` | `root:root` | `0755` | Not group- or world-writable. |
 | `/etc/quantumssh/config.toml` | `root:root` | `0644` | The account cannot change its own configuration. |
-| `/etc/quantumssh/ssh_host_ed25519_key` | `quantumssh:quantumssh` | `0600` | The account must read it, so a root-owned `0600` key would not work. |
+| `/etc/quantumssh/ssh_host_mldsa44_ed25519_key` | `quantumssh:quantumssh` | `0600` | The account must read it, so a root-owned `0600` key would not work. |
 | `/etc/quantumssh/authorized_keys` | `root:root` | `0644` | The account cannot change who may log in. |
 | `/etc/quantumssh/trusted_user_ca_keys` (optional, §4) | `root:root` | `0644` | The account cannot change which CAs it trusts. |
 
 ```sh
 sudo install -d -m 0755 /etc/quantumssh
-sudo ssh-keygen -t ed25519 -N "" -f /etc/quantumssh/ssh_host_ed25519_key
-sudo chown quantumssh:quantumssh /etc/quantumssh/ssh_host_ed25519_key
+sudo ssh-keygen -t mldsa44-ed25519 -N "" -f /etc/quantumssh/ssh_host_mldsa44_ed25519_key
+sudo chown quantumssh:quantumssh /etc/quantumssh/ssh_host_mldsa44_ed25519_key
 sudo install -m 0644 your_key.pub /etc/quantumssh/authorized_keys
 ```
+
+The host key is the composite `ssh-mldsa44-ed25519`, the only type the
+server accepts ([ADR-0047](adr/0047-host-key-algorithm-ssh-mldsa44-ed25519.md)).
+It needs `ssh-keygen` from OpenSSH 10.6 or later. Generate a new key: do
+not reuse the Ed25519 half of an existing key
+([RFC-0012](rfcs/0012-composite-host-key-cutover.md)). A host key of any
+other type, `ssh-ed25519` included, stops the server at startup with
+`invalid_host_key`.
 
 `authorized_keys` takes plain `ssh-ed25519` lines. A line with options
 (`from=`, `command=`, `restrict` and the like) stops the server from
@@ -82,7 +90,7 @@ schema_version = 1
 
 [server]
 listen   = "0.0.0.0:2222"
-host_key = "/etc/quantumssh/ssh_host_ed25519_key"
+host_key = "/etc/quantumssh/ssh_host_mldsa44_ed25519_key"
 
 [auth]
 authorized_keys = "/etc/quantumssh/authorized_keys"
@@ -111,11 +119,11 @@ the stream: under systemd it is JSON.
 Instead of listing every key in `authorized_keys`, you can trust a
 certificate authority (CA) and give users short-lived certificates
 ([ADR-0050](adr/0050-accept-openssh-user-certificates.md)). Put the
-CA's public key in `trusted_user_ca_keys`, one `ssh-ed25519` line per
-CA, with no options, and name the file in `[auth]`:
+CA's public key in `trusted_user_ca_keys`, one `ssh-mldsa44-ed25519`
+line per CA, with no options, and name the file in `[auth]`:
 
 ```sh
-ssh-keygen -t ed25519 -f user_ca              # keep user_ca offline
+ssh-keygen -t mldsa44-ed25519 -f user_ca      # keep user_ca offline
 sudo install -m 0644 user_ca.pub /etc/quantumssh/trusted_user_ca_keys
 ```
 
@@ -142,9 +150,10 @@ ssh-keygen -s user_ca -I alice@laptop -n alice -V +8h alice_key.pub
   server does not enforce them yet.
 - **PTY.** A certificate gets a PTY only with the `permit-pty`
   extension, which `ssh-keygen -s` includes unless you pass `-O no-pty`.
-- **CA algorithm.** The CA key is `ssh-ed25519` today. Before `0.1.0`
-  the server switches to `ssh-mldsa44-ed25519` CAs only, which OpenSSH
-  10.6 or later can generate and sign with (ADR-0050 §4).
+- **CA algorithm.** The CA key is `ssh-mldsa44-ed25519` only, which
+  OpenSSH 10.6 or later can generate and sign with. An `ssh-ed25519`
+  line stops the server with `invalid_trusted_user_ca_keys`
+  (ADR-0050 §4). The users' own keys stay Ed25519.
 
 A refused certificate fails like an unknown key. The server records the
 reason (for example `expired` or `principal_mismatch`) in a
@@ -169,8 +178,17 @@ sudo systemctl enable --now quantumssh
   `journalctl -u quantumssh` shows it as `server.config_error`.
 - The `server.started` record names the host-key fingerprint, so you
   can check it before the first connection.
-- The client must be OpenSSH 9.9 or newer, because the server offers
-  only `mlkem768x25519-sha256`.
+- The client must be OpenSSH 10.6 or newer, because the server offers
+  only `mlkem768x25519-sha256` (9.9 or newer) and only the
+  `ssh-mldsa44-ed25519` host key (10.6 or newer). An older client fails
+  with "no matching host key type".
+- A client that trusted an Ed25519 key for this host before the switch
+  to the composite key must forget it and learn the new fingerprint out
+  of band: `ssh-keygen -R <host>` on port 22, and
+  `ssh-keygen -R '[<host>]:2222'` for another port, because
+  `known_hosts` stores the port with the host. Keeping the old entry trusted keeps
+  the classical path open for anyone who can forge Ed25519
+  (RFC-0012 §Why exactly one algorithm).
 
 ## 6. Serving on port 22
 

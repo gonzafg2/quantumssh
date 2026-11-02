@@ -1,20 +1,27 @@
-//! Ed25519 host key: loading (`openssh-key-v1`, unencrypted),
-//! public-blob encoding (RFC 8709), signing, and the `SHA256:`
-//! fingerprint (ADR-0024 log format).
+//! The composite `ssh-mldsa44-ed25519` host key (ADR-0047): loading
+//! (`openssh-key-v1`, unencrypted), public-blob encoding, signing, and
+//! the `SHA256:` fingerprint (ADR-0024 log format).
 //!
-//! Only `ssh-ed25519` exists in Phase 1 (ADR-0021); only the
-//! unencrypted `openssh-key-v1` container is accepted — host keys are
-//! generated with `ssh-keygen -t ed25519` and protected by file
-//! permissions, not passphrases (a server cannot type one at boot).
+//! It is the only host key type (RFC-0012); only the unencrypted
+//! `openssh-key-v1` container is accepted — host keys are generated with
+//! `ssh-keygen -t mldsa44-ed25519` (OpenSSH 10.6 or later) and protected
+//! by file permissions, not passphrases (a server cannot type one at
+//! boot).
 
-use ed25519_dalek::{Signer, SigningKey};
 use sha2::{Digest, Sha256};
 use zeroize::Zeroizing;
 
+use crate::composite::{self, SEEDS_LEN, SigningKey};
 use crate::wire::{Reader, Writer};
 
-/// Algorithm name (RFC 8709).
-pub const ALGORITHM: &str = "ssh-ed25519";
+/// Algorithm name (`draft-ietf-sshm-composite-sigs-00` §4.1.1).
+pub const ALGORITHM: &str = composite::ALGORITHM;
+
+/// Bounds for the container's fields. The public blob is
+/// 4 + 19 + 4 + 1344 bytes; the private section adds the 64-byte seeds,
+/// the comment and padding.
+const PUBLIC_BLOB_BOUND: usize = 2048;
+const PRIVATE_SECTION_BOUND: usize = 4096;
 
 const PEM_HEADER: &str = "-----BEGIN OPENSSH PRIVATE KEY-----";
 const PEM_FOOTER: &str = "-----END OPENSSH PRIVATE KEY-----";
@@ -26,26 +33,34 @@ pub enum HostKeyError {
     /// Not a PEM-armored `openssh-key-v1` file.
     BadContainer,
     /// The container is valid but the key is not an unencrypted
-    /// single `ssh-ed25519` key.
+    /// single `ssh-mldsa44-ed25519` key.
     Unsupported,
-    /// The embedded public key does not match the private seed, or
+    /// The embedded public key does not match the private seeds, or
     /// the check bytes disagree (corrupted or tampered file).
     Inconsistent,
+    /// Signing failed: the OS RNG did not deliver the per-signature
+    /// randomness (ADR-0035 §3).
+    Sign,
 }
 
 impl std::fmt::Display for HostKeyError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::BadContainer => write!(f, "not an openssh-key-v1 container"),
-            Self::Unsupported => write!(f, "unsupported host key (need unencrypted ssh-ed25519)"),
+            Self::Unsupported => write!(
+                f,
+                "unsupported host key (need an unencrypted ssh-mldsa44-ed25519 key)"
+            ),
             Self::Inconsistent => write!(f, "host key file is internally inconsistent"),
+            Self::Sign => write!(f, "host key signing failed"),
         }
     }
 }
 
 impl std::error::Error for HostKeyError {}
 
-/// A loaded Ed25519 host key.
+/// A loaded composite host key. Both signing halves zeroize on drop
+/// (RFC-0012 §Key material).
 pub struct HostKey {
     signing: SigningKey,
 }
@@ -61,15 +76,15 @@ impl std::fmt::Debug for HostKey {
 
 impl HostKey {
     /// Parses an unencrypted `openssh-key-v1` PEM file
-    /// (`ssh-keygen -t ed25519`).
+    /// (`ssh-keygen -t mldsa44-ed25519`).
     ///
     /// # Errors
     ///
     /// [`HostKeyError::BadContainer`] when the armor or magic is
     /// wrong; [`HostKeyError::Unsupported`] for encrypted containers,
-    /// multiple keys, or non-Ed25519 keys;
+    /// multiple keys, or keys of any other type, `ssh-ed25519` included;
     /// [`HostKeyError::Inconsistent`] when check bytes or the embedded
-    /// public key disagree with the seed.
+    /// public key disagree with the seeds.
     pub fn from_openssh_pem(pem: &str) -> Result<Self, HostKeyError> {
         // Zeroizing: the base64 body encodes the private-seed container;
         // erase it on drop like the decoded `raw` below (threat model §4.3).
@@ -100,8 +115,12 @@ impl HostKey {
         if nkeys != 1 {
             return Err(HostKeyError::Unsupported);
         }
-        let _public_blob = r.string(1024).map_err(|_| HostKeyError::BadContainer)?;
-        let private_section = r.string(4096).map_err(|_| HostKeyError::BadContainer)?;
+        let _public_blob = r
+            .string(PUBLIC_BLOB_BOUND)
+            .map_err(|_| HostKeyError::BadContainer)?;
+        let private_section = r
+            .string(PRIVATE_SECTION_BOUND)
+            .map_err(|_| HostKeyError::BadContainer)?;
         r.finish().map_err(|_| HostKeyError::BadContainer)?;
 
         let mut p = Reader::new(private_section);
@@ -114,20 +133,18 @@ impl HostKey {
         if key_type != ALGORITHM.as_bytes() {
             return Err(HostKeyError::Unsupported);
         }
-        let public = p.string(64).map_err(|_| HostKeyError::BadContainer)?;
-        let scalar_and_public = p.string(128).map_err(|_| HostKeyError::BadContainer)?;
-        // sk blob is seed(32) ‖ public(32).
-        if public.len() != 32 || scalar_and_public.len() != 64 {
-            return Err(HostKeyError::Unsupported);
-        }
-        let seed = Zeroizing::new(
-            <[u8; 32]>::try_from(&scalar_and_public[..32])
-                .map_err(|_| HostKeyError::Unsupported)?,
+        // OpenSSH's `ssh-mldsa-eddsa.c`: string public key
+        // (mldsa_pk ‖ ed25519_pk), string seeds (mldsa_seed ‖ ed25519_seed).
+        let public = p
+            .string(PUBLIC_BLOB_BOUND)
+            .map_err(|_| HostKeyError::BadContainer)?;
+        let seeds = p.string(128).map_err(|_| HostKeyError::BadContainer)?;
+        let seeds = Zeroizing::new(
+            <[u8; SEEDS_LEN]>::try_from(seeds).map_err(|_| HostKeyError::Unsupported)?,
         );
-        let signing = SigningKey::from_bytes(&seed);
-        // Cross-check: the file's public halves must match the seed.
-        let derived = signing.verifying_key();
-        if derived.as_bytes() != public || derived.as_bytes() != &scalar_and_public[32..] {
+        let signing = SigningKey::from_seeds(&seeds);
+        // Cross-check: the file's public key must match the seeds.
+        if signing.public_key().as_slice() != public {
             return Err(HostKeyError::Inconsistent);
         }
         // Comment + deterministic padding (1, 2, 3, …) follow; their
@@ -137,37 +154,43 @@ impl HostKey {
         Ok(Self { signing })
     }
 
-    /// Builds a host key directly from an Ed25519 seed.
+    /// Builds a host key directly from its seeds, `mldsa_seed ‖
+    /// ed25519_seed` as OpenSSH stores them.
     ///
     /// For tests and fixed-RNG golden-vector fixtures (RFC-0003's KAT
     /// plan); production keys load from `openssh-key-v1` files via
     /// [`HostKey::from_openssh_pem`].
     #[must_use]
-    pub fn from_seed(seed: [u8; 32]) -> Self {
+    pub fn from_seeds(seeds: &[u8; 64]) -> Self {
         Self {
-            signing: SigningKey::from_bytes(&seed),
+            signing: SigningKey::from_seeds(seeds),
         }
     }
 
-    /// The `ssh-ed25519` public-key blob (RFC 8709 §4):
-    /// `string "ssh-ed25519" ‖ string key`.
+    /// The public-key blob (`draft-ietf-sshm-composite-sigs-00` §4.1.1):
+    /// `string "ssh-mldsa44-ed25519" ‖ string (mldsa_pk ‖ ed25519_pk)`.
     #[must_use]
     pub fn public_key_blob(&self) -> Vec<u8> {
         let mut w = Writer::new();
         w.put_string(ALGORITHM.as_bytes());
-        w.put_string(self.signing.verifying_key().as_bytes());
+        w.put_string(self.signing.public_key());
         w.into_bytes()
     }
 
-    /// Signs `data`, returning the RFC 8709 §6 signature blob:
-    /// `string "ssh-ed25519" ‖ string signature`.
-    #[must_use]
-    pub fn sign(&self, data: &[u8]) -> Vec<u8> {
-        let sig = self.signing.sign(data);
+    /// Signs `data`, returning the signature blob
+    /// (`draft-ietf-sshm-composite-sigs-00` §4.2.2.1):
+    /// `string "ssh-mldsa44-ed25519" ‖ string (mldsa_sig ‖ ed25519_sig)`.
+    ///
+    /// # Errors
+    ///
+    /// [`HostKeyError::Sign`] when the OS RNG fails; the caller fails
+    /// the key exchange closed (ADR-0035 §3).
+    pub fn sign(&self, data: &[u8]) -> Result<Vec<u8>, HostKeyError> {
+        let signature = self.signing.sign(data).map_err(|_| HostKeyError::Sign)?;
         let mut w = Writer::new();
         w.put_string(ALGORITHM.as_bytes());
-        w.put_string(&sig.to_bytes());
-        w.into_bytes()
+        w.put_string(&signature);
+        Ok(w.into_bytes())
     }
 
     /// OpenSSH-format fingerprint: `SHA256:` + unpadded base64 of the
@@ -268,32 +291,22 @@ pub(crate) fn base64_decode(input: &[u8]) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ed25519_dalek::Verifier;
+    use crate::composite::VerifyingKey;
 
-    /// Builds an unencrypted openssh-key-v1 PEM around a fixed seed —
-    /// byte-compatible with `ssh-keygen -t ed25519` output.
-    fn make_pem(seed: [u8; 32], tamper_public: bool) -> String {
-        let signing = SigningKey::from_bytes(&seed);
-        let mut public = *signing.verifying_key().as_bytes();
-        if tamper_public {
-            public[0] ^= 0xFF;
-        }
-
+    /// Builds an unencrypted openssh-key-v1 PEM of `key_type` around a
+    /// public key and a private blob, in `ssh-keygen`'s layout.
+    fn pem(key_type: &[u8], public: &[u8], private_blob: &[u8]) -> String {
         let mut pub_blob = Writer::new();
-        pub_blob.put_string(ALGORITHM.as_bytes());
-        pub_blob.put_string(&public);
+        pub_blob.put_string(key_type);
+        pub_blob.put_string(public);
         let pub_blob = pub_blob.into_bytes();
-
-        let mut sk_blob = Vec::new();
-        sk_blob.extend_from_slice(&seed);
-        sk_blob.extend_from_slice(&public);
 
         let mut private = Writer::new();
         private.put_uint32(0xAABB_CCDD);
         private.put_uint32(0xAABB_CCDD);
-        private.put_string(ALGORITHM.as_bytes());
-        private.put_string(&public);
-        private.put_string(&sk_blob);
+        private.put_string(key_type);
+        private.put_string(public);
+        private.put_string(private_blob);
         private.put_string(b"test@quantumssh");
         let mut private = private.into_bytes();
         let mut pad = 1u8;
@@ -325,6 +338,16 @@ mod tests {
         pem
     }
 
+    /// A composite key file around fixed seeds — byte-compatible with
+    /// `ssh-keygen -t mldsa44-ed25519` output.
+    fn make_pem(seeds: [u8; 64], tamper_public: bool) -> String {
+        let mut public = *SigningKey::from_seeds(&seeds).public_key();
+        if tamper_public {
+            public[0] ^= 0xFF;
+        }
+        pem(ALGORITHM.as_bytes(), &public, &seeds)
+    }
+
     #[test]
     fn base64_roundtrips() {
         for len in 0..32 {
@@ -348,35 +371,59 @@ mod tests {
 
     #[test]
     fn loads_signs_and_fingerprints() {
-        let pem = make_pem([7u8; 32], false);
+        let pem = make_pem([7u8; 64], false);
         let key = HostKey::from_openssh_pem(&pem).unwrap();
 
-        // Signature verifies against the embedded public key.
+        // The signature verifies against the blob's public key.
         let blob = key.public_key_blob();
         let mut r = Reader::new(&blob);
         assert_eq!(r.string(64).unwrap(), ALGORITHM.as_bytes());
-        let pk_bytes: [u8; 32] = r.string(64).unwrap().try_into().unwrap();
-        let vk = ed25519_dalek::VerifyingKey::from_bytes(&pk_bytes).unwrap();
+        let vk = VerifyingKey::from_bytes(r.string(2048).unwrap()).unwrap();
 
-        let sig_blob = key.sign(b"exchange hash test");
+        let sig_blob = key.sign(b"exchange hash test").unwrap();
         let mut s = Reader::new(&sig_blob);
         assert_eq!(s.string(64).unwrap(), ALGORITHM.as_bytes());
-        let sig_bytes: [u8; 64] = s.string(128).unwrap().try_into().unwrap();
-        let sig = ed25519_dalek::Signature::from_bytes(&sig_bytes);
-        vk.verify(b"exchange hash test", &sig).unwrap();
+        assert!(vk.verify(b"exchange hash test", s.string(4096).unwrap()));
+        s.finish().unwrap();
 
         let fp = key.fingerprint_sha256();
         assert!(fp.starts_with("SHA256:"));
         assert!(!fp.ends_with('='), "fingerprint must be unpadded");
+        assert_eq!(fp, HostKey::from_seeds(&[7u8; 64]).fingerprint_sha256());
     }
 
     #[test]
     fn rejects_tampered_public_key() {
-        let pem = make_pem([9u8; 32], true);
+        let pem = make_pem([9u8; 64], true);
         assert!(matches!(
             HostKey::from_openssh_pem(&pem),
             Err(HostKeyError::Inconsistent)
         ));
+    }
+
+    /// ADR-0047: an `ssh-ed25519` host key no longer starts the server.
+    #[test]
+    fn rejects_an_ed25519_host_key() {
+        let seed = [4u8; 32];
+        let public = ed25519_dalek::SigningKey::from_bytes(&seed)
+            .verifying_key()
+            .to_bytes();
+        let mut private_blob = seed.to_vec();
+        private_blob.extend_from_slice(&public);
+        let pem = pem(b"ssh-ed25519", &public, &private_blob);
+        let err = HostKey::from_openssh_pem(&pem).unwrap_err();
+        assert_eq!(err, HostKeyError::Unsupported);
+        assert!(err.to_string().contains("ssh-mldsa44-ed25519"), "{err}");
+    }
+
+    #[test]
+    fn rejects_seeds_of_the_wrong_length() {
+        let public = *SigningKey::from_seeds(&[2u8; 64]).public_key();
+        let pem = pem(ALGORITHM.as_bytes(), &public, &[2u8; 63]);
+        assert_eq!(
+            HostKey::from_openssh_pem(&pem).unwrap_err(),
+            HostKeyError::Unsupported
+        );
     }
 
     #[test]
@@ -395,7 +442,7 @@ mod tests {
 
     #[test]
     fn debug_never_leaks_key_material() {
-        let pem = make_pem([3u8; 32], false);
+        let pem = make_pem([3u8; 64], false);
         let key = HostKey::from_openssh_pem(&pem).unwrap();
         let debug = format!("{key:?}");
         assert!(debug.contains("SHA256:"));
