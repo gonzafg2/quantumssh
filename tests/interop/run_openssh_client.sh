@@ -100,11 +100,14 @@ fi
 echo "ok: negative_no_hybrid"
 
 # 3b. negative_ed25519_hostkey (ADR-0047): a client limited to ssh-ed25519
-# host keys finds no common algorithm; nothing falls back.
-if ssh "${SSH_OPTS[@]}" -o HostKeyAlgorithms=ssh-ed25519 \
-       tester@127.0.0.1 'true' 2>/dev/null; then
+# host keys finds no common algorithm; nothing falls back. The failure
+# must be that negotiation, not any other one.
+if refused="$(ssh "${SSH_OPTS[@]}" -o HostKeyAlgorithms=ssh-ed25519 \
+       tester@127.0.0.1 'true' 2>&1)"; then
     fail "negative_ed25519_hostkey: an ssh-ed25519-only client was NOT rejected"
 fi
+grep -q "no matching host key type found. Their offer: ssh-mldsa44-ed25519" <<<"$refused" \
+    || fail "negative_ed25519_hostkey: refused for another reason: $refused"
 echo "ok: negative_ed25519_hostkey"
 
 # 4. exit-status propagation (ADR-0023): `exit 3` reports 3.

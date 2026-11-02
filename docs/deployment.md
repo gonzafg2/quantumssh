@@ -183,8 +183,10 @@ sudo systemctl enable --now quantumssh
   `ssh-mldsa44-ed25519` host key (10.6 or newer). An older client fails
   with "no matching host key type".
 - A client that trusted an Ed25519 key for this host before the switch
-  to the composite key must forget it (`ssh-keygen -R <host>`) and learn
-  the new fingerprint out of band. Keeping the old entry trusted keeps
+  to the composite key must forget it and learn the new fingerprint out
+  of band: `ssh-keygen -R <host>` on port 22, and
+  `ssh-keygen -R '[<host>]:2222'` for another port, because
+  `known_hosts` stores the port with the host. Keeping the old entry trusted keeps
   the classical path open for anyone who can forge Ed25519
   (RFC-0012 §Why exactly one algorithm).
 

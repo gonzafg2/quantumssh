@@ -33,13 +33,15 @@ pub const SIGNATURE_LEN: usize = MLDSA_SIGNATURE_LEN + 64;
 pub const SEEDS_LEN: usize = 2 * SEED_LEN;
 
 /// `M' = Prefix ‖ Label ‖ len(ctx) ‖ ctx ‖ SHA512(M)`. SSH signs with an
-/// empty `ctx`, so `len(ctx)` is the single byte 0.
-fn message_representative(message: &[u8]) -> Vec<u8> {
-    let mut m = Vec::with_capacity(PREFIX.len() + LABEL.len() + 1 + 64);
+/// empty `ctx`, so `len(ctx)` is the single byte 0. It is a signing
+/// temporary derived from the exchange hash, so it is erased on drop
+/// (RFC-0012 §Key material).
+fn message_representative(message: &[u8]) -> Zeroizing<Vec<u8>> {
+    let mut m = Zeroizing::new(Vec::with_capacity(PREFIX.len() + LABEL.len() + 1 + 64));
     m.extend_from_slice(PREFIX);
     m.extend_from_slice(LABEL);
     m.push(0);
-    m.extend_from_slice(&Sha512::digest(message));
+    m.extend_from_slice(&Zeroizing::new(Sha512::digest(message)));
     m
 }
 
