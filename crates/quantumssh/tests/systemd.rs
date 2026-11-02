@@ -3,6 +3,9 @@
 //! binds, sends `READY=1` once its port accepts, and `STOPPING=1` with
 //! the stop-timeout extension when SIGTERM starts the drain.
 
+#[path = "../../quantumssh-core/tests/support/mod.rs"]
+mod support;
+
 use std::io::{BufRead, BufReader, Read};
 use std::net::TcpStream;
 use std::os::unix::fs::PermissionsExt;
@@ -10,6 +13,9 @@ use std::os::unix::net::UnixDatagram;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
+
+use ed25519_dalek::SigningKey;
+use support::{CompositeKey, temp_authorized_keys};
 
 /// Kills the server if the test fails before it exits.
 struct Server(Child);
@@ -43,15 +49,17 @@ fn received(socket: &UnixDatagram) -> String {
 #[test]
 fn ready_once_listening_and_stopping_at_sigterm() {
     let root = tree();
+    // A composite host key in `ssh-keygen`'s layout: the CI runners'
+    // OpenSSH predates `ssh-keygen -t mldsa44-ed25519` (10.6).
     let host_key = root.join("hostkey");
-    let status = Command::new("ssh-keygen")
-        .args(["-q", "-t", "ed25519", "-N", "", "-f"])
-        .arg(&host_key)
-        .status()
-        .expect("run ssh-keygen");
-    assert!(status.success(), "ssh-keygen failed");
+    std::fs::write(&host_key, CompositeKey::openssh_pem(&[44u8; 64])).expect("host key");
+    std::fs::set_permissions(&host_key, std::fs::Permissions::from_mode(0o600)).expect("chmod");
     let authorized_keys = root.join("authorized_keys");
-    std::fs::copy(root.join("hostkey.pub"), &authorized_keys).expect("authorized_keys");
+    std::fs::copy(
+        temp_authorized_keys(&SigningKey::from_bytes(&[78u8; 32])),
+        &authorized_keys,
+    )
+    .expect("authorized_keys");
 
     // `sun_path` is short (104 bytes on macOS): the socket lives under
     // the system temp directory, not the deep workspace path.

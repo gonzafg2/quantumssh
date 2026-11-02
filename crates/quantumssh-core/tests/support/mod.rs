@@ -10,6 +10,7 @@
 use ed25519_dalek::Signer;
 use ed25519_dalek::SigningKey;
 use ed25519_dalek::Verifier;
+use ml_dsa::Keypair as _;
 use ml_kem::MlKem768;
 use ml_kem::kem::{Decapsulate as _, FromSeed as _, KeyExport as _};
 use quantumssh_core::admission::Limits;
@@ -22,7 +23,7 @@ use quantumssh_core::kex;
 use quantumssh_core::server::{Config, Server};
 use quantumssh_core::transport::RekeyThresholds;
 use quantumssh_core::wire::{self, Reader, Writer};
-use sha2::{Digest, Sha256};
+use sha2::{Digest, Sha256, Sha512};
 use std::io::Write;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
@@ -35,6 +36,152 @@ use x25519_dalek::{PublicKey as XPublic, StaticSecret as XSecret};
 pub const TEST_BUDGET: Duration = Duration::from_secs(5);
 
 pub const CLIENT_ID: &[u8] = b"SSH-2.0-testclient_0.1";
+
+/// The seeds of the in-process server's host key.
+pub const HOST_KEY_SEEDS: [u8; 64] = [11u8; 64];
+
+// ---- RFC-0012: the composite `ssh-mldsa44-ed25519` ----
+//
+// Written out again on the client side from `ml-dsa` and
+// `ed25519-dalek`, so the server's encoding is checked against a second
+// construction of `draft-ietf-sshm-composite-sigs-00`, not against
+// itself.
+
+const COMPOSITE: &[u8] = b"ssh-mldsa44-ed25519";
+const COMPOSITE_LABEL: &[u8] = b"COMPSIG-MLDSA44-Ed25519-SHA512";
+
+/// `M' = Prefix ‖ Label ‖ len(ctx) ‖ ctx ‖ SHA512(M)`, with SSH's empty `ctx`.
+fn composite_m_prime(message: &[u8]) -> Vec<u8> {
+    let mut m = b"CompositeAlgorithmSignatures2025".to_vec();
+    m.extend_from_slice(COMPOSITE_LABEL);
+    m.push(0);
+    m.extend_from_slice(&Sha512::digest(message));
+    m
+}
+
+/// A composite key from `mldsa_seed ‖ ed25519_seed`: the user CA of the
+/// certificate tests, or a host key written to a file.
+pub struct CompositeKey {
+    mldsa: ml_dsa::SigningKey<ml_dsa::MlDsa44>,
+    ed25519: SigningKey,
+}
+
+impl CompositeKey {
+    pub fn from_seeds(seeds: &[u8; 64]) -> Self {
+        let mldsa_seed = ml_dsa::Seed::try_from(&seeds[..32]).unwrap();
+        Self {
+            mldsa: ml_dsa::SigningKey::from_seed(&mldsa_seed),
+            ed25519: SigningKey::from_bytes(&seeds[32..].try_into().unwrap()),
+        }
+    }
+
+    /// `mldsa_pk ‖ ed25519_pk`.
+    pub fn public_key(&self) -> Vec<u8> {
+        let mut public = self.mldsa.verifying_key().encode().to_vec();
+        public.extend_from_slice(self.ed25519.verifying_key().as_bytes());
+        public
+    }
+
+    /// `string "ssh-mldsa44-ed25519" ‖ string public_key`.
+    pub fn public_key_blob(&self) -> Vec<u8> {
+        let mut w = Writer::new();
+        w.put_string(COMPOSITE);
+        w.put_string(&self.public_key());
+        w.into_bytes()
+    }
+
+    /// The signature blob over `message`, ML-DSA in its deterministic
+    /// variant (verifiers accept either).
+    pub fn sign(&self, message: &[u8]) -> Vec<u8> {
+        let m = composite_m_prime(message);
+        let mut signature = self
+            .mldsa
+            .expanded_key()
+            .sign_deterministic(&m, COMPOSITE_LABEL)
+            .unwrap()
+            .encode()
+            .to_vec();
+        signature.extend_from_slice(&self.ed25519.sign(&m).to_bytes());
+        let mut w = Writer::new();
+        w.put_string(COMPOSITE);
+        w.put_string(&signature);
+        w.into_bytes()
+    }
+
+    /// An unencrypted `openssh-key-v1` file in `ssh-keygen -t
+    /// mldsa44-ed25519`'s layout (OpenSSH's `ssh-mldsa-eddsa.c`).
+    pub fn openssh_pem(seeds: &[u8; 64]) -> String {
+        let public = Self::from_seeds(seeds).public_key();
+        let mut pub_blob = Writer::new();
+        pub_blob.put_string(COMPOSITE);
+        pub_blob.put_string(&public);
+        let mut private = Writer::new();
+        private.put_uint32(0x0102_0304);
+        private.put_uint32(0x0102_0304);
+        private.put_string(COMPOSITE);
+        private.put_string(&public);
+        private.put_string(seeds);
+        private.put_string(b"test-host-key");
+        let mut private = private.into_bytes();
+        let mut pad = 1u8;
+        while !private.len().is_multiple_of(8) {
+            private.push(pad);
+            pad += 1;
+        }
+        let mut w = Writer::new();
+        w.put_bytes(b"openssh-key-v1\0");
+        w.put_string(b"none");
+        w.put_string(b"none");
+        w.put_string(b"");
+        w.put_uint32(1);
+        w.put_string(&pub_blob.into_bytes());
+        w.put_string(&private);
+        let b64 = quantumssh_core::host_key::base64_encode_nopad(&w.into_bytes());
+        let mut pem = String::from("-----BEGIN OPENSSH PRIVATE KEY-----\n");
+        for line in b64.as_bytes().chunks(70) {
+            pem.push_str(std::str::from_utf8(line).unwrap());
+            pem.push('\n');
+        }
+        pem.push_str("-----END OPENSSH PRIVATE KEY-----\n");
+        pem
+    }
+}
+
+/// Whether `sig_blob` is a valid composite signature over `message` for
+/// the public-key blob `key_blob`: both halves must verify (RFC-0012).
+pub fn verify_composite(key_blob: &[u8], message: &[u8], sig_blob: &[u8]) -> bool {
+    let mut k = Reader::new(key_blob);
+    assert_eq!(k.string(64).unwrap(), COMPOSITE);
+    let public = k.string(2048).unwrap();
+    k.finish().unwrap();
+    let mut s = Reader::new(sig_blob);
+    assert_eq!(s.string(64).unwrap(), COMPOSITE);
+    let signature = s.string(4096).unwrap();
+    s.finish().unwrap();
+    assert_eq!((public.len(), signature.len()), (1344, 2484));
+
+    let m = composite_m_prime(message);
+    let encoded_key =
+        ml_dsa::EncodedVerifyingKey::<ml_dsa::MlDsa44>::try_from(&public[..1312]).unwrap();
+    let encoded_sig =
+        ml_dsa::EncodedSignature::<ml_dsa::MlDsa44>::try_from(&signature[..2420]).unwrap();
+    let ml_dsa_valid = ml_dsa::Signature::decode(&encoded_sig).is_some_and(|sig| {
+        ml_dsa::VerifyingKey::<ml_dsa::MlDsa44>::decode(&encoded_key).verify_with_context(
+            &m,
+            COMPOSITE_LABEL,
+            &sig,
+        )
+    });
+    let ed25519 =
+        ed25519_dalek::VerifyingKey::from_bytes(&public[1312..].try_into().unwrap()).unwrap();
+    let ed25519_valid = ed25519
+        .verify(
+            &m,
+            &ed25519_dalek::Signature::from_slice(&signature[2420..]).unwrap(),
+        )
+        .is_ok();
+    ml_dsa_valid && ed25519_valid
+}
 
 pub async fn start_server(handshake_timeout: Duration) -> (SocketAddr, Arc<HostKey>) {
     start_server_rekey(
@@ -87,7 +234,7 @@ pub async fn start_server_with_helper(helper: std::path::PathBuf) -> (SocketAddr
 pub async fn start_server_with_ca(
     helper: Option<std::path::PathBuf>,
 ) -> (SocketAddr, Arc<HostKey>) {
-    let cas = TrustedUserCaKeys::load(&temp_authorized_keys(&test_ca())).expect("load test CA");
+    let cas = TrustedUserCaKeys::load(&temp_ca_keys(&test_ca())).expect("load test CA");
     let budget = Duration::from_secs(30);
     let (addr, host_key, _tx, _serve) = start_server_configured(
         budget,
@@ -112,7 +259,7 @@ pub async fn start_server_configured(
     broadcast::Sender<tokio::time::Instant>,
     tokio::task::JoinHandle<std::io::Result<()>>,
 ) {
-    let host_key = Arc::new(HostKey::from_seed([11u8; 32]));
+    let host_key = Arc::new(HostKey::from_seeds(&HOST_KEY_SEEDS));
     // Create a temp authorized_keys with the test key so the server
     // can start (authorized_keys is mandatory). Use a well-known seed.
     let auth_signing = SigningKey::from_bytes(&[77u8; 32]);
@@ -191,7 +338,8 @@ pub fn client_kexinit(kex_list: &str, ciphers: &str) -> Vec<u8> {
     w.put_byte(kex::SSH_MSG_KEXINIT);
     w.put_bytes(&[7u8; 16]);
     w.put_name_list(kex_list);
-    w.put_name_list("ssh-ed25519,rsa-sha2-512");
+    // OpenSSH 10.6 lists the composite last.
+    w.put_name_list("ssh-ed25519,rsa-sha2-512,ssh-mldsa44-ed25519");
     w.put_name_list(ciphers);
     w.put_name_list(ciphers);
     w.put_name_list("umac-64-etm@openssh.com,hmac-sha2-256");
@@ -297,9 +445,9 @@ pub async fn establish(
     let reply = read_packet(stream).await;
     let mut r = Reader::new(&reply);
     assert_eq!(r.byte().unwrap(), kex::SSH_MSG_KEX_HYBRID_REPLY);
-    let k_s = r.string(256).unwrap();
+    let k_s = r.string(2048).unwrap();
     let s_reply = r.string(kex::SERVER_REPLY_LEN).unwrap();
-    let sig_blob = r.string(256).unwrap();
+    let sig_blob = r.string(4096).unwrap();
     r.finish().unwrap();
 
     // The host key blob must be the server's.
@@ -329,15 +477,10 @@ pub async fn establish(
         server_reply: s_reply,
         shared_secret: &shared,
     });
-    let mut sig_reader = Reader::new(sig_blob);
-    assert_eq!(sig_reader.string(64).unwrap(), b"ssh-ed25519");
-    let sig_bytes: [u8; 64] = sig_reader.string(128).unwrap().try_into().unwrap();
-    let mut ks_reader = Reader::new(k_s);
-    ks_reader.string(64).unwrap();
-    let vk_bytes: [u8; 32] = ks_reader.string(64).unwrap().try_into().unwrap();
-    let vk = ed25519_dalek::VerifyingKey::from_bytes(&vk_bytes).unwrap();
-    vk.verify(&hash, &ed25519_dalek::Signature::from_bytes(&sig_bytes))
-        .expect("server signature over H must verify");
+    assert!(
+        verify_composite(k_s, &hash, sig_blob),
+        "server signature over H must verify"
+    );
 
     // NEWKEYS both ways.
     let newkeys = read_packet(stream).await;
@@ -396,17 +539,23 @@ pub fn unsupported_service_request() -> Vec<u8> {
 
 /// Writes a temporary `authorized_keys` file with the given Ed25519 key.
 pub fn temp_authorized_keys(signing: &SigningKey) -> std::path::PathBuf {
+    let blob = auth_test_blob(&signing.verifying_key());
+    let b64 = quantumssh_core::host_key::base64_encode_nopad(&blob);
+    temp_file("ak", &format!("ssh-ed25519 {b64} test-key\n"))
+}
+
+/// A fresh file under the system temp directory holding `contents`.
+fn temp_file(kind: &str, contents: &str) -> std::path::PathBuf {
     use std::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-    let vk = signing.verifying_key();
-    let blob = auth_test_blob(&vk);
-    let b64 = quantumssh_core::host_key::base64_encode_nopad(&blob);
-    let dir = std::env::temp_dir();
     // The process ID keeps test binaries that run at once apart.
-    let path = dir.join(format!("quantumssh-test-ak-{}-{n}.txt", std::process::id()));
-    let mut f = std::fs::File::create(&path).expect("create temp ak file");
-    writeln!(f, "ssh-ed25519 {b64} test-key").expect("write ak");
+    let path = std::env::temp_dir().join(format!(
+        "quantumssh-test-{kind}-{}-{n}.txt",
+        std::process::id()
+    ));
+    let mut f = std::fs::File::create(&path).expect("create temp file");
+    f.write_all(contents.as_bytes()).expect("write temp file");
     path
 }
 
@@ -503,9 +652,15 @@ pub fn probe_auth_request_for(algorithm: &[u8], key_blob: &[u8]) -> Vec<u8> {
 
 // ---- ADR-0050: user certificates ----
 
-/// The CA [`start_server_with_ca`] trusts.
-pub fn test_ca() -> SigningKey {
-    SigningKey::from_bytes(&[91u8; 32])
+/// The CA [`start_server_with_ca`] trusts. Composite only (ADR-0050 §4).
+pub fn test_ca() -> CompositeKey {
+    CompositeKey::from_seeds(&[91u8; 64])
+}
+
+/// A `trusted_user_ca_keys` file listing `ca`.
+pub fn temp_ca_keys(ca: &CompositeKey) -> std::path::PathBuf {
+    let b64 = quantumssh_core::host_key::base64_encode_nopad(&ca.public_key_blob());
+    temp_file("ca", &format!("ssh-mldsa44-ed25519 {b64} test-ca\n"))
 }
 
 /// The user key the test certificates certify.
@@ -518,7 +673,7 @@ pub fn cert_user_key() -> SigningKey {
 /// when `permit_pty` (`draft-ietf-sshm-cert` §2.1, the shape
 /// `ssh-keygen -s` produces).
 pub fn user_cert(
-    ca: &SigningKey,
+    ca: &CompositeKey,
     principals: &[&[u8]],
     valid_before: u64,
     permit_pty: bool,
@@ -545,14 +700,11 @@ pub fn user_cert(
     w.put_string(b"");
     w.put_string(&extensions.into_bytes());
     w.put_string(b"");
-    w.put_string(&auth_test_blob(&ca.verifying_key()));
+    w.put_string(&ca.public_key_blob());
     let signed = w.into_bytes();
-    let mut sig = Writer::new();
-    sig.put_string(b"ssh-ed25519");
-    sig.put_string(&ca.sign(&signed).to_bytes());
     let mut w = Writer::new();
     w.put_bytes(&signed);
-    w.put_string(&sig.into_bytes());
+    w.put_string(&ca.sign(&signed));
     w.into_bytes()
 }
 
@@ -899,9 +1051,9 @@ impl SealedClient {
         let reply = self.read_sealed(stream).await;
         let mut r = Reader::new(&reply);
         assert_eq!(r.byte().unwrap(), kex::SSH_MSG_KEX_HYBRID_REPLY);
-        let k_s = r.string(256).unwrap();
+        let k_s = r.string(2048).unwrap();
         let s_reply = r.string(kex::SERVER_REPLY_LEN).unwrap();
-        let sig_blob = r.string(256).unwrap();
+        let sig_blob = r.string(4096).unwrap();
         r.finish().unwrap();
         let (ct_bytes, server_x) = s_reply.split_at(kex::MLKEM_CT_LEN);
         let ct = ml_kem::Ciphertext::<MlKem768>::try_from(ct_bytes).unwrap();
@@ -922,15 +1074,10 @@ impl SealedClient {
             server_reply: s_reply,
             shared_secret: &shared,
         });
-        let mut sig_reader = Reader::new(sig_blob);
-        assert_eq!(sig_reader.string(64).unwrap(), b"ssh-ed25519");
-        let sig_bytes: [u8; 64] = sig_reader.string(128).unwrap().try_into().unwrap();
-        let mut ks_reader = Reader::new(k_s);
-        ks_reader.string(64).unwrap();
-        let vk_bytes: [u8; 32] = ks_reader.string(64).unwrap().try_into().unwrap();
-        let vk = ed25519_dalek::VerifyingKey::from_bytes(&vk_bytes).unwrap();
-        vk.verify(&h_r, &ed25519_dalek::Signature::from_bytes(&sig_bytes))
-            .expect("re-key signature over H_r must verify");
+        assert!(
+            verify_composite(k_s, &h_r, sig_blob),
+            "re-key signature over H_r must verify"
+        );
 
         // The new key schedule uses the ORIGINAL session id and the new H_r.
         let derive = |letter: u8, len: usize| {

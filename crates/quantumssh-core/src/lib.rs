@@ -18,6 +18,7 @@ pub mod auth;
 pub mod cert;
 mod channel;
 pub mod cipher;
+mod composite;
 mod exec;
 pub mod host_key;
 pub mod kex;

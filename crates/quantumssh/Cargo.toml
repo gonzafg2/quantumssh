@@ -38,6 +38,7 @@ ml-kem        = { workspace = true }
 x25519-dalek  = { workspace = true }
 ed25519-dalek = { workspace = true }
 sha2          = { workspace = true }
+ml-dsa        = { workspace = true }
 
 [lints]
 workspace = true

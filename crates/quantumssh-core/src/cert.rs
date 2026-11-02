@@ -12,11 +12,11 @@
 use std::fmt;
 use std::path::Path;
 
-use ed25519_dalek::{Signature, VerifyingKey};
+use ed25519_dalek::VerifyingKey;
 
-use crate::auth::{self, AuthError, AuthorizedKey};
-use crate::host_key;
+use crate::auth::{self, AuthError, KeyLine};
 use crate::wire::{Reader, Writer};
+use crate::{composite, host_key};
 
 /// The certificate key algorithm a `publickey` request may name
 /// (ADR-0050 §2).
@@ -42,7 +42,7 @@ const PERMIT_PTY: &[u8] = b"permit-pty";
 ///
 /// `Debug` never exposes key material (threat model §4.3).
 pub struct TrustedUserCaKeys {
-    keys: Vec<AuthorizedKey>,
+    keys: Vec<KeyLine<composite::VerifyingKey>>,
 }
 
 impl fmt::Debug for TrustedUserCaKeys {
@@ -55,16 +55,32 @@ impl fmt::Debug for TrustedUserCaKeys {
 
 impl TrustedUserCaKeys {
     /// Loads the file at `path` under the `authorized_keys` rules
-    /// (ADR-0050 §3): one `ssh-ed25519` CA key per line, an options
-    /// field refused (ADR-0040), and at least one key.
+    /// (ADR-0050 §3): one `ssh-mldsa44-ed25519` CA key per line
+    /// (ADR-0050 §4), an options field refused (ADR-0040), and at least
+    /// one key.
     ///
     /// # Errors
     ///
-    /// The [`AuthError`]s of [`auth::AuthorizedKeys::load`].
+    /// The [`AuthError`]s of [`auth::AuthorizedKeys::load`]; a key of any
+    /// other type, `ssh-ed25519` included, is
+    /// [`AuthError::UnsupportedKeyType`].
     #[must_use]
     #[allow(clippy::double_must_use)]
     pub fn load(path: &Path) -> Result<Self, AuthError> {
-        auth::load_key_file(path).map(|keys| Self { keys })
+        auth::load_key_lines(
+            path,
+            composite::ALGORITHM,
+            composite::PUBLIC_LEN,
+            |line, key_bytes| {
+                composite::VerifyingKey::from_bytes(key_bytes).ok_or_else(|| {
+                    AuthError::MalformedLine {
+                        line,
+                        reason: "invalid ssh-mldsa44-ed25519 key bytes".into(),
+                    }
+                })
+            },
+        )
+        .map(|keys| Self { keys })
     }
 }
 
@@ -156,15 +172,17 @@ pub(crate) fn verify(
     now: Option<u64>,
 ) -> Result<Certificate, Refusal> {
     let cert = Parsed::parse(blob).ok_or(Refusal::Malformed)?;
-    let ca = auth::lookup(&cas.keys, cert.ca_key).ok_or(Refusal::UntrustedCa)?;
-    if cert.ca_signature_algorithm != auth::KEY_ALGORITHM.as_bytes() {
+    let ca = cas
+        .keys
+        .iter()
+        .find(|k| k.blob == cert.ca_key)
+        .ok_or(Refusal::UntrustedCa)?;
+    // Both halves of the composite must verify (RFC-0012).
+    if cert.ca_signature_algorithm != composite::ALGORITHM.as_bytes()
+        || !ca.key.verify(cert.signed, cert.ca_signature)
+    {
         return Err(Refusal::BadCaSignature);
     }
-    let signature =
-        Signature::from_slice(cert.ca_signature).map_err(|_| Refusal::BadCaSignature)?;
-    ca.verifying_key
-        .verify_strict(cert.signed, &signature)
-        .map_err(|_| Refusal::BadCaSignature)?;
     if cert.role != ROLE_USER {
         return Err(Refusal::NotUserCertificate);
     }
@@ -250,7 +268,7 @@ impl<'a> Parsed<'a> {
         let mut sig = Reader::new(r.string(CERT_BLOB_BOUND).ok()?);
         r.finish().ok()?;
         let ca_signature_algorithm = sig.string(auth::KEY_ALGO_BOUND).ok()?;
-        let ca_signature = sig.string(auth::SIGNATURE_BOUND).ok()?;
+        let ca_signature = sig.string(composite::SIGNATURE_LEN).ok()?;
         sig.finish().ok()?;
 
         let mut has_critical_options = false;
@@ -317,15 +335,25 @@ fn for_each_option(field: &[u8], mut f: impl FnMut(&[u8], &[u8])) -> Option<()> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ed25519_dalek::{Signer, SigningKey};
+    use ed25519_dalek::SigningKey;
     use std::io::Write;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     const NOW: u64 = 1_800_000_000;
     const USER: &str = "alice";
 
-    fn ca() -> SigningKey {
-        SigningKey::from_bytes(&[7u8; 32])
+    /// The CA's seed byte; [`ca_key`] expands it.
+    const CA: u8 = 7;
+
+    fn ca_key(seed: u8) -> composite::SigningKey {
+        composite::SigningKey::from_seeds(&[seed; composite::SEEDS_LEN])
+    }
+
+    fn ca_blob(seed: u8) -> Vec<u8> {
+        let mut w = Writer::new();
+        w.put_string(composite::ALGORITHM.as_bytes());
+        w.put_string(ca_key(seed).public_key());
+        w.into_bytes()
     }
 
     fn user_key() -> SigningKey {
@@ -361,7 +389,7 @@ mod tests {
         critical: Vec<u8>,
         extensions: Vec<u8>,
         reserved: Vec<u8>,
-        ca: SigningKey,
+        ca: u8,
         sig_algorithm: &'static [u8],
         trailing: Vec<u8>,
     }
@@ -379,8 +407,8 @@ mod tests {
                 critical: Vec::new(),
                 extensions: options(&[(b"permit-pty", b"")]),
                 reserved: Vec::new(),
-                ca: ca(),
-                sig_algorithm: b"ssh-ed25519",
+                ca: CA,
+                sig_algorithm: b"ssh-mldsa44-ed25519",
                 trailing: Vec::new(),
             }
         }
@@ -405,11 +433,11 @@ mod tests {
             w.put_string(&self.critical);
             w.put_string(&self.extensions);
             w.put_string(&self.reserved);
-            w.put_string(&plain_blob(&self.ca.verifying_key()));
+            w.put_string(&ca_blob(self.ca));
             let signed = w.into_bytes();
             let mut sig = Writer::new();
             sig.put_string(self.sig_algorithm);
-            sig.put_string(&self.ca.sign(&signed).to_bytes());
+            sig.put_string(&ca_key(self.ca).sign(&signed).expect("sign"));
             let mut w = Writer::new();
             w.put_bytes(&signed);
             w.put_string(&sig.into_bytes());
@@ -418,21 +446,21 @@ mod tests {
         }
     }
 
-    fn trusted(keys: &[&SigningKey]) -> TrustedUserCaKeys {
+    fn trusted(cas: &[u8]) -> TrustedUserCaKeys {
         static COUNTER: AtomicU64 = AtomicU64::new(0);
         let n = COUNTER.fetch_add(1, Ordering::Relaxed);
         let path =
             std::env::temp_dir().join(format!("quantumssh-test-ca-{}-{n}.txt", std::process::id()));
         let mut f = std::fs::File::create(&path).expect("create temp file");
-        for key in keys {
-            let b64 = host_key::base64_encode_nopad(&plain_blob(&key.verifying_key()));
-            writeln!(f, "ssh-ed25519 {b64} ca").expect("write");
+        for &ca in cas {
+            let b64 = host_key::base64_encode_nopad(&ca_blob(ca));
+            writeln!(f, "ssh-mldsa44-ed25519 {b64} ca").expect("write");
         }
         TrustedUserCaKeys::load(&path).expect("load")
     }
 
     fn check(spec: &Spec) -> Result<Certificate, Refusal> {
-        verify(&spec.blob(), &trusted(&[&ca()]), USER, Some(NOW))
+        verify(&spec.blob(), &trusted(&[CA]), USER, Some(NOW))
     }
 
     #[test]
@@ -447,7 +475,7 @@ mod tests {
             CertIdentity {
                 key_id: "alice@example".into(),
                 serial: "18364758544493064720".into(),
-                ca_fingerprint: host_key::fingerprint_sha256(&plain_blob(&ca().verifying_key())),
+                ca_fingerprint: host_key::fingerprint_sha256(&ca_blob(CA)),
                 principal: USER.into(),
             }
         );
@@ -466,7 +494,7 @@ mod tests {
     #[test]
     fn untrusted_ca_is_refused() {
         let spec = Spec {
-            ca: SigningKey::from_bytes(&[9u8; 32]),
+            ca: 9,
             ..Spec::default()
         };
         assert_eq!(check(&spec).unwrap_err(), Refusal::UntrustedCa);
@@ -474,12 +502,11 @@ mod tests {
 
     #[test]
     fn a_second_trusted_ca_is_accepted() {
-        let other = SigningKey::from_bytes(&[9u8; 32]);
         let spec = Spec {
-            ca: other.clone(),
+            ca: 9,
             ..Spec::default()
         };
-        assert!(verify(&spec.blob(), &trusted(&[&ca(), &other]), USER, Some(NOW)).is_ok());
+        assert!(verify(&spec.blob(), &trusted(&[CA, 9]), USER, Some(NOW)).is_ok());
     }
 
     #[test]
@@ -494,15 +521,33 @@ mod tests {
             - 1;
         blob[at] ^= 1;
         assert_eq!(
-            verify(&blob, &trusted(&[&ca()]), USER, Some(NOW)).unwrap_err(),
+            verify(&blob, &trusted(&[CA]), USER, Some(NOW)).unwrap_err(),
             Refusal::BadCaSignature
         );
+    }
+
+    /// RFC-0012's invariant on the CA path: a certificate whose CA
+    /// signature has one half corrupted is refused, whichever half it is.
+    #[test]
+    fn each_half_of_the_ca_signature_is_checked() {
+        let blob = Spec::default().blob();
+        let signature_start = blob.len() - composite::SIGNATURE_LEN;
+        // A byte in the ML-DSA-44 half, then one in the Ed25519 half.
+        for at in [signature_start + 100, blob.len() - 1] {
+            let mut tampered = blob.clone();
+            tampered[at] ^= 1;
+            assert_eq!(
+                verify(&tampered, &trusted(&[CA]), USER, Some(NOW)).unwrap_err(),
+                Refusal::BadCaSignature,
+                "byte {at}"
+            );
+        }
     }
 
     #[test]
     fn wrong_ca_signature_algorithm_is_refused() {
         let spec = Spec {
-            sig_algorithm: b"ssh-mldsa44-ed25519",
+            sig_algorithm: b"ssh-ed25519",
             ..Spec::default()
         };
         assert_eq!(check(&spec).unwrap_err(), Refusal::BadCaSignature);
@@ -545,7 +590,7 @@ mod tests {
             ..Spec::default()
         };
         assert_eq!(
-            verify(&spec.blob(), &trusted(&[&ca()]), USER, None).unwrap_err(),
+            verify(&spec.blob(), &trusted(&[CA]), USER, None).unwrap_err(),
             Refusal::NotYetValid
         );
     }
@@ -666,7 +711,7 @@ mod tests {
     #[test]
     fn every_truncation_is_refused() {
         let blob = Spec::default().blob();
-        let cas = trusted(&[&ca()]);
+        let cas = trusted(&[CA]);
         for len in 0..blob.len() {
             assert_eq!(
                 verify(&blob[..len], &cas, USER, Some(NOW)).unwrap_err(),
@@ -683,17 +728,43 @@ mod tests {
             "quantumssh-test-ca-options-{}.txt",
             std::process::id()
         ));
-        let b64 = host_key::base64_encode_nopad(&plain_blob(&ca().verifying_key()));
-        std::fs::write(&path, format!("cert-authority ssh-ed25519 {b64}\n")).expect("write");
+        let b64 = host_key::base64_encode_nopad(&ca_blob(CA));
+        std::fs::write(&path, format!("cert-authority ssh-mldsa44-ed25519 {b64}\n"))
+            .expect("write");
         assert!(matches!(
             TrustedUserCaKeys::load(&path).unwrap_err(),
             AuthError::KeyOptions { line: 1 }
         ));
     }
 
+    /// ADR-0050 §4: from the RFC-0012 cut-over on, the CA is composite
+    /// only, and an `ssh-ed25519` CA line stops the load.
+    #[test]
+    fn ca_file_refuses_an_ed25519_ca() {
+        let path = std::env::temp_dir().join(format!(
+            "quantumssh-test-ca-ed25519-{}.txt",
+            std::process::id()
+        ));
+        let b64 = host_key::base64_encode_nopad(&plain_blob(&user_key().verifying_key()));
+        std::fs::write(&path, format!("ssh-ed25519 {b64} old-ca\n")).expect("write");
+        let err = TrustedUserCaKeys::load(&path).unwrap_err();
+        assert_eq!(
+            err,
+            AuthError::UnsupportedKeyType {
+                line: 1,
+                found: "ssh-ed25519".into(),
+                expected: "ssh-mldsa44-ed25519",
+            }
+        );
+        assert!(
+            err.to_string().contains("need ssh-mldsa44-ed25519"),
+            "{err}"
+        );
+    }
+
     #[test]
     fn debug_does_not_leak_key_material() {
-        let debug = format!("{:?}", trusted(&[&ca()]));
+        let debug = format!("{:?}", trusted(&[CA]));
         assert!(debug.contains("count"));
         assert!(!debug.contains("blob"));
         let cert = check(&Spec::default()).expect("accepted");
