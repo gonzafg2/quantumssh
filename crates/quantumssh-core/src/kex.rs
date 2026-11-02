@@ -844,6 +844,9 @@ pub fn derive_key(
 #[cfg(test)]
 mod hybrid_tests {
     use super::*;
+    use crate::cipher::PacketCipher;
+    use crate::composite;
+    use crate::transport::SSH_MSG_SERVICE_REQUEST;
     use ml_kem::kem::{Decapsulate as _, FromSeed as _, KeyExport as _};
 
     /// A deterministic test client: ML-KEM keypair from a fixed seed
@@ -869,9 +872,21 @@ mod hybrid_tests {
     /// §6.1 (X25519) by `scripts/derive-hybrid-kex-vectors.py` (#216).
     const VECTORS: &str = include_str!("../tests/vectors/mlkem768x25519-sha256.txt");
 
+    /// The golden vector captured against an OpenSSH peer by
+    /// `scripts/capture-openssh-kex-vector.sh` (#216).
+    const CAPTURED: &str = include_str!("../tests/vectors/mlkem768x25519-sha256-openssh.txt");
+
     fn vector(name: &str) -> Vec<u8> {
+        lookup(VECTORS, name)
+    }
+
+    fn captured(name: &str) -> Vec<u8> {
+        lookup(CAPTURED, name)
+    }
+
+    fn lookup(vectors: &str, name: &str) -> Vec<u8> {
         let prefix = format!("{name} = ");
-        let hex = VECTORS
+        let hex = vectors
             .lines()
             .find_map(|line| line.strip_prefix(&prefix))
             .unwrap_or_else(|| panic!("no {name} vector"));
@@ -881,20 +896,31 @@ mod hybrid_tests {
             .collect()
     }
 
+    /// The server half with `m` and then the X25519 secret as its only
+    /// two draws.
+    fn replay_hybrid(client_init: &[u8], m: &[u8], x25519_secret: &[u8]) -> HybridOutcome {
+        let draws = [m, x25519_secret];
+        let mut next = draws.iter();
+        let outcome = hybrid_exchange_with(client_init, |buf: &mut [u8]| {
+            buf.copy_from_slice(next.next().expect("two draws"));
+            Ok(())
+        })
+        .unwrap();
+        assert!(next.next().is_none(), "exactly two draws");
+        outcome
+    }
+
     /// With ACVP's `m` and RFC 7748's `b` as its randomness, the server
     /// half produces `S_REPLY` and `K = SHA-256(K_PQ ‖ K_CL)` byte for
     /// byte: the ML-KEM ciphertext, the X25519 public key and both
     /// shared secrets in RFC 10042 §2.1 and §2.4's order and encoding.
     #[test]
     fn hybrid_exchange_matches_the_derived_vectors() {
-        let draws = [vector("m"), vector("server_x25519_b")];
-        let mut next = draws.iter();
-        let outcome = hybrid_exchange_with(&vector("client_init"), |buf: &mut [u8]| {
-            buf.copy_from_slice(next.next().expect("two draws"));
-            Ok(())
-        })
-        .unwrap();
-        assert!(next.next().is_none(), "exactly two draws");
+        let outcome = replay_hybrid(
+            &vector("client_init"),
+            &vector("m"),
+            &vector("server_x25519_b"),
+        );
         assert_eq!(outcome.server_reply, vector("server_reply"));
         assert_eq!(outcome.shared_secret.as_slice(), vector("k"));
     }
@@ -925,6 +951,104 @@ mod hybrid_tests {
         let h: [u8; 32] = vector("h").try_into().unwrap();
         let key = derive_key(&k, &h, b'C', &h, 64);
         assert_eq!(key.as_slice(), vector("key_c"));
+    }
+
+    /// The server half replayed on the two draws of the captured
+    /// session, and the `H` it yields over the captured transcript.
+    fn captured_session() -> (HybridOutcome, [u8; 32]) {
+        let outcome = replay_hybrid(
+            &captured("client_init"),
+            &captured("m"),
+            &captured("server_x25519_b"),
+        );
+        let h = exchange_hash(&ExchangeHashInputs {
+            client_id: &captured("client_id"),
+            server_id: &captured("server_id"),
+            client_kexinit: &captured("client_kexinit"),
+            server_kexinit: &captured("server_kexinit"),
+            host_key_blob: &captured("host_key_blob"),
+            client_init: &captured("client_init"),
+            server_reply: &captured("server_reply"),
+            shared_secret: &outcome.shared_secret,
+        });
+        (outcome, h)
+    }
+
+    /// The body of a `string(ALGORITHM) ‖ string(body)` blob, the framing
+    /// of the composite host key and of its signature.
+    fn composite_body(blob: &[u8], bound: usize) -> &[u8] {
+        let mut r = Reader::new(blob);
+        assert_eq!(r.string(64).unwrap(), composite::ALGORITHM.as_bytes());
+        let body = r.string(bound).unwrap();
+        r.finish().unwrap();
+        body
+    }
+
+    /// On the captured draws, the server half reproduces the `S_REPLY`
+    /// the OpenSSH peer received, byte for byte.
+    #[test]
+    fn hybrid_exchange_reproduces_the_openssh_capture() {
+        let (outcome, _) = captured_session();
+        assert_eq!(outcome.server_reply, captured("server_reply"));
+    }
+
+    /// OpenSSH verified the host key's signature over its own `H` before
+    /// it sent NEWKEYS. The signature verifying over the `H` computed here
+    /// shows the two are the same `H`, and so the same `K`. A flipped bit
+    /// must fail, or the check would prove nothing.
+    #[test]
+    fn exchange_hash_is_the_one_openssh_verified() {
+        let (_, mut h) = captured_session();
+        let host_key_blob = captured("host_key_blob");
+        let signature_blob = captured("signature_blob");
+        let host_key = composite::VerifyingKey::from_bytes(composite_body(
+            &host_key_blob,
+            composite::PUBLIC_LEN,
+        ))
+        .unwrap();
+        let signature = composite_body(&signature_blob, composite::SIGNATURE_LEN);
+        assert!(host_key.verify(&h, signature));
+        h[0] ^= 1;
+        assert!(!host_key.verify(&h, signature));
+    }
+
+    /// OpenSSH sealed its first packet after NEWKEYS, the
+    /// `ssh-userauth` service request, with the keys it derived (RFC 4253
+    /// §7.2, `K` as a string). The keys derived here open it.
+    #[test]
+    fn derived_keys_open_the_packet_openssh_sealed() {
+        let (outcome, h) = captured_session();
+        let client_kexinit = captured("client_kexinit");
+        let negotiated = negotiate(&parse_kexinit(&client_kexinit).unwrap(), true).unwrap();
+        let cipher = negotiated.cipher_c2s.as_str();
+        let key = derive_key(
+            &outcome.shared_secret,
+            &h,
+            b'C',
+            &h,
+            PacketCipher::key_len(cipher),
+        );
+        let iv = derive_key(
+            &outcome.shared_secret,
+            &h,
+            b'A',
+            &h,
+            PacketCipher::iv_len(cipher),
+        );
+        let mut c2s = PacketCipher::new(cipher, &key, &iv).unwrap();
+
+        let sealed = captured("client_sealed");
+        let length: [u8; 4] = sealed[..4].try_into().unwrap();
+        // strict-kex: the first packet after NEWKEYS is sequence number 0.
+        let body_len = c2s.body_len(0, length).unwrap();
+        let mut body = sealed[4..4 + body_len].to_vec();
+        let mut service_request = Writer::new();
+        service_request.put_byte(SSH_MSG_SERVICE_REQUEST);
+        service_request.put_string(b"ssh-userauth");
+        assert_eq!(
+            c2s.open(0, length, &mut body).unwrap(),
+            service_request.into_bytes()
+        );
     }
 
     #[test]

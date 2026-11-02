@@ -58,3 +58,37 @@ for byte against the `ml-dsa` crate (ADR-0035 §Decision 5).
   The script keeps the `ML-DSA-44` groups listed above and fails if a
   group it expects is missing or duplicated.
 
+
+## `mlkem768x25519-sha256-openssh.txt`
+
+This is the golden vector for the hybrid combiner and the exchange hash
+`H`, captured against an OpenSSH peer with a fixed-RNG profile (RFC-0003
+§"Test vectors and KAT plan", threat model §5.2.4; #216). The tests in
+`src/kex.rs` replay the server half of one captured session. They check
+that it reproduces `S_REPLY` byte for byte and that the host key's
+signature verifies over the recomputed `H`. They also check that keys
+derived from the recomputed `K` and `H` open the first packet the client
+sealed. OpenSSH had verified that signature over its own `H` and sealed
+that packet with its own keys, so neither check rests on this code
+agreeing with itself.
+
+- **Source.** One session between the pinned OpenSSH client of the
+  `openssh-interop` gate (ADR-0048) and the `quantumssh` release binary.
+  The file header records the client's `ssh -V`, the commit and the
+  image digest.
+- **Fixed RNG.** The server runs with `scripts/fixed-getrandom.c`
+  preloaded. The shim replaces `getrandom(3)` with a fixed-seed generator
+  and logs every draw, so the vector can name the two draws the hybrid
+  exchange consumed. No build of `quantumssh` contains a fixed-RNG path.
+  The binary under capture is the release binary, unchanged.
+- **Regenerating.** With Docker, from the repository root:
+
+  ```sh
+  scripts/capture-openssh-kex-vector.sh \
+      > crates/quantumssh-core/tests/vectors/mlkem768x25519-sha256-openssh.txt
+  ```
+
+  The script takes the image, snapshot and client pins from
+  `.github/workflows/interop.yml`, so it moves with an OpenSSH version
+  bump. A new capture replaces the whole file, since every session draws
+  fresh client keys. Like any vector update, it is a reviewed change.
