@@ -1,7 +1,7 @@
 # ADR 0047: Offer `ssh-mldsa44-ed25519` as the only server host key algorithm
 
-- **Status:** Proposed
-- **Date:** — (set on acceptance; drafted 2026-10-29)
+- **Status:** Accepted
+- **Date:** 2026-11-02 (accepted with the implementing PR [#242](https://github.com/gonzafg2/quantumssh/pull/242); drafted 2026-10-29)
 - **Deciders:** Project lead
 - **Related:** Subsidiary ADR 2 ("the negotiation-profile entry") of [RFC-0012](../rfcs/0012-composite-host-key-cutover.md) §Subsidiary decisions. It supersedes slot 2 of [ADR-0021](0021-phase-1-negotiation-profile.md) (`server_host_key_algorithms`), under [RFC-0007](../rfcs/0007-cryptographic-primitive-migration-procedure.md) §2 ("Supersession mechanics"). Every other part of ADR-0021 stands. It moves together with [ADR-0048](0048-openssh-interop-client-on-debian-forky.md) (the interop client) and the [ADR-0020](0020-phase-1-ci-openssh-interop-gate.md) fixtures, and its signing code uses the crate [ADR-0035](0035-ml-dsa-crate-rustcrypto.md) selects. Implementation: the `kex` and `host_key` modules of `quantumssh-core`, and `tests/interop/run_openssh_client.sh`, in the RFC-0012 implementation PR.
 

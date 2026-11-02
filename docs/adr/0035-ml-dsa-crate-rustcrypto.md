@@ -1,7 +1,7 @@
 # ADR 0035: Use `RustCrypto/ml-dsa` for the ML-DSA-44 half of the composite host key
 
-- **Status:** Proposed
-- **Date:** — (set on acceptance; drafted 2026-10-11)
+- **Status:** Accepted
+- **Date:** 2026-11-02 (accepted with the implementing PR [#242](https://github.com/gonzafg2/quantumssh/pull/242); drafted 2026-10-11)
 - **Deciders:** Project lead
 - **Related:** Subsidiary ADR 1 ("the ML-DSA primitive crate") of [RFC-0012](../rfcs/0012-composite-host-key-cutover.md) §Subsidiary decisions, which implements [RFC-0006](../rfcs/0006-post-quantum-host-key-signatures.md); the dependency layer of [RFC-0007](../rfcs/0007-cryptographic-primitive-migration-procedure.md) §2 ("a crate-selection ADR paralleling ADR-0019"); parallels [ADR-0019](0019-phase-1-ml-kem-crate-rustcrypto.md) (`ml-kem`); builds on [ADR-0036](0036-dalek-3x-coordinated-bump.md) (`ed25519-dalek` 3.x, which already locks `signature` 3.0.0); constrained by [ADR-0010](0010-toolchain-pinning-resolver-3-edition-2024-msrv-1-92.md) (MSRV 1.92) and [ADR-0018](0018-phase-1-unsafe-code-forbid-workspace.md) (`unsafe_code = "forbid"`).
 
@@ -260,4 +260,4 @@ unauthenticated peer can drive and time.
 - Alternatives: [RustSec `libcrux-ml-dsa`](https://rustsec.org/packages/libcrux-ml-dsa.html); [RUSTSEC-2026-0166](https://rustsec.org/advisories/RUSTSEC-2026-0166.html) (`pqcrypto-mldsa` unmaintained); [`aws-lc-rs` `PqdsaKeyPair`](https://docs.rs/aws-lc-rs/1.18.1/aws_lc_rs/signature/struct.PqdsaKeyPair.html).
 - Hedged signing in OpenSSH: `ssh-mldsa-eddsa.c` at tag `V_10_6_P1` of [openssh-portable](https://github.com/openssh/openssh-portable).
 - Roadmap: Phase 2 — [`#109`](https://github.com/gonzafg2/quantumssh/issues/109).
-- Implementation: the RFC-0012 implementation PR, which adds the dependency, pins `=0.1.2`, and flips this ADR to `Accepted`.
+- Implementation: [#242](https://github.com/gonzafg2/quantumssh/pull/242), which adds the dependency, pins `=0.1.2`, and flips this ADR to `Accepted`.
