@@ -53,13 +53,16 @@ guide uses `ssh-keygen`.
 
 ## Guide-level explanation
 
-On a Linux host, step 3 of the operator guide becomes:
+On a Linux host, the host-key lines of step 3 of the operator guide
+become:
 
 ```sh
 sudo install -d -m 0755 /etc/quantumssh
 sudo quantumssh keygen /etc/quantumssh/ssh_host_mldsa44_ed25519_key
 sudo chown quantumssh:quantumssh /etc/quantumssh/ssh_host_mldsa44_ed25519_key
 ```
+
+The rest of step 3, installing `authorized_keys`, is unchanged.
 
 Output:
 
@@ -103,8 +106,11 @@ the subcommand from the flags (§8).
    ADR-0035, ADR-0047).
 3. Encode the private key as an unencrypted `openssh-key-v1` container,
    matching OpenSSH's `ssh-mldsa-eddsa.c`:
-   - cipher `none`, kdf `none`, one key;
-   - the public blob;
+   - the magic `openssh-key-v1\0`;
+   - cipher `none`, kdf `none` and an empty kdf-options string;
+   - a key count of one;
+   - the public blob, `string("ssh-mldsa44-ed25519") ‖
+     string(mldsa_pk ‖ ed25519_pk)` (RFC-0012);
    - a private section with:
      - two equal random check words;
      - key type `ssh-mldsa44-ed25519`;
@@ -156,11 +162,25 @@ itself (§6). The tests generate their keys at run time; no private-key fixture 
   above makes this possible only when a write to the private file, its
   `fsync` or the public write fails, never because a file already
   existed.
-- **Parent directory check, before any write.** The parent directory must
-  pass the ancestor rule StrictModes applies at startup: neither it nor
-  any directory above it may be group- or world-writable (ADR-0029). A
-  key written where the server would refuse to read it is an error at
-  generation time, not at the next restart.
+- **Parent directory check, before any write.**
+  - **Canonicalize the parent first.** `<PATH>` does not exist yet, so
+    `keygen` canonicalizes `<PATH>`'s parent directory, failing closed on
+    `ENOENT`, `EACCES` or a dangling symlink. It then walks the ancestors
+    of the **canonical** parent. ADR-0029's startup check canonicalizes
+    for the same reason: a lexical walk over a symlinked parent would
+    check the wrong directories.
+  - **Apply the startup rule.** Neither the canonical parent nor any
+    directory above it may be group- or world-writable (ADR-0029).
+  - **Create the files inside the checked directory.** Both files are
+    created under the canonical parent joined with the leaf name.
+    `O_NOFOLLOW` covers the leaf itself.
+  - **A key the server would refuse is refused now.** A key written where
+    the server would refuse to read it is an error at generation time,
+    not at the next restart.
+  - **Residual race.** A race between the check and the open remains, and
+    it is accepted on ADR-0029's best-effort terms.
+  - **Test.** A test uses a parent that is a symlink to a `0777`
+    directory and expects a refusal.
 - **Ownership.** `keygen` does not change ownership. The operator
   `chown`s the key to the service account, as the guide shows, because
   the root-owned `/etc/quantumssh` (ADR-0029) does not let that account
@@ -168,9 +188,17 @@ itself (§6). The tests generate their keys at run time; no private-key fixture 
 
 ### 4. Key material
 
-- **Memory.** The seeds, the signing key and the encoded private section
-  live in `Zeroizing` buffers, and are erased on drop and on every error
-  path (threat model §4.3).
+- **Memory.** Every buffer that holds the seeds or any recoverable
+  encoding of them lives in `Zeroizing` and is erased on drop and on every
+  error path (threat model §4.3):
+  - the seeds and the signing key;
+  - the serialized private section;
+  - the whole container;
+  - its base64 body;
+  - the PEM text handed to `write`.
+
+  This is the same rule the loader applies when it reads those layers
+  (`host_key.rs` and the PEM read in `main.rs`).
 - **Output.** Nothing derived from the private key is printed or logged.
   The only output is the two paths and the fingerprint.
 
