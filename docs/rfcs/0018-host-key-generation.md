@@ -141,28 +141,44 @@ itself (§6). The tests generate their keys at run time; no private-key fixture 
 ### 3. Writing the files
 
 - **Creation:**
-  - `<PATH>` is created with mode `0600`;
-  - `<PATH>.pub` is created with mode `0644`;
-  - both with `O_CREAT | O_EXCL | O_NOFOLLOW`, so an existing file or a
-    symlink at either path is an error, never a target.
+  - both files are opened with `O_CREAT | O_EXCL | O_NOFOLLOW`, so an
+    existing file or a symlink at either path is an error, never a
+    target;
+  - **modes are set explicitly, not left to `umask`:** an `open` mode
+    argument is reduced by the process `umask`, and a hardened `077`
+    would make the `.pub` file `0600`. So `keygen` sets `<PATH>` to
+    `0600` and `<PATH>.pub` to `0644` with `fchmod` on each open
+    descriptor, before any key byte is written;
+  - the modes printed on success are the ones `fstat` reports, not the
+    requested ones.
 - **Order.**
   1. Both files are opened, empty, before the seeds are drawn or any key
      byte is written. If either open fails, whatever this run created is
      removed, and no key exists yet.
   2. The private file is written and `fsync`ed.
   3. The public file is written and `fsync`ed.
-- **Any failure after step 1** removes both files this run created
-  before exiting non-zero. That covers a failed write, a failed `fsync`
-  of either file, or a failed public write. No half-written pair, empty
-  `0600` file or stray `.pub` is left to block the next run.
+- **Any handled failure after step 1** removes both files this run
+  created before exiting non-zero: a failed write, a failed `fsync` of
+  either file, or a failed public write. In those cases no half-written
+  pair, empty `0600` file or stray `.pub` is left to block the next run.
+- **An interrupted run is not a handled failure.** If `SIGKILL`, an OOM
+  kill, a power loss or a default-handled `SIGINT` stops the process
+  between step 1 and the end, cleanup does not run. One or both files may
+  be left behind, empty or partly written. The next run refuses them
+  (`O_EXCL`) and names them in its error. The operator removes them
+  before retrying, and treats any private key that was left behind as
+  never used. Writing to temporary names and renaming without replacing
+  was considered. It would move the leftover to a temporary name rather
+  than remove it, at the cost of platform-specific rename flags, so it
+  is not proposed.
 - **A failed removal** is its own error. The message names the path left
   behind, and the exit status is non-zero.
 - **Data already on disk.** If the private file was written before the
   failure, unlinking it does not erase what reached the disk. The message
   says so, and the operator treats that key as never used. The order
   above makes this possible only when a write to the private file, its
-  `fsync` or the public write fails, never because a file already
-  existed.
+  `fsync`, the public write or the public `fsync` fails, never because a
+  file already existed.
 - **Parent directory check, before any write.**
   - **Canonicalize the parent first.** `<PATH>` does not exist yet, so
     `keygen` canonicalizes `<PATH>`'s parent directory, failing closed on
