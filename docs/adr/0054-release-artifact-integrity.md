@@ -146,12 +146,22 @@ passes only when both hold:
 
 `EXPKEYSIG` and `EXPSIG` fail for the current key. GnuPG reports an
 expired key against today's date, not against the date of the
-signature. For a **retired** key, `EXPKEYSIG` is accepted only when
-`gh release verify` shows that the release was published inside that
-key's validity window. That date comes from the immutable-release
-record, which no key holder controls (ADR-0057). Without that record
-the check fails. Releases signed by a retired key therefore stay
-verifiable after it expires, without trusting a signer-chosen
+signature.
+
+A **retired** key is handled by its window, not by GnuPG's view of
+expiry. A `VALIDSIG` from a retired fingerprint passes only when
+`gh release verify` shows the release was published inside the window
+recorded for that key in `keys/`, from its first use to its retirement
+date. This applies with or without `EXPKEYSIG`. Without the check, a
+retired key that has not yet reached its OpenPGP expiry would pass on
+`VALIDSIG` alone. In that case, if its private half leaked, anyone
+holding it could sign a forged `SHA256SUMS` for any release and pass.
+
+The deciding date comes from the immutable-release record, which no key
+holder controls (ADR-0057). Without that record the check fails.
+Releases signed by a retired key therefore stay verifiable after it
+expires, and a forgery made with a leaked retired key fails for any
+release outside its window, without trusting a signer-chosen
 timestamp.
 
 The check is used in four places:
