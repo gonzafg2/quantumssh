@@ -96,6 +96,13 @@ dedicated signing subkey is deferred to the key's next rotation.
 
 - One fingerprint, already published in `SECURITY.md`, verifies tags
   and binaries alike, and `v0.1.0` is already signed with it.
+
+  The caveat is that `v0.1.0` was published before immutable releases
+  (ADR-0054 §5). Once this key is retired or expires, the `v0.1.0` tag
+  cannot meet ADR-0054 §7's retired-key rule, which needs an
+  immutable-release record. `v0.1.0` has no binary assets. Its source
+  stays identifiable by commit `1fb977e` on `main` and by its Zenodo
+  archive.
 - No new key material to generate, publish or teach before `0.2.0`.
 
 ### Negative
