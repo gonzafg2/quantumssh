@@ -123,7 +123,8 @@ If the project key is ever revoked for compromise (ADR-0057), step 2
 fails for every release, by design. For a release the advisory lists as
 unaffected, the recipe becomes:
 
-1. `gh release verify`;
+1. `gh release verify-asset vX.Y.Z SHA256SUMS`, which checks the
+   downloaded file against the immutable release's recorded digest;
 2. step 4;
 3. a match between the release's `SHA256SUMS` digest and the advisory,
    which the successor key signs.
@@ -149,10 +150,21 @@ expired key against today's date, not against the date of the
 signature.
 
 A **retired** key is handled by its window, not by GnuPG's view of
-expiry. A `VALIDSIG` from a retired fingerprint passes only when
-`gh release verify` shows the release was published inside the window
-recorded for that key in `keys/`, from its first use to its retirement
-date. This applies with or without `EXPKEYSIG`. Without the check, a
+expiry. A `VALIDSIG` from a retired fingerprint passes only when both
+hold:
+
+- **The date.** `gh release verify` shows the release was published
+  inside the window recorded for that key in `keys/`, from its first use
+  to its retirement date.
+- **The bytes.** `gh release verify-asset vX.Y.Z` passes for both
+  `SHA256SUMS` and `SHA256SUMS.asc`, so the files being checked are the
+  ones the immutable release recorded. A date check alone would accept a
+  forged `SHA256SUMS`, signed with a leaked retired key and placed next
+  to a real release from that key's window. The asset-digest check
+  rejects it, because the forged file is not the release's recorded
+  asset.
+
+Both conditions apply with or without `EXPKEYSIG`. Without the check, a
 retired key that has not yet reached its OpenPGP expiry would pass on
 `VALIDSIG` alone. In that case, if its private half leaked, anyone
 holding it could sign a forged `SHA256SUMS` for any release and pass.
@@ -160,9 +172,9 @@ holding it could sign a forged `SHA256SUMS` for any release and pass.
 The deciding date comes from the immutable-release record, which no key
 holder controls (ADR-0057). Without that record the check fails.
 Releases signed by a retired key therefore stay verifiable after it
-expires, and a forgery made with a leaked retired key fails for any
-release outside its window, without trusting a signer-chosen
-timestamp.
+expires. A forgery made with a leaked retired key fails in both cases:
+outside the key's window on the date, and inside it on the asset
+digest. Neither check trusts a signer-chosen timestamp.
 
 The check is used in four places:
 
