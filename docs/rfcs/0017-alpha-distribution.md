@@ -1,6 +1,6 @@
 # RFC 0017: Alpha distribution — prebuilt binaries, a Homebrew tap, support tiers and the OpenSSH 10.6 floor
 
-- **Status:** Draft
+- **Status:** Accepted (2026-11-03)
 - **Authors:** Gonzalo Fleming Garrido
 - **Created:** 2026-11-03
 - **Roadmap issue:** [#248](https://github.com/gonzafg2/quantumssh/issues/248) (Phase 3)

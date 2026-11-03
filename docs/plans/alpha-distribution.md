@@ -1,15 +1,15 @@
 <!--
   Governance status (2026-11-03):
   Non-authoritative design note (ADR-0027). It sequences the work that
-  RFC-0017 (Draft) proposes and records the evidence gathered before the
-  RFC was written. It decides nothing: the decisions are RFC-0017 and its
-  subsidiary ADRs 0053–0057, once accepted. Host-key generation is RFC-0018's. Until then this note
-  describes a proposal.
+  RFC-0017 (Accepted 2026-11-03) decides and records the evidence
+  gathered before the RFC was written. It decides nothing: the decisions
+  are RFC-0017 and its subsidiary ADRs 0053–0057 (planned). Host-key
+  generation is RFC-0018's (Accepted 2026-11-03).
 -->
 # Alpha distribution — milestones and evidence (non-normative)
 
 **Status:** plan for [RFC-0017](../rfcs/0017-alpha-distribution.md),
-which is in Draft. The RFC holds the decisions; this note orders the
+accepted on 2026-11-03. The RFC holds the decisions; this note orders the
 work and gives each milestone a check that says when it is done.
 
 ## Milestones
