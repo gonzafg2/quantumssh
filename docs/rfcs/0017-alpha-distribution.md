@@ -108,6 +108,9 @@ The install guide lists where 10.6 comes from:
 
 ### Installing on Linux
 
+`gpg --verify` means something only once the project key is imported and
+its fingerprint checked, as `SECURITY.md` shows. That comes first:
+
 ```sh
 gh release download v0.2.0 -R gonzafg2/quantumssh -p 'quantumssh-0.2.0-x86_64-unknown-linux-musl.tar.gz' -p 'SHA256SUMS*'
 gpg --verify SHA256SUMS.asc SHA256SUMS
@@ -191,9 +194,10 @@ next release notes.
   not change.
 - **Static-link check, fail closed.** Before anything is attested, each
   Linux binary must show no `NEEDED` entry and no `PT_INTERP` program
-  header (`readelf -d` and `readelf -l`), and it must run
-  `--version` inside an Alpine container. A dynamically linked binary
-  stops the workflow.
+  header (`readelf -d` and `readelf -l`). It must also run `--version`
+  inside an Alpine container pinned by digest, as the project's gate
+  containers are (ADR-0020, ADR-0048), with the binary mounted
+  read-only. A dynamically linked binary stops the workflow.
 - **Allocator.** musl's default allocator is kept. Its known ceiling is
   lock contention under many concurrent connections, and the admission
   caps (ADR-0028) bound that load. The workflow marks it with a
@@ -249,11 +253,25 @@ From `0.2.0` on, a release follows these steps in order:
    check is a tripwire, not a guarantee: a tag on an unreviewed commit
    runs that commit's copy of the workflow. Step 4 is the check that
    counts.
-3. **Gates on the bytes.** The interop gate and the systemd reference-unit
-   test (ADR-0043) download the Linux tarballs from the draft and run
-   those binaries. An interop job on the macOS runner runs the macOS
-   tarball. Each gate job records the SHA-256 of every tarball it ran. A
-   red gate stops the release.
+3. **Gates on the bytes.**
+   - **What runs.** The interop gate and the systemd reference-unit test
+     (ADR-0043) run the Linux binaries, and an interop job on the macOS
+     runner runs the macOS binary.
+   - **Least privilege.** Gate jobs hold only `contents: read`. They never
+     have `id-token: write` or `attestations: write`, so a binary a gate
+     executes cannot mint an attestation under the release workflow's
+     identity.
+   - **Only bytes whose origin was checked.** The planned release-workflow
+     ADR (§12) picks one of two orders:
+     - **Preferred:** the gates run on the build job's workflow artifacts
+       before any draft exists, and only bytes that passed are attested
+       and uploaded;
+     - **Otherwise:** each gate verifies the downloaded asset's
+       attestation with the pins of §3 before executing it.
+   - **Digests.** Each gate job records the SHA-256 of every tarball it
+     ran.
+   - **Stop conditions.** A red gate, or a missing or failed provenance
+     check, stops the release.
 4. **Verify and sign.** In a local terminal, the maintainer:
    - verifies the tag with `git tag -v vX.Y.Z` against the project key,
      and checks that the tagged commit is an ancestor of `main`
@@ -325,7 +343,9 @@ Apple Developer Program.
 - **Branch protection:** signed commits, same as this repository.
 - **Formula:** one formula, `quantumssh`. On macOS arm64 and on Linux
   `x86_64` and `aarch64`, it downloads the release tarball for the
-  platform, with its `sha256` fixed in the formula. Another platform gets
+  platform, with its `sha256` fixed in the formula. That `sha256` is copied
+  from the maintainer-signed `SHA256SUMS`, never computed from a download.
+  Another platform gets
   an install error naming the supported tiers. It does not fall back to a
   source build.
 - **Service:** a `service do` block runs
@@ -337,9 +357,12 @@ Apple Developer Program.
 - **No `depends_on "openssh"`.** Installing the server must not replace
   the `ssh` the user already has. The client floor goes in the formula's
   `caveats`.
-- **CI:** the tap's CI runs `brew install`, `brew test`
-  (`quantumssh --version`) and a `brew services` start on macOS arm64
-  and on Linux.
+- **CI:** the tap's CI does two things on macOS arm64 and on Linux:
+  - before installing, it checks the formula's checksums against the
+    release's `SHA256SUMS`, after `gpg --verify` of `SHA256SUMS.asc` with
+    the project key;
+  - it then runs `brew install`, `brew test` (`quantumssh --version`) and
+    a `brew services` start.
 - **homebrew-core is out of scope.** Its acceptance policy needs upstream
   to call the version stable, and a self-submission needs 225 stars, or
   90 forks or 90 watchers.
@@ -398,7 +421,8 @@ The new §6.4 control reads, in substance:
 > - an asset swapped between CI and publication (`SHA256SUMS` signed by
 >   the maintainer, who first checks the attestations and recomputes the
 >   checksums from the verified files and the digests the gates
->   tested, §4 step 4).
+>   tested, §4 step 4). Gates run with read-only permissions, only on
+>   bytes whose origin was checked (§4 step 3).
 >
 > *Does **not** defend against:*
 > - a compromise of the release workflow itself or of GitHub Actions;
@@ -407,7 +431,11 @@ The new §6.4 control reads, in substance:
 >   covers revocation, rotation (ADR-0005) and what they mean for
 >   releases already signed;
 > - a user who checks only the attestation and not `SHA256SUMS.asc`.
->   That user gets no check of the tag signature.
+>   That user gets no check of the tag signature;
+> - a compromise of the tap repository or its formula. `brew install`
+>   trusts the formula's `sha256`, not the PGP signature. The tap's
+>   branch protection and CI check (§7) narrow this, and a user who wants
+>   the full chain verifies the tarball as on Linux.
 >
 > It is not a substitute for reproducible builds. Those stay Phase-3
 > work, and they are what would let a third party rebuild an asset and
