@@ -64,15 +64,33 @@ group or others, and its owner must be root or the account.
 
 ```sh
 sudo install -d -m 0755 /etc/quantumssh
-sudo ssh-keygen -t mldsa44-ed25519 -N "" -f /etc/quantumssh/ssh_host_mldsa44_ed25519_key
+sudo quantumssh keygen /etc/quantumssh/ssh_host_mldsa44_ed25519_key
 sudo chown quantumssh:quantumssh /etc/quantumssh/ssh_host_mldsa44_ed25519_key
 sudo install -m 0644 your_key.pub /etc/quantumssh/authorized_keys
 ```
 
 The host key is the composite `ssh-mldsa44-ed25519`, the only type the
 server accepts ([ADR-0047](adr/0047-host-key-algorithm-ssh-mldsa44-ed25519.md)).
-It needs `ssh-keygen` from OpenSSH 10.6 or later. Generate a new key: do
-not reuse the Ed25519 half of an existing key
+`quantumssh keygen` ([RFC-0018](rfcs/0018-host-key-generation.md)) does
+the following:
+
+- It writes the key with mode `0600` and its `.pub` with `0644`.
+- It prints both paths and the key's fingerprint, the one `server.started`
+  logs. Publish the fingerprint out of band, so clients can check it on
+  their first connection.
+- It never replaces a file, the key or its `.pub`. To rotate the key,
+  move both aside, run `keygen` and the `chown` above again, publish the
+  new fingerprint and restart. Each client then removes the old entry
+  with `ssh-keygen -R`, as in step 5, and checks the new fingerprint on
+  its next connection; otherwise OpenSSH refuses the host with "REMOTE
+  HOST IDENTIFICATION HAS CHANGED". Once clients have the new
+  fingerprint, destroy the old private key.
+- It refuses a directory the server would refuse to read the key from
+  (the StrictModes rule above).
+
+`ssh-keygen -t mldsa44-ed25519 -N "" -f <path>` from OpenSSH 10.6 or
+later writes the same format and remains an alternative. Either way,
+generate a new key: do not reuse the Ed25519 half of an existing key
 ([RFC-0012](rfcs/0012-composite-host-key-cutover.md)). A host key of any
 other type, `ssh-ed25519` included, stops the server at startup with
 `invalid_host_key`.

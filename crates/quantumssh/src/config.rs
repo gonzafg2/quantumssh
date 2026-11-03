@@ -281,8 +281,9 @@ fn file_violation(mode: u32, owner: u32, process_uid: u32, class: TrustedClass) 
     None
 }
 
-/// The ancestor-directory predicate — writability only (ADR-0029).
-fn ancestor_violation(mode: u32) -> Option<String> {
+/// The ancestor-directory predicate — writability only (ADR-0029). Also
+/// the check `keygen` applies to the directory it writes into (ADR-0058).
+pub fn ancestor_violation(mode: u32) -> Option<String> {
     (mode & WRITE_OTHERS != 0).then(|| {
         format!(
             "group/world-writable ancestor directory (mode {:04o})",
@@ -329,7 +330,7 @@ fn stat_or_unavailable(path: &Path) -> Result<rustix::fs::Stat, ConfigError> {
         .map_err(|e| ConfigError::FileUnavailable(format!("{}: cannot stat: {e}", path.display())))
 }
 
-fn mode_of(st: &rustix::fs::Stat) -> u32 {
+pub fn mode_of(st: &rustix::fs::Stat) -> u32 {
     // `st_mode` is u16 on the libc (macOS) backend and u32 on
     // linux_raw; the conversion is identity on the latter.
     #[allow(clippy::useless_conversion)]

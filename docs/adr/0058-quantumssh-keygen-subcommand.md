@@ -1,13 +1,13 @@
 # ADR 0058: Implement `quantumssh keygen` as a core encoder plus a binary module that writes through a verified directory descriptor
 
-- **Status:** Proposed
-- **Date:** TBD (accepted with the implementing PR)
+- **Status:** Accepted
+- **Date:** 2026-11-03 (accepted with the implementing PR [#252](https://github.com/gonzafg2/quantumssh/pull/252); drafted 2026-11-03)
 - **Deciders:** Project lead
 - **Related:**
   - Implements [RFC-0018](../rfcs/0018-host-key-generation.md) §8 (Accepted 2026-11-03; [#249](https://github.com/gonzafg2/quantumssh/pull/249)).
   - It reuses the loader of [ADR-0047](0047-host-key-algorithm-ssh-mldsa44-ed25519.md) and the composite key of [ADR-0035](0035-ml-dsa-crate-rustcrypto.md), and the ancestor rule of [ADR-0029](0029-phase-2-config-file-v1-schema-parser-strictmodes.md). It extends the [ADR-0020](0020-phase-1-ci-openssh-interop-gate.md) gate.
   - Phase 3 roadmap: [#248](https://github.com/gonzafg2/quantumssh/issues/248).
-  - Implementation: the `host_key` module of `quantumssh-core`, `crates/quantumssh/src/main.rs`, `crates/quantumssh/src/config.rs` (the predicate becomes `pub(crate)`) and `tests/interop/run_openssh_client.sh`. Two files are new, created by the implementing PR: `crates/quantumssh/src/keygen.rs` and `crates/quantumssh/tests/keygen.rs`.
+  - Implementation: the `host_key` module of `quantumssh-core`, `crates/quantumssh/src/main.rs`, `crates/quantumssh/src/config.rs` (the predicate becomes crate-visible) and `tests/interop/run_openssh_client.sh`. Two files are new, created by the implementing PR: `crates/quantumssh/src/keygen.rs` and `crates/quantumssh/tests/keygen.rs`.
 
 ## Context
 
@@ -97,8 +97,11 @@ pub(crate) fn generate_host_key_with(
    - `fstat` the directory descriptor and apply ADR-0029's
      group- and world-writable predicate to it.
    - Walk the canonical ancestors above it with the same predicate.
-   - `config.rs` exposes the predicate as `pub(crate)`, with no change
-     to what it checks.
+   - `config.rs` makes the predicate and its `mode_of` helper visible to
+     the rest of the crate, with no change to what they check. They are
+     `pub` inside the private `config` module, which clippy's
+     `redundant_pub_crate` lint requires in place of `pub(crate)`; the
+     visibility is the same.
 4. **The private file.** `openat(dir, leaf,
    O_CREAT | O_EXCL | O_NOFOLLOW | O_WRONLY | O_CLOEXEC, 0o600)`.
 5. **The public file.** `openat(dir, leaf + ".pub", same flags, 0o644)`.
@@ -201,8 +204,8 @@ on those it keeps the RFC's acceptance.
 
 ### Negative
 
-- `config.rs` exposes its ancestor predicate as `pub(crate)`. The
-  behaviour does not change, but its visibility widens.
+- `config.rs` makes its ancestor predicate crate-visible. The behaviour
+  does not change, but its visibility widens.
 - The binary gains its first subcommand path in `parse_cli`.
 
 ### Neutral

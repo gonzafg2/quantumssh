@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `quantumssh keygen <PATH>` writes a new `ssh-mldsa44-ed25519` host key
+  and its `.pub` file, so a server host no longer needs OpenSSH 10.6 to
+  create one. It refuses an existing file, a symlink, and a directory the
+  server would refuse to read from. It creates the private file at `0600`
+  from the start and prints the fingerprint `server.started` logs. The
+  interop gate checks that `ssh-keygen` 10.6 reads the key back and that a
+  server started with it serves the stock client
+  ([RFC-0018](docs/rfcs/0018-host-key-generation.md),
+  [ADR-0058](docs/adr/0058-quantumssh-keygen-subcommand.md)).
+
 ## [0.1.0] - 2026-11-02
 
 ### Added

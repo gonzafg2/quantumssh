@@ -29,6 +29,7 @@ use tracing_subscriber::{EnvFilter, Layer};
 use zeroize::Zeroizing;
 
 mod config;
+mod keygen;
 mod log_fields;
 mod log_json;
 mod notify;
@@ -53,6 +54,9 @@ quantumssh — memory-safe, post-quantum-first SSH server (alpha)
 USAGE:
     quantumssh [OPTIONS]
 
+SUBCOMMANDS:
+    keygen <PATH>                 Write a new ssh-mldsa44-ed25519 host key (RFC-0018)
+
 OPTIONS:
     --config <PATH>               TOML configuration file (RFC-0010,
                                   schema v1). Optional; flags override
@@ -60,8 +64,9 @@ OPTIONS:
     --listen <ADDR>               Address to bind (default: 127.0.0.1:2222)
     --host-key <PATH>             ssh-mldsa44-ed25519 host key file
                                   (openssh-key-v1, unencrypted;
-                                  ssh-keygen -t mldsa44-ed25519, OpenSSH
-                                  10.6 or later). Required (flag or
+                                  quantumssh keygen, or ssh-keygen -t
+                                  mldsa44-ed25519 from OpenSSH 10.6 or
+                                  later). Required (flag or
                                   [server].host_key).
     --authorized-keys <PATH>      authorized_keys file (one ssh-ed25519
                                   key per line). Required (flag or
@@ -90,10 +95,23 @@ struct Cli {
 
 enum CliOutcome {
     Run(Cli),
+    /// `quantumssh keygen <PATH>` (ADR-0058 §1): never combined with
+    /// server flags.
+    Keygen(PathBuf),
     Exit(ExitCode),
 }
 
+const KEYGEN_USAGE: &str = "usage: quantumssh keygen <PATH>";
+
 fn parse_cli(args: &[String]) -> Result<CliOutcome, String> {
+    // The subcommand only as the first argument, followed by exactly one
+    // path that is not a flag (ADR-0058 §1).
+    if args.first().map(String::as_str) == Some("keygen") {
+        return match &args[1..] {
+            [path] if !path.starts_with('-') => Ok(CliOutcome::Keygen(PathBuf::from(path))),
+            _ => Err(KEYGEN_USAGE.into()),
+        };
+    }
     let mut cli = Cli::default();
 
     let mut it = args.iter();
@@ -453,6 +471,8 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let cli = match parse_cli(&args) {
         Ok(CliOutcome::Run(cli)) => cli,
+        // Before any configuration, logging or runtime (ADR-0058 §1).
+        Ok(CliOutcome::Keygen(path)) => return keygen::main(&path),
         Ok(CliOutcome::Exit(code)) => return code,
         Err(message) => {
             eprintln!("error: {message}\n\n{USAGE}");
@@ -678,7 +698,7 @@ mod tests {
     fn run(list: &[&str]) -> Cli {
         match parse_cli(&args(list)).expect("parse") {
             CliOutcome::Run(cli) => cli,
-            CliOutcome::Exit(_) => panic!("expected Run"),
+            CliOutcome::Keygen(_) | CliOutcome::Exit(_) => panic!("expected Run"),
         }
     }
 
