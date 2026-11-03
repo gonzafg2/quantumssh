@@ -48,7 +48,7 @@ const DEFAULT_DRAIN_TIMEOUT_SECS: u64 = 30;
 const BLOCKING_THREADS_PER_CONNECTION: usize = 4;
 
 const USAGE: &str = "\
-quantumssh — memory-safe, post-quantum-first SSH server (pre-alpha)
+quantumssh — memory-safe, post-quantum-first SSH server (alpha)
 
 USAGE:
     quantumssh [OPTIONS]

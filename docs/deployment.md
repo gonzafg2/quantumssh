@@ -6,7 +6,7 @@ unit [`contrib/systemd/quantumssh.service`](../contrib/systemd/quantumssh.servic
 why the unit looks the way it does. CI runs these same steps under a
 real systemd ([`tests/systemd/`](../tests/systemd/)).
 
-QuantumSSH is **pre-alpha**. Read the next section before you expose it
+QuantumSSH is **alpha**. Read the next section before you expose it
 to anyone.
 
 ## What a Phase-2 deployment is

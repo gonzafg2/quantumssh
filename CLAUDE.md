@@ -17,7 +17,10 @@ QuantumSSH is a memory-safe, post-quantum-first SSH server written in Rust.
 It is built greenfield on audited cryptographic primitive crates — it does
 **not** depend on `russh` ([RFC-0003](docs/rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md)).
 
-**Status: pre-alpha.** Phase 0 (foundation: manifesto, governance, threat
+**Status: alpha.** `0.1.0`, the first public release, closed Phase 2
+([issue #109](https://github.com/gonzafg2/quantumssh/issues/109)): PTY
+sessions, SFTP, the TOML configuration file, systemd and user certificates
+on top of the Phase-1 path below. Phase 0 (foundation: manifesto, governance, threat
 model, ADR/RFC catalog, supporting infrastructure) is complete. Phase 1
 (the walking-skeleton server, [issue #9](https://github.com/gonzafg2/quantumssh/issues/9))
 has **landed**: milestones M1–M6 are merged. The `quantumssh-core` library
