@@ -53,8 +53,12 @@ dedicated signing subkey is deferred to the key's next rotation.
     overlap.
   - The rotation reconsiders a signing-only subkey, which would keep one
     fingerprint for users while separating purposes.
-  - Public keys that signed published releases stay in `keys/`, so old
-    releases remain verifiable.
+  - Public keys that signed published releases stay in `keys/`, each
+    with its validity window, and join ADR-0054 §7's pin set as retired
+    keys. Old releases remain verifiable after the key expires, under
+    that section's retired-key rule. The rule accepts `EXPKEYSIG` only
+    for a release whose immutable record dates it inside the key's
+    window.
 - **Compromise.**
   - Publish the revocation certificate (ADR-0005). It is a hard
     revocation, so every signature the key ever made counts as made by a

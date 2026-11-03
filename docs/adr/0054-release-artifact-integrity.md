@@ -137,11 +137,22 @@ only on `--status-fd`, as `REVKEYSIG`, `KEYREVOKED`, `EXPKEYSIG` and
 `gpg --status-fd 1 --verify` (`git verify-tag --raw` for tags) and
 passes only when both hold:
 
-- a `VALIDSIG` line names the fingerprint
-  `66DB5100B0700E4AE051971F9A8DFF06AFD25B24`, or after a rotation the
-  fingerprint the check is written for;
-- no `REVKEYSIG`, `KEYREVOKED`, `EXPKEYSIG`, `EXPSIG` or `BADSIG` line
-  appears.
+- a `VALIDSIG` line names a fingerprint from the **pin set**. Today that
+  is only `66DB5100B0700E4AE051971F9A8DFF06AFD25B24`. After a rotation
+  (ADR-0057) it also holds every retired key, each with the validity
+  window recorded next to it in `keys/`;
+- no `REVKEYSIG`, `KEYREVOKED` or `BADSIG` line appears. These always
+  fail.
+
+`EXPKEYSIG` and `EXPSIG` fail for the current key. GnuPG reports an
+expired key against today's date, not against the date of the
+signature. For a **retired** key, `EXPKEYSIG` is accepted only when
+`gh release verify` shows that the release was published inside that
+key's validity window. That date comes from the immutable-release
+record, which no key holder controls (ADR-0057). Without that record
+the check fails. Releases signed by a retired key therefore stay
+verifiable after it expires, without trusting a signer-chosen
+timestamp.
 
 The check is used in four places:
 
