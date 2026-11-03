@@ -109,8 +109,17 @@ dedicated signing subkey is deferred to the key's next rotation.
          carrying the current release-key fingerprint. It is set
          when this ADR is implemented and updated at every rotation.
          Changing it needs the Cloudflare account, a separate credential
-         with its own second factor. Users check it with
-         `dig +dnssec TXT _release-key.quantumssh.org`.
+         with its own second factor.
+         - **Validation happens locally.** Users check the record with
+           `delv TXT _release-key.quantumssh.org`, which validates the
+           DNSSEC chain against the root trust anchor itself. They accept
+           the fingerprint only when the output says `; fully validated`.
+         - **`dig +dnssec` is not enough.** It only requests the records
+           and validates nothing.
+         - **Neither is a bare `ad` flag.** A resolver's `ad` flag counts
+           only when that validating resolver is reached over an
+           authenticated channel such as DoT or DoH, because a plain-UDP
+           `ad` bit can be forged on the path.
      - `quantumssh.org` itself is **not** a channel. It is a 301 to the
        GitHub repository (`docs/infrastructure.md` §"Web endpoints").
      - **Residual risk.** A compromise of the maintainer's endpoint
