@@ -86,8 +86,10 @@ pub(crate) fn generate_host_key_with(
 
 ### 3. Writing the files, in `crates/quantumssh/src/keygen.rs`
 
-1. **The leaf.** Split `<PATH>` into its parent and a leaf. The leaf must
-   be a normal path component: not empty, not `.` and not `..`.
+1. **The leaf.** Split `<PATH>` into its parent and a leaf. If the
+   parent is empty, as for a bare file name with no separator, it is
+   taken as `.`. The leaf must be a normal path component: not empty,
+   not `.` and not `..`.
 2. **The parent.** `std::fs::canonicalize` the parent, failing on
    `ENOENT`, `EACCES` or a dangling link. Then open it with
    `O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC`.
@@ -129,6 +131,13 @@ Creating the files relative to the verified directory descriptor
 removes the race on the parent that a path-based `open` would leave.
 Only the ancestors above it keep ADR-0029's best-effort window.
 
+This stays within RFC-0018 §3 and does not supersede it. The RFC
+requires both files to be created "under the canonical parent joined
+with the leaf name", and the descriptor is exactly that directory. The
+RFC accepts the residual check-to-open race on ADR-0029's terms; it does
+not require the race to exist. This ADR narrows it to the ancestors, and
+on those it keeps the RFC's acceptance.
+
 ### 4. Tests
 
 - **Core unit tests:**
@@ -142,6 +151,8 @@ Only the ancestors above it keep ADR-0029's best-effort window.
 - **Binary integration tests** (`crates/quantumssh/tests/keygen.rs`,
   which spawn `CARGO_BIN_EXE_quantumssh`) cover:
   - success, with modes `0600` and `0644`;
+  - success with a bare file name (`keygen hk`), run from a safe
+    working directory;
   - a run under `umask 077` set in a `sh -c` wrapper, which still gives
     `0644` on `.pub`;
   - refusal when `<PATH>` exists, when only `.pub` exists, when the leaf
