@@ -1,7 +1,7 @@
 # ADR 0058: Implement `quantumssh keygen` as a core encoder plus a binary module that writes through a verified directory descriptor
 
-- **Status:** Proposed
-- **Date:** TBD (accepted with the implementing PR)
+- **Status:** Accepted
+- **Date:** 2026-11-03 (accepted with the implementing PR [#252](https://github.com/gonzafg2/quantumssh/pull/252); drafted 2026-11-03)
 - **Deciders:** Project lead
 - **Related:**
   - Implements [RFC-0018](../rfcs/0018-host-key-generation.md) §8 (Accepted 2026-11-03; [#249](https://github.com/gonzafg2/quantumssh/pull/249)).
