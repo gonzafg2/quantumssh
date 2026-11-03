@@ -5,12 +5,8 @@
 # builds, whose PID 1 is systemd. It installs QuantumSSH the way
 # docs/deployment.md describes — a system account, /etc/quantumssh,
 # /usr/local/bin and contrib/systemd/quantumssh.service — so never run it
-# on a real host. CI and a local run drive it the same way:
-#
-#   docker build -t quantumssh-systemd tests/systemd
-#   docker run -d --name quantumssh-systemd --privileged --cgroupns=host \
-#       -v /sys/fs/cgroup:/sys/fs/cgroup:rw -v "$PWD":/src:ro quantumssh-systemd
-#   docker exec quantumssh-systemd bash /src/tests/systemd/run_reference_unit.sh
+# on a real host. CI, the release workflow and a local run all drive it
+# through tests/systemd/run_in_docker.sh, from the repository root.
 #
 # Env overrides: SRC (the checkout, default /src), QUANTUMSSH_BIN (the
 # Linux release binary, default $SRC/target/release/quantumssh).

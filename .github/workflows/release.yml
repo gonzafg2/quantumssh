@@ -1,0 +1,466 @@
+name: Release
+
+# ADR-0053 (RFC-0017 §2 and §4). A v* or rehearsal-* tag:
+#   1. builds the three release targets;
+#   2. gates the exact bytes (ADR-0055);
+#   3. attests them and the SBOM (ADR-0054);
+#   4. creates a draft release.
+# Each job holds only its own permissions, and nothing is attested before
+# every gate has passed. The maintainer then verifies the draft, signs
+# SHA256SUMS and publishes it by hand (ADR-0054 §4).
+#
+# Here and in the workflows this one calls, no cache action runs and every
+# checkout drops its credentials (ADR-0053 §1).
+
+on:
+  push:
+    tags: ['v*', 'rehearsal-*']
+
+permissions: {}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # A tripwire, not the guarantee: the tag's own copy of this workflow runs.
+  # The guarantee is the maintainer's check (ADR-0054 §4).
+  precheck:
+    name: precheck
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: The tagged commit is on main
+        run: |
+          set -euo pipefail
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main \
+            || { echo "::error::$GITHUB_REF_NAME ($GITHUB_SHA) is not an ancestor of main"; exit 1; }
+
+      - name: The v* tag is annotated and signed by the current release key
+        if: startsWith(github.ref_name, 'v')
+        run: |
+          set -euo pipefail
+          tag="$GITHUB_REF_NAME"
+          # Fetch the tag object itself: the checkout may hold the tag as a
+          # lightweight ref.
+          git fetch --no-tags --force origin "refs/tags/$tag:refs/tags/$tag"
+          [ "$(git cat-file -t "refs/tags/$tag")" = tag ] \
+            || { echo "::error::$tag is not an annotated tag"; exit 1; }
+          # The key and the pin set come from main, never from the tag's own
+          # tree (ADR-0053 §2).
+          GNUPGHOME="$(mktemp -d)"
+          export GNUPGHOME
+          git show origin/main:keys/security.asc | gpg --batch --quiet --import
+          git show origin/main:keys/release-keys.txt > "$RUNNER_TEMP/release-keys.txt"
+          status="$(git verify-tag --raw "$tag" 2>&1 || true)"
+          bash scripts/release/pinned-signature-check.sh "$RUNNER_TEMP/release-keys.txt" <<<"$status"
+
+  build:
+    name: build (${{ matrix.target }})
+    needs: precheck
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    strategy:
+      matrix:
+        # Versioned labels, never *-latest (ADR-0053 §2), and each target on
+        # its own architecture: nothing is cross-compiled.
+        include:
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-24.04
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+          - target: aarch64-apple-darwin
+            runner: macos-26
+    env:
+      TARGET: ${{ matrix.target }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # ADR-0039: rust-toolchain.toml is the only place a Rust version is
+      # named.
+      - name: Read pinned toolchain
+        id: toolchain
+        shell: bash
+        run: |
+          channel=$(sed -n 's/^channel[[:space:]]*=[[:space:]]*"\([^"]*\)".*$/\1/p' rust-toolchain.toml)
+          if ! [[ "$channel" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error file=rust-toolchain.toml::channel must be an exact MAJOR.MINOR.PATCH release (ADR-0039), found '${channel}'"
+            exit 1
+          fi
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
+          targets: ${{ matrix.target }}
+
+      # ponytail: musl allocator contends under many connections; bounded by
+      # ADR-0028's caps; upgrade path a global allocator such as mimalloc,
+      # behind its own ADR.
+      - name: Build
+        run: cargo build --release --locked -p quantumssh --target "$TARGET"
+
+      - name: Static-link check
+        shell: bash
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          # A v* tag must match the binary's version; a rehearsal-* tag skips
+          # only that comparison (ADR-0053 §3).
+          expected=""
+          case "$REF_NAME" in v*) expected="${REF_NAME#v}" ;; esac
+          version="$(bash scripts/release/check-binary.sh "target/$TARGET/release/quantumssh" "$TARGET" "$expected")"
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Package
+        run: bash scripts/release/package.sh "target/$TARGET/release/quantumssh" "$VERSION" "$TARGET" dist
+
+      # Not a reproducible build: GitHub updates a versioned image in place,
+      # so the release notes state what built each binary (ADR-0053 §2).
+      - name: Record the build environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "target: $TARGET"
+            echo "ImageOS: ${ImageOS:?}"
+            echo "ImageVersion: ${ImageVersion:?}"
+            rustc -vV
+          } > "build-env-$TARGET.txt"
+
+      - name: Upload the tarball
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: tarball-${{ matrix.target }}
+          path: dist/quantumssh-*.tar.gz
+          if-no-files-found: error
+
+      - name: Upload the build environment
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: build-env-${{ matrix.target }}
+          path: build-env-${{ matrix.target }}.txt
+          if-no-files-found: error
+
+  # Its own runner, which never holds a release tarball: installing the
+  # tool compiles third-party code (ADR-0054 §2).
+  sbom:
+    name: sbom
+    needs: precheck
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Read pinned toolchain
+        id: toolchain
+        shell: bash
+        run: |
+          channel=$(sed -n 's/^channel[[:space:]]*=[[:space:]]*"\([^"]*\)".*$/\1/p' rust-toolchain.toml)
+          if ! [[ "$channel" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error file=rust-toolchain.toml::channel must be an exact MAJOR.MINOR.PATCH release (ADR-0039), found '${channel}'"
+            exit 1
+          fi
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
+
+      - name: Install cargo-cyclonedx
+        run: cargo install --locked cargo-cyclonedx --version 0.5.9
+
+      # One SBOM covers the three targets, so it lists the dependencies of
+      # every target (`--target all`): a superset of what any one binary
+      # holds, never a subset. It reads `cargo metadata` and runs no build
+      # script. The tool writes one file per workspace member; only the
+      # quantumssh package's is published.
+      - name: Write the SBOM
+        run: |
+          set -euo pipefail
+          version="$(cargo metadata --no-deps --format-version 1 --locked \
+            | jq -r '.packages[] | select(.name == "quantumssh") | .version')"
+          SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)" cargo cyclonedx \
+            --manifest-path crates/quantumssh/Cargo.toml --format json --spec-version 1.5 \
+            --target all --override-filename "quantumssh-$version.cdx"
+          mkdir dist
+          mv "crates/quantumssh/quantumssh-$version.cdx.json" dist/
+
+      - name: Upload the SBOM
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sbom
+          path: dist/quantumssh-*.cdx.json
+          if-no-files-found: error
+
+  # Gates (ADR-0055). Each holds only contents: read, runs only the build
+  # job's artifacts, and records the digest of the tarball it ran.
+  interop-x86_64:
+    name: gate interop (x86_64)
+    needs: build
+    permissions:
+      contents: read
+    uses: ./.github/workflows/interop.yml
+    with:
+      artifact: tarball-x86_64-unknown-linux-musl
+      runner: ubuntu-24.04
+
+  interop-aarch64:
+    name: gate interop (aarch64)
+    needs: build
+    permissions:
+      contents: read
+    uses: ./.github/workflows/interop.yml
+    with:
+      artifact: tarball-aarch64-unknown-linux-musl
+      runner: ubuntu-24.04-arm
+
+  interop-macos:
+    name: gate interop (macOS)
+    needs: build
+    runs-on: macos-26
+    permissions:
+      contents: read
+    env:
+      # A reviewed change moves these two together (ADR-0055 §3): the
+      # tarball whose detached signature verified against the OpenSSH
+      # release key on 2026-11-03.
+      OPENSSH_VERSION: 10.6p1
+      OPENSSH_SHA256: a9dc9565dffe8640f64d863cd29a32bc4a3dbdec0566a7fc44c5d6ee767d5f39
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download the release tarball
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: tarball-aarch64-apple-darwin
+          path: release-artifact
+
+      # The whole client set goes into one prefix: scp and sftp run the ssh
+      # of their compiled-in prefix, so a partial install would fall back to
+      # macOS's own older client.
+      - name: Build the pinned OpenSSH client
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          curl -fsSLO "https://cdn.openbsd.org/pub/OpenBSD/OpenSSH/portable/openssh-$OPENSSH_VERSION.tar.gz"
+          echo "$OPENSSH_SHA256  openssh-$OPENSSH_VERSION.tar.gz" | shasum -a 256 -c -
+          tar -xzf "openssh-$OPENSSH_VERSION.tar.gz"
+          cd "openssh-$OPENSSH_VERSION"
+          ./configure --prefix="$RUNNER_TEMP/openssh" --without-openssl --without-zlib
+          make -j"$(sysctl -n hw.ncpu)"
+          make install-nosysconf
+          echo "$RUNNER_TEMP/openssh/bin" >> "$GITHUB_PATH"
+
+      - name: No fallback to the system client
+        run: |
+          set -euo pipefail
+          for tool in ssh ssh-keygen sftp scp; do
+            [ "$(command -v "$tool")" = "$RUNNER_TEMP/openssh/bin/$tool" ] \
+              || { echo "::error::$tool resolves to $(command -v "$tool"), not the pinned build"; exit 1; }
+          done
+          ssh -V 2>&1
+          ssh -V 2>&1 | grep -Eq "^OpenSSH_${OPENSSH_VERSION}([, ]|$)" \
+            || { echo "::error::ssh -V is not OpenSSH $OPENSSH_VERSION"; exit 1; }
+
+      # The digest is recorded before the binary runs (ADR-0055 §4).
+      - name: Extract the release tarball
+        run: |
+          set -euo pipefail
+          cd release-artifact
+          tarballs=(quantumssh-*.tar.gz)
+          [ "${#tarballs[@]}" -eq 1 ] && [ -f "${tarballs[0]}" ] \
+            || { echo "::error::expected exactly one release tarball"; exit 1; }
+          shasum -a 256 "${tarballs[0]}" > ../gate-digests.txt
+          tar -xzf "${tarballs[0]}"
+          echo "QUANTUMSSH_BIN=$PWD/${tarballs[0]%.tar.gz}/quantumssh" >> "$GITHUB_ENV"
+
+      - name: OpenSSH interop gate
+        run: bash tests/interop/run_openssh_client.sh
+
+      - name: Record the gated tarball's digest
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: gate-digests-interop-macos
+          path: gate-digests.txt
+          if-no-files-found: error
+
+  # The reference unit on x86_64 only: the unit and the notify protocol do
+  # not depend on the architecture (ADR-0055 §2).
+  systemd:
+    name: gate systemd (x86_64)
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download the release tarball
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: tarball-x86_64-unknown-linux-musl
+          path: release-artifact
+
+      - name: Extract the release tarball
+        run: |
+          set -euo pipefail
+          cd release-artifact
+          tarballs=(quantumssh-*.tar.gz)
+          [ "${#tarballs[@]}" -eq 1 ] && [ -f "${tarballs[0]}" ] \
+            || { echo "::error::expected exactly one release tarball"; exit 1; }
+          sha256sum "${tarballs[0]}" > ../gate-digests.txt
+          tar -xzf "${tarballs[0]}"
+          echo "EXTRACTED=$PWD/${tarballs[0]%.tar.gz}" >> "$GITHUB_ENV"
+
+      # The tarball's own binary and unit, not the checkout's.
+      - name: systemd reference unit
+        run: bash tests/systemd/run_in_docker.sh "$EXTRACTED"
+
+      - name: Record the gated tarball's digest
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: gate-digests-systemd
+          path: gate-digests.txt
+          if-no-files-found: error
+
+  # Runs no project code and installs no tool.
+  attest:
+    name: attest
+    needs: [build, sbom, interop-x86_64, interop-aarch64, interop-macos, systemd]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - name: Download the tarballs
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: tarball-*
+          merge-multiple: true
+          path: dist
+
+      - name: Download the SBOM
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: sbom
+          path: dist
+
+      # One directory per gate: every record is named gate-digests.txt.
+      - name: Download the gates' digest records
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: gate-digests-*
+          path: gates
+
+      - name: Every tarball is the one the gates ran
+        run: |
+          set -euo pipefail
+          (cd dist && sha256sum quantumssh-*.tar.gz) | LC_ALL=C sort > built.txt
+          [ "$(wc -l < built.txt)" -eq 3 ] || { echo "::error::expected three tarballs"; cat built.txt; exit 1; }
+          records=(gates/*/gate-digests.txt)
+          [ "${#records[@]}" -eq 4 ] || { echo "::error::expected four gate records, found ${#records[@]}"; exit 1; }
+          for record in "${records[@]}"; do
+            if [ "$(wc -l < "$record")" -ne 1 ] || ! grep -qxFf "$record" built.txt; then
+              echo "::error::$record does not match a built tarball"; cat "$record"; exit 1
+            fi
+          done
+          cat "${records[@]}" | LC_ALL=C sort -u > gated.txt
+          cmp -s built.txt gated.txt \
+            || { echo "::error::a tarball no gate ran"; diff built.txt gated.txt || true; exit 1; }
+
+      - name: Attest the tarballs and the SBOM
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            dist/quantumssh-*.tar.gz
+            dist/quantumssh-*.cdx.json
+
+  publish:
+    name: publish (draft)
+    needs: attest
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download the tarballs
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: tarball-*
+          merge-multiple: true
+          path: dist
+
+      - name: Download the SBOM
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: sbom
+          path: dist
+
+      - name: Download the build environments
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: build-env-*
+          merge-multiple: true
+          path: build-env
+
+      # GNU sha256sum format, sorted by file name (ADR-0054 §3). The
+      # maintainer recomputes it before signing.
+      - name: Write SHA256SUMS
+        run: |
+          set -euo pipefail
+          cd dist
+          files=(quantumssh-*.tar.gz quantumssh-*.cdx.json)
+          [ "${#files[@]}" -eq 4 ] && [ "$(find . -type f | wc -l)" -eq 4 ] \
+            || { echo "::error::expected three tarballs and the SBOM"; ls -l; exit 1; }
+          sha256sum -- "${files[@]}" | LC_ALL=C sort -k2 > ../SHA256SUMS
+          cat ../SHA256SUMS
+
+      - name: Create the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          case "$TAG" in
+            v*) title="QuantumSSH ${TAG#v}" ;;
+            *) title="Rehearsal $TAG" ;;
+          esac
+          {
+            echo "Draft created by the release workflow. It is published only after the maintainer verifies it and signs \`SHA256SUMS\` (ADR-0054 §4)."
+            echo
+            echo "## Build environment"
+            echo
+            echo "Not a reproducible build: these are the hosted images and the toolchain that built each binary."
+            for f in build-env/build-env-*.txt; do
+              echo
+              echo '```'
+              cat "$f"
+              echo '```'
+            done
+          } > notes.md
+          gh release create "$TAG" -R "$GITHUB_REPOSITORY" --draft --verify-tag \
+            --title "$title" --notes-file notes.md dist/* SHA256SUMS

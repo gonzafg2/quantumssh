@@ -8,8 +8,9 @@
 # hard subset checks ADR-0020 names — openssh_smoke, openssh_verbose_kex,
 # negative_no_hybrid — the two ADR-0047 adds for the composite host key —
 # openssh_hostkey_composite, negative_ed25519_hostkey — plus exit-status
-# propagation (ADR-0023), and that `quantumssh keygen` writes a key
-# ssh-keygen 10.6 reads and a server serves (RFC-0018 §6, ADR-0058 §4).
+# propagation (ADR-0023), the server's second cipher, aes256-gcm, wherever
+# the client offers it (ADR-0055 §5), and that `quantumssh keygen` writes
+# a key ssh-keygen 10.6 reads and a server serves (RFC-0018 §6, ADR-0058 §4).
 #
 # Env overrides: QUANTUMSSH_BIN (default ./target/release/quantumssh),
 # QUANTUMSSH_PORT (default 2222).
@@ -94,6 +95,21 @@ echo "ok: openssh_verbose_kex"
 grep -q "kex: host key algorithm: ssh-mldsa44-ed25519" <<<"$verbose" \
     || fail "hostkey_composite: ssh-mldsa44-ed25519 not negotiated"
 echo "ok: openssh_hostkey_composite"
+
+# 2b. openssh_aes_gcm (ADR-0055 §5): stock OpenSSH prefers ChaCha20, so the
+# server's second cipher is asked for explicitly. It is mandatory wherever
+# the client offers it; a client built without OpenSSL (the macOS release
+# leg) does not, and the gate says it skipped the check.
+if ssh -Q cipher | grep -qx "aes256-gcm@openssh.com"; then
+    verbose="$(ssh -v "${SSH_OPTS[@]}" -o Ciphers=aes256-gcm@openssh.com \
+        tester@127.0.0.1 'echo gcm-ok' 2>&1)" || fail "aes_gcm: ssh exited $?"
+    grep -q "cipher: aes256-gcm@openssh.com" <<<"$verbose" \
+        || fail "aes_gcm: aes256-gcm@openssh.com not negotiated"
+    grep -qx "gcm-ok" <<<"$verbose" || fail "aes_gcm: the command's output is missing"
+    echo "ok: openssh_aes_gcm"
+else
+    echo "skip: openssh_aes_gcm (this client offers no aes256-gcm@openssh.com)"
+fi
 
 # 3. negative_no_hybrid: a classical-only client is rejected (no downgrade).
 if ssh "${SSH_OPTS[@]}" -o KexAlgorithms=curve25519-sha256 \
