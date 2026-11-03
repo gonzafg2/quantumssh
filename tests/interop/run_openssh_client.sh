@@ -213,7 +213,7 @@ kg_fp="$(tail -n 1 <<<"$kg_out")"
     || fail "keygen: ssh-keygen -lf disagrees with the fingerprint keygen printed"
 echo "ok: keygen_read_by_ssh_keygen"
 
-KG_PORT=$((PORT + 1))
+KG_PORT=$((10#$PORT + 1)) # base 10: a leading zero is not octal
 LOG="$WORK/server-keygen.log"
 "$BIN" --listen "127.0.0.1:$KG_PORT" \
        --host-key "$WORK/kghk" \

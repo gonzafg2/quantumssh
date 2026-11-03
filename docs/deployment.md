@@ -78,8 +78,10 @@ the following:
 - It prints both paths and the key's fingerprint, the one `server.started`
   logs. Publish the fingerprint out of band, so clients can check it on
   their first connection.
-- It never replaces a file. To rotate the key, move the old one aside,
-  then generate and restart.
+- It never replaces a file, the key or its `.pub`. To rotate the key,
+  move both aside, run `keygen` and the `chown` above again, publish the
+  new fingerprint and restart. Once clients have the new fingerprint,
+  destroy the old private key.
 - It refuses a directory the server would refuse to read the key from
   (the StrictModes rule above).
 
