@@ -45,11 +45,12 @@ should make the safe path the easy one.
 
 The problem does not depend on how QuantumSSH is installed: a source
 build on Ubuntu has it too. That is why this is its own decision rather
-than part of RFC-0017's distribution proposal
-([#247](https://github.com/gonzafg2/quantumssh/pull/247)), as
-`docs/rfcs/README.md` §"Scope: one decision per RFC" requires. Each RFC
-can land without the other. While this one is pending, RFC-0017's install
-guide uses `ssh-keygen`.
+than part of the distribution proposal in
+[#247](https://github.com/gonzafg2/quantumssh/pull/247), as
+`docs/rfcs/README.md` §"Scope: one decision per RFC" requires. That
+proposal, RFC-0017, is still under review, and each RFC can land without
+the other. While this RFC is pending, step 3 of the operator guide keeps
+`ssh-keygen`.
 
 ## Guide-level explanation
 
@@ -324,6 +325,7 @@ the different mode more clearly.
 ## Future possibilities
 
 - Packaging hooks, such as a `.deb` `postinst`, that call `keygen`
-  explicitly, if RFC-0017's follow-ups add packages.
+  explicitly, if a future distribution ADR adds packages (TBD; #247
+  defers them).
 - A host-key rotation procedure in the operator guide, using `keygen`
   and a published fingerprint.
