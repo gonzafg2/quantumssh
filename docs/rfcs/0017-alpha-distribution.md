@@ -86,8 +86,8 @@ OpenSSH 10.6 as the floor. In practice:
 
 | Tier | What the project promises | Targets |
 |---|---|---|
-| **1** | A published binary; the test suite in CI; the interop gate run against **the published binary** with OpenSSH ≥ 10.6 | `x86_64-unknown-linux-musl`, `aarch64-unknown-linux-musl` |
-| **2** | A published binary; the test suite in CI; an interop run before each release | `aarch64-apple-darwin` (becomes Tier 1 once its interop job is a required check) |
+| **1** | A published binary; the test suite in CI; a release-blocking interop job run against **the published binary** with a **pinned** OpenSSH ≥ 10.6 client | `x86_64-unknown-linux-musl`, `aarch64-unknown-linux-musl` |
+| **2** | A published binary; the test suite in CI; a release-blocking interop job whose OpenSSH ≥ 10.6 client is not yet pinned | `aarch64-apple-darwin` (becomes Tier 1 once its client is pinned; see Unresolved questions) |
 | **Unsupported, with a documented path** | No binary. Nothing is promised | Windows on `x86_64` and `arm64`, through WSL2 with the Linux binary; macOS on Intel, built from source, with no runner to test it on |
 
 ### The client floor
@@ -102,7 +102,8 @@ The install guide lists where 10.6 comes from:
 | Platform | How to get OpenSSH ≥ 10.6 |
 |---|---|
 | Arch, Alpine edge, Debian forky or sid, Fedora rawhide, openSUSE Tumbleweed, Void, NixOS 26.05 | The distribution package |
-| Ubuntu (every release), Debian 13, Fedora 44, RHEL 9 and rebuilds, openSUSE Leap | Homebrew on Linux (`openssh` 10.6p1 has `x86_64_linux` and `arm64_linux` bottles) |
+| Ubuntu (every release), Debian 13, Fedora 44 | Homebrew on Linux (`openssh` 10.6p1 has `x86_64_linux` and `arm64_linux` bottles). It is Homebrew's Tier 1 at glibc ≥ 2.39. On Ubuntu 22.04 (glibc 2.35) Homebrew installs its own glibc and supports it only at Tier 2 |
+| RHEL 9 and rebuilds (glibc 2.34), openSUSE Leap | No supported route. Homebrew's Tier 2 (its own glibc, bottles "may be unavailable or fail to install") is best effort only. The server side waits for RFC-0018's `keygen`, or for a distribution OpenSSH ≥ 10.6. The guide does not suggest generating the key on another machine |
 | macOS (arm64) | Homebrew `openssh`, used by full path or after `brew unlink openssh`, so the system `ssh` stays in place |
 | Windows | A client inside WSL2. No native Windows build of 10.6 is known to work |
 
@@ -133,10 +134,18 @@ replaces the `ssh-keygen` line.
 ```sh
 brew install gonzafg2/quantumssh/quantumssh openssh
 brew unlink openssh
-"$(brew --prefix openssh)/bin/ssh-keygen" -t mldsa44-ed25519 -N '' \
-  -f "$(brew --prefix)/etc/quantumssh/ssh_host_mldsa44_ed25519_key"
+E="$(brew --prefix)/etc/quantumssh"
+"$(brew --prefix openssh)/bin/ssh-keygen" -t mldsa44-ed25519 -N '' -f "$E/ssh_host_mldsa44_ed25519_key"
+install -m 0644 ~/.ssh/id_ed25519.pub "$E/authorized_keys"
 brew services start quantumssh
+"$(brew --prefix openssh)/bin/ssh" -p 2222 "$USER@127.0.0.1"
 ```
+
+The formula installs `$(brew --prefix)/etc/quantumssh/config.toml`. Its
+paths point inside that directory, its `listen` is `127.0.0.1:2222`, and
+it is not overwritten on upgrade. The client is the Homebrew `ssh`, by
+full path. After `brew unlink`, a plain `ssh` is macOS's 10.5p1, which
+does not connect.
 
 **This is a single-user evaluation path, not ADR-0016's posture.**
 `brew services` runs the server as the user who started it. On macOS that
@@ -170,11 +179,19 @@ running, and the guide says so.
 
 ### 1. Tiers are bound to the interop gate
 
-A target is Tier 1 only while the interop gate (ADR-0020) runs against
-the artifact the release publishes for that target and is a required
-check. A target cannot be listed as Tier 1 because a different build of
-the same source passed. Losing the gate drops a target to Tier 2 in the
-next release notes.
+A target is Tier 1 only while two things hold:
+
+- the interop gate (ADR-0020) runs as a **release-blocking job** in
+  `release.yml` against the artifact the release publishes for that
+  target;
+- that job uses a pinned client, as ADR-0020 pins its own.
+
+"Release-blocking" means §4's stop conditions. It is not a
+branch-protection required check, because a tag-triggered workflow never
+reports on a pull request. The PR-time interop gate stays the required
+check it is today (ADR-0031). A target cannot be listed as Tier 1
+because a different build of the same source passed. Losing the gate
+drops a target to Tier 2 in the next release notes.
 
 ### 2. Targets and build
 
@@ -215,7 +232,9 @@ directory of the same name with:
 - the `quantumssh` binary;
 - `LICENSE`, `README.md` and `CHANGELOG.md`;
 - `contrib/systemd/quantumssh.service`;
-- an example `config.toml`, copied from `docs/deployment.md` §4.
+- an example `config.toml`, copied from `docs/deployment.md` §4, with
+  `/etc/quantumssh` paths. The tap installs its own copy with Homebrew
+  paths (§7).
 
 Per release:
 
@@ -235,8 +254,8 @@ the attestation records:
 
 A check with only `-R gonzafg2/quantumssh` would accept an attestation
 from any workflow in the repository on any ref, including a branch or
-the test tags used to rehearse a release. That check is not the one
-documented.
+the `rehearsal-*` tags used to rehearse a release (§4). That check is
+not the one documented.
 
 ### 4. Release procedure
 
@@ -246,10 +265,28 @@ From `0.2.0` on, a release follows these steps in order:
    `vX.Y.Z` with the project PGP key, as for `v0.1.0`. A repository
    ruleset protects `v*` tags: only the maintainer may create one, and no
    tag can be moved or deleted.
+   - **A failed release consumes its version.** If the build or a gate
+     fails, the draft is discarded, the tag stays, and the fix ships as
+     the next patch version with a CHANGELOG note. A tag never points at
+     two different releases.
+   - **Rehearsals use another namespace.** They use `rehearsal-*` tags,
+     outside the `v*` ruleset. Their attestations name a `rehearsal-*`
+     ref, so the user check (`--source-ref refs/tags/vX.Y.Z`) rejects
+     them.
 2. **Build.** `.github/workflows/release.yml`, triggered by the tag,
    fails before building unless the tagged commit is reachable from
    `main`. It then builds §2's targets, assembles §3's artifacts, attests
-   them and creates a **draft** release carrying them. The workflow's own
+   them and creates a **draft** release carrying them. Each kind of work
+   is its own job with only the permissions it needs:
+   - **build:** `contents: read`, with no OIDC and no attestation
+     permission, and `persist-credentials: false` on checkout. A
+     compromised build script (threat model §5.5.2.a) therefore runs
+     with nothing to mint or publish;
+   - **attest:** `id-token: write` and `attestations: write`. It
+     downloads the exact artifacts the gates passed and runs no project
+     code;
+   - **publish:** `contents: write`. It only creates the draft and
+     uploads the assets. The workflow's own
    check is a tripwire, not a guarantee: a tag on an unreviewed commit
    runs that commit's copy of the workflow. Step 4 is the check that
    counts.
@@ -345,8 +382,10 @@ Apple Developer Program.
   `x86_64` and `aarch64`, it downloads the release tarball for the
   platform, with its `sha256` fixed in the formula. That `sha256` is copied
   from the maintainer-signed `SHA256SUMS`, never computed from a download.
-  Another platform gets
-  an install error naming the supported tiers. It does not fall back to a
+  The formula also installs a `config.toml` under `#{etc}/quantumssh/`.
+  Its paths point inside that directory, its `listen` is
+  `127.0.0.1:2222`, and it is never overwritten on upgrade. Another
+  platform gets an install error naming the supported tiers. It does not fall back to a
   source build.
 - **Service:** a `service do` block runs
   `quantumssh --config #{etc}/quantumssh/config.toml` with `keep_alive`,
@@ -453,7 +492,7 @@ numbering follows merge order.
 
 | ADR | Decision |
 |---|---|
-| ADR-0053 | The release workflow: §2's matrix, runners, pinned actions and static-link check; the `v*` tag ruleset; the ancestry tripwire; the gates' digest records; the draft → gates → sign → publish flow of §4; and whether the build moves to a reusable workflow for SLSA Build Level 3 |
+| ADR-0053 | The release workflow: §2's matrix, runners, pinned actions and static-link check; the build / attest / publish job split and their permissions; the `v*` tag ruleset; the ancestry tripwire; the gates' digest records; the draft → gates → sign → publish flow of §4; and whether the build moves to a reusable workflow for SLSA Build Level 3 |
 | ADR-0054 | Artifact integrity: attestation action, SBOM tool (`cargo-cyclonedx` or `cargo auditable`), `SHA256SUMS` format, the immutable-releases setting, the user verification recipe |
 | ADR-0055 | The interop gate on published artifacts, on `aarch64` Linux and on macOS arm64; extends ADR-0020 |
 | ADR-0056 | The Homebrew tap of §7, including its recorded departure from ADR-0016 as a single-user evaluation path |
@@ -571,7 +610,7 @@ ships. Official distribution inclusion stays Phase 4.
   is open.
 - **musl linking on the runners.** Rust's self-contained musl linking
   should not need `musl-gcc`, because the workspace has no C
-  dependencies. A dry run on a test tag must confirm it.
+  dependencies. A dry run on a `rehearsal-*` tag must confirm it.
 - **SBOM tool.** `cargo-cyclonedx` writes a separate file;
   `cargo auditable` embeds the dependency list in the binary. The planned
   integrity ADR (§12) will pick one or both.
@@ -598,5 +637,6 @@ ships. Official distribution inclusion stays Phase 4.
   Cloudsmith's open-source tier.
 - Reproducible builds and an independent rebuild check (Phase 3).
 - homebrew-core once the project calls a version stable.
-- Tier 1 for macOS, once the planned interop ADR's macOS job is required.
+- Tier 1 for macOS, once the planned interop ADR pins the macOS job's
+  client.
 - mimalloc if musl's allocator shows up in measurements.
