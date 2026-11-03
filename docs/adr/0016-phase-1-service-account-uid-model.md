@@ -1,6 +1,6 @@
 # ADR 0016: Run quantumsshd as a dedicated non-root service account in Phase 1
 
-- **Status:** Accepted
+- **Status:** Accepted. The Homebrew tap's single-user evaluation path departs from this model by recorded exception: there the server runs as the invoking user, who owns its own trust anchors. The exception is [ADR-0056](0056-homebrew-tap.md). The Linux deployment keeps the dedicated account.
 - **Date:** 2026-06-30 (accepted in the #86 Phase-1 governance sweep)
 - **Deciders:** Project lead
 - **Related:** Operational counterpart to [RFC-0002](../rfcs/0002-threat-model-phase1-uid-model-and-non-goal.md); this ADR depends on the merge of [PR #24](https://github.com/gonzafg2/quantumssh/pull/24) and should land after it.

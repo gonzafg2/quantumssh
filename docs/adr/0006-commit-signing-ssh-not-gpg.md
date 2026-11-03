@@ -1,6 +1,6 @@
 # ADR 0006: Sign commits with SSH keys rather than GPG
 
-- **Status:** Accepted
+- **Status:** Accepted. The PGP key is no longer reserved only for embargoed disclosure: it also signs release tags and `SHA256SUMS`. That broadening is [ADR-0057](0057-release-signing-with-the-project-pgp-key.md), which supersedes the §Decision sentence and the §Consequences/Neutral bullet that say "disclosure only". The commit-signing decision is unchanged.
 - **Date:** 2026-05-10
 - **Deciders:** Project lead
 - **Related:** [ADR-0005](0005-pgp-key-two-year-expiry.md) (PGP is still used for embargoed disclosure), `docs/infrastructure.md` § "Commit signing", `docs/operations.md` § "Signed-commit verification"

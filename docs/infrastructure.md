@@ -272,9 +272,10 @@ in the "Project PGP key" section of [`operations.md`](./operations.md).
 Commit signatures are produced by an SSH key (Ed25519), not a GnuPG
 key. The same SSH key is used for authenticating to GitHub, so the
 trust root is a public artefact already exposed at
-`api.github.com/users/<maintainer>/ssh_signing_keys`. PGP remains the
-project's tool for embargoed-disclosure encryption; the two roles are
-intentionally separated by tool.
+`api.github.com/users/<maintainer>/ssh_signing_keys`. PGP is the
+project's tool for embargoed-disclosure encryption and, since
+[ADR-0057](./adr/0057-release-signing-with-the-project-pgp-key.md),
+for signing release tags and `SHA256SUMS`. Commits stay on SSH.
 
 Decision rationale (SSH-not-GPG): see
 [ADR-0006](./adr/0006-commit-signing-ssh-not-gpg.md).
