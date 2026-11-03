@@ -5,7 +5,7 @@
 [![License](https://img.shields.io/badge/License-Apache%202.0-D22128?style=flat-square)](LICENSE)
 [![Rust](https://img.shields.io/badge/Rust-1.92%2B-CE422B?style=flat-square&logo=rust&logoColor=white)](rust-toolchain.toml)
 [![unsafe](https://img.shields.io/badge/unsafe-forbidden-2EA043?style=flat-square)](docs/adr/0018-phase-1-unsafe-code-forbid-workspace.md)
-[![status](https://img.shields.io/badge/status-pre--alpha-E36209?style=flat-square)](#status)
+[![status](https://img.shields.io/badge/status-alpha-E36209?style=flat-square)](#status)
 
 > SSH for the next 30 years, not the past 30.
 > **Open source. No NDAs. No exceptions.**
@@ -18,11 +18,11 @@ We are not forking OpenSSH. We are not adding PQ algorithms as an option. We are
 
 ## Status
 
-🚧 **Pre-alpha — Phase 1 complete; Phase 2 in progress.**
+🚧 **Alpha — `0.1.0` released; Phase 2 complete. Not for production before Phase 3.**
 
-Phase 0 (foundation) and Phase 1 (walking skeleton) are done: the greenfield SSH-2 server in Rust accepts OpenSSH 10.x clients end-to-end (hybrid `mlkem768x25519-sha256`, Ed25519 host keys at the time, publickey auth, single-command `exec`, structured `tracing`, CI interop gate). Crates are at `0.0.1`; there is no public `0.1.0` tag yet.
+Phase 0 (foundation) and Phase 1 (walking skeleton) are done: the greenfield SSH-2 server in Rust accepts OpenSSH 10.x clients end-to-end (hybrid `mlkem768x25519-sha256`, Ed25519 host keys at the time, publickey auth, single-command `exec`, structured `tracing`, CI interop gate).
 
-Phase 2 (“Usable”) is underway — tracked in [#109](https://github.com/gonzafg2/quantumssh/issues/109). Landed so far: TOML configuration file and StrictModes checks, concurrent accept loop with admission control, graceful shutdown, interactive PTY sessions, systemd integration, SFTP, OpenSSH user certificates, the composite post-quantum host key, and the freeze of the negotiation profile, audit-log schema and configuration schema. Still open before `0.1.0`: the tag.
+Phase 2 (“Usable”) is done and shipped as `0.1.0`, the first public release — tracked in [#109](https://github.com/gonzafg2/quantumssh/issues/109). It brought: TOML configuration file and StrictModes checks, concurrent accept loop with admission control, graceful shutdown, interactive PTY sessions, systemd integration, SFTP, OpenSSH user certificates, the composite post-quantum host key, and the freeze of the negotiation profile, audit-log schema and configuration schema. The server is not hardened for production: per-user privilege separation, fuzzing and an audit are Phase 3.
 
 Supporting infrastructure (DNS, TLS, email, signing, repository hardening) is described in [`docs/infrastructure.md`](./docs/infrastructure.md); independent verification recipes live in [`docs/operations.md`](./docs/operations.md). Decision records live in [`docs/adr/`](./docs/adr/) and [`docs/rfcs/`](./docs/rfcs/). Running the server under systemd: [`docs/deployment.md`](./docs/deployment.md).
 
@@ -117,7 +117,7 @@ Acceptance criteria (all met):
 
 Also landed in Phase 1 beyond the original checklist: AEAD-only ciphers, strict-kex, re-keying ([ADR-0026](./docs/adr/0026-phase-1-rekeying-policy.md)), and the Phase-1 audit-log schema ([ADR-0024](./docs/adr/0024-phase-1-log-event-schema.md)).
 
-### Phase 2 — Usable (in progress)
+### Phase 2 — Usable (complete)
 Tracked in [#109](https://github.com/gonzafg2/quantumssh/issues/109). Scoping (non-normative): [`docs/plans/phase2-scoping.md`](./docs/plans/phase2-scoping.md).
 
 - ✅ Configuration file (TOML, not `sshd_config`) — [RFC-0010](./docs/rfcs/0010-configuration-file.md), [ADR-0029](./docs/adr/0029-phase-2-config-file-v1-schema-parser-strictmodes.md), implemented in [#128](https://github.com/gonzafg2/quantumssh/pull/128)
@@ -127,7 +127,7 @@ Tracked in [#109](https://github.com/gonzafg2/quantumssh/issues/109). Scoping (n
 - ✅ OpenSSH user certificates from trusted CAs — [RFC-0008](./docs/rfcs/0008-ssh-certificate-authentication.md), [ADR-0050](./docs/adr/0050-accept-openssh-user-certificates.md), [ADR-0051](./docs/adr/0051-certificate-audit-fields.md), implemented in [#237](https://github.com/gonzafg2/quantumssh/pull/237)
 - ✅ Composite post-quantum host key `ssh-mldsa44-ed25519` — [RFC-0012](./docs/rfcs/0012-composite-host-key-cutover.md), [ADR-0035](./docs/adr/0035-ml-dsa-crate-rustcrypto.md), [ADR-0047](./docs/adr/0047-host-key-algorithm-ssh-mldsa44-ed25519.md), [ADR-0048](./docs/adr/0048-openssh-interop-client-on-debian-forky.md), implemented in [#242](https://github.com/gonzafg2/quantumssh/pull/242)
 - ✅ systemd integration — [ADR-0043](./docs/adr/0043-systemd-notify-service-and-reference-unit.md), implemented in [#198](https://github.com/gonzafg2/quantumssh/pull/198); operator guide in [`docs/deployment.md`](./docs/deployment.md)
-- First public release: `0.1.0` (one-way freeze of negotiation profile + audit-log `schema_version`)
+- ✅ First public release: `0.1.0` (one-way freeze of negotiation profile + audit-log `schema_version`)
 
 ### Phase 3 — Hardening
 - Continuous fuzzing (`cargo-fuzz`, OSS-Fuzz)

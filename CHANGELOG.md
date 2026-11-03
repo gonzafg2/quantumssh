@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-02
+
 ### Added
 
 - User certificates: OpenSSH user certificates for Ed25519 keys
@@ -546,5 +548,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the project accepts this in exchange for protecting first-time
   HTTP visitors from active downgrade attacks on initial request.
 
-[Unreleased]: https://github.com/gonzafg2/quantumssh/compare/v0.0.1...HEAD
+[Unreleased]: https://github.com/gonzafg2/quantumssh/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/gonzafg2/quantumssh/releases/tag/v0.1.0
 [0.0.1]: https://github.com/gonzafg2/quantumssh/releases/tag/v0.0.1
