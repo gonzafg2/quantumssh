@@ -74,7 +74,7 @@ The fingerprint matches what `server.started` logs and what
 out of band before the first connection.
 
 `keygen` refuses to replace a key. If either file exists, it exits
-non-zero and writes nothing. Rotating a host key stays a deliberate act:
+non-zero before it writes any key bytes. Rotating a host key stays a deliberate act:
 move the old key aside, generate, restart.
 
 ## Reference-level explanation
@@ -111,14 +111,25 @@ the subcommand from the flags (§8).
      - `string(mldsa_pk ‖ ed25519_pk)`;
      - `string(seeds)`;
      - an empty comment;
-     - deterministic padding `1, 2, 3, …`.
+     - padding bytes `1, 2, 3, …` until the private section's length is
+       a multiple of 8, the block size OpenSSH uses for cipher `none`. No
+       padding is added when the length is already a multiple of 8.
 4. Encode the public key line as `ssh-mldsa44-ed25519 <base64 blob>`
    with no comment.
 
-The encoder is new code. The format's field order and bounds are the
-ones the loader already enforces, so a key `keygen` writes must parse
-with `HostKey::from_openssh_pem`. A unit test checks that round trip on
-every run.
+The encoder is new code. Unit tests check it on every run:
+
+- **A round trip:** a key `keygen` encodes must parse with
+  `HostKey::from_openssh_pem` and give the same public key. The loader
+  checks the field order, the bounds, the check words and the consistency
+  of the seeds with the public key.
+- **The trailer the loader skips:** the loader does not parse the comment
+  or the padding. A separate test asserts that the private section's
+  length is a multiple of 8 and that the padding bytes are exactly
+  `1, 2, 3, …`.
+
+OpenSSH format compliance as a whole is checked by `ssh-keygen` 10.6
+itself (§6). The tests generate their keys at run time; no private-key fixture is committed.
 
 ### 3. Writing the files
 
@@ -127,11 +138,24 @@ every run.
   - `<PATH>.pub` is created with mode `0644`;
   - both with `O_CREAT | O_EXCL | O_NOFOLLOW`, so an existing file or a
     symlink at either path is an error, never a target.
-- **Write order.** The private file is written and `fsync`ed first. Then
-  the public file is written.
-- **A failure after the private file exists** (the public file cannot be
-  created) removes the private file before exiting. No half-written pair
-  is left behind.
+- **Order.**
+  1. Both files are opened, empty, before the seeds are drawn or any key
+     byte is written. If either open fails, whatever this run created is
+     removed, and no key exists yet.
+  2. The private file is written and `fsync`ed.
+  3. The public file is written and `fsync`ed.
+- **Any failure after step 1** removes both files this run created
+  before exiting non-zero. That covers a failed write, a failed `fsync`
+  of either file, or a failed public write. No half-written pair, empty
+  `0600` file or stray `.pub` is left to block the next run.
+- **A failed removal** is its own error. The message names the path left
+  behind, and the exit status is non-zero.
+- **Data already on disk.** If the private file was written before the
+  failure, unlinking it does not erase what reached the disk. The message
+  says so, and the operator treats that key as never used. The order
+  above makes this possible only when a write to the private file, its
+  `fsync` or the public write fails, never because a file already
+  existed.
 - **Parent directory check, before any write.** The parent directory must
   pass the ancestor rule StrictModes applies at startup: neither it nor
   any directory above it may be group- or world-writable (ADR-0029). A
