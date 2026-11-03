@@ -73,9 +73,11 @@ wrote /etc/quantumssh/ssh_host_mldsa44_ed25519_key.pub (public, 0644)
 SHA256:<43 base64 characters>
 ```
 
-The fingerprint matches what `server.started` logs and what
-`ssh-keygen -lf` prints for the `.pub` file. An operator can publish it
-out of band before the first connection.
+The fingerprint matches what `server.started` logs. On a host with
+OpenSSH 10.6 or later, it also matches what `ssh-keygen -lf` prints for
+the `.pub` file; older `ssh-keygen` releases cannot parse the type. An
+operator can publish the fingerprint out of band before the first
+connection.
 
 `keygen` refuses to replace a key. If either file exists, it exits
 non-zero before it writes any key bytes. Rotating a host key stays a deliberate act:
@@ -102,6 +104,14 @@ the subcommand from the flags (§8).
    the source the transport already uses. The first 32 bytes are the
    ML-DSA-44 seed and the last 32 the Ed25519 seed. This is the layout
    OpenSSH stores and the loader reads (`mldsa_seed ‖ ed25519_seed`).
+   **An RNG error aborts the run, and there is no fallback.** It happens
+   before any seed is used, and `keygen` never substitutes a zero, a
+   partial or a derived seed. The two empty files this run created are
+   removed and the exit status is non-zero. This is the threat model's
+   rule (§3.3, "OS-provided randomness with no fallback") and
+   ADR-0035 §3's "RNG failure fails closed". The check words are drawn
+   from the same source under the same rule. A unit test injects a
+   failing RNG and expects the abort, the cleanup and no output file.
 2. Build the signing key with the existing `SigningKey::from_seeds`, the
    construction `HostKey::from_openssh_pem` uses on load (RFC-0012,
    ADR-0035, ADR-0047).
@@ -167,8 +177,12 @@ itself (§6). The tests generate their keys at run time; no private-key fixture 
   2. The private file is written and `fsync`ed.
   3. The public file is written and `fsync`ed.
 - **Any handled failure after step 1** removes both files this run
-  created before exiting non-zero: a failed write, a failed `fsync` of
-  either file, or a failed public write. In those cases no half-written
+  created before exiting non-zero:
+  - an RNG error (§2);
+  - a failed `fchmod`;
+  - a failed write;
+  - a failed `fsync` of either file;
+  - a failed public write. In those cases no half-written
   pair, empty `0600` file or stray `.pub` is left to block the next run.
 - **An interrupted run is not a handled failure.** If `SIGKILL`, an OOM
   kill, a power loss or a default-handled `SIGINT` stops the process
@@ -261,8 +275,10 @@ The reverse direction is already covered: the gate's host key comes from
 - **No user keys, no certificates, no CA keys.** Those stay with
   `ssh-keygen` on the client side, where OpenSSH 10.6 is already a
   requirement.
-- **No key rotation command and no fingerprint subcommand.**
-  `ssh-keygen -lf` and `server.started` already show the fingerprint.
+- **No key rotation command and no fingerprint subcommand.** On the
+  hosts this RFC is for, `keygen` prints the fingerprint when it writes
+  the key and `server.started` logs it at every start. `ssh-keygen -lf`
+  shows it only where OpenSSH is 10.6 or later.
 
 ### 8. Subsidiary ADR
 
