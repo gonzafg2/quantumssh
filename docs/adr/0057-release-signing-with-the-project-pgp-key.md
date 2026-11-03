@@ -66,12 +66,16 @@ dedicated signing subkey is deferred to the key's next rotation.
   1. **Revoke where verifiers look.**
      - Append the hard revocation certificate (ADR-0005) to
        `keys/security.asc` in an SSH-signed commit on `main`.
-     - In the same commit, mark the key `revoked` in
-       `keys/release-keys.txt`.
+     - In the same commit, move the key to
+       `keys/retired/<fingerprint>.asc` with its revocation certificate,
+       and set its role to `revoked` in `keys/release-keys.txt`
+       (ADR-0054 §6). The successor takes `keys/security.asc` once step
+       4 authenticates it.
      - Update `SECURITY.md` and the tap's pinned fingerprint
        (ADR-0056 §4).
-     - Every documented verifier imports from `main`: ADR-0053's
-       `precheck`, `verify-download.sh` and the tap's CI. A revocation
+     - Every documented verifier imports the pin set from `main`:
+       ADR-0053's `precheck`, `scripts/verify-release.sh`,
+       `scripts/verify-download.sh` and the tap's CI. A revocation
        published only to a keyserver would leave them importing a clean
        key, and ADR-0054 §7 would see a clean `VALIDSIG`.
   2. **Fail every PGP check.**

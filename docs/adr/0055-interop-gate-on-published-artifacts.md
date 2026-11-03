@@ -62,7 +62,12 @@ from the OpenSSH portable release tarball, pinned by SHA-256.
 ### 2. systemd reference unit on the artifact
 
 `tests/systemd/run_reference_unit.sh` runs in a `release.yml` job on
-`ubuntu-24.04` with `QUANTUMSSH_BIN` set to the `x86_64` artifact. It
+`ubuntu-24.04` with `QUANTUMSSH_BIN` set to the `x86_64` artifact and
+`SRC` set to the extracted tarball, so the unit it installs is the
+`contrib/systemd/quantumssh.service` the tarball ships, not the
+checkout's copy. The script writes its own `config.toml`. The example
+config in the tarball uses `/etc/quantumssh` paths and is not exercised
+here. It
 does not run on `aarch64`: the unit and the notify protocol do not
 depend on the architecture, and interop covers the `aarch64` binary.
 
@@ -111,7 +116,7 @@ Until now no OpenSSH client run has exercised `aes256-gcm@openssh.com`.
 The server offers `chacha20-poly1305@openssh.com,aes256-gcm@openssh.com`
 (`kex.rs`, `ENCRYPTION_LIST`), the gate script sets no `Ciphers=`, and
 stock OpenSSH prefers ChaCha20. The only end-to-end AES-GCM test is
-in-process (`tests/accept.rs`).
+in-process (`crates/quantumssh-core/tests/accept.rs`).
 
 - **A new check.** The gate script gains `openssh_aes_gcm`: one exec
   with `-o Ciphers=aes256-gcm@openssh.com`. Its `-v` log must show

@@ -6,7 +6,7 @@
 - **Related:**
   - Implements [RFC-0017](../rfcs/0017-alpha-distribution.md) §3, §4 step 4, §5 and §11 (Accepted 2026-11-03).
   - The workflow that produces the artifacts is [ADR-0053](0053-release-workflow.md). The key that signs is [ADR-0057](0057-release-signing-with-the-project-pgp-key.md).
-  - Implementation: `docs/deployment.md`, `SECURITY.md` and the `immutable-releases` repository setting. Two files are new, created by the implementing PRs: `.github/workflows/release.yml` (ADR-0053) and `scripts/verify-release.sh`.
+  - Implementation: `docs/deployment.md`, `SECURITY.md` and the `immutable-releases` repository setting. New paths, created by the implementing PRs before `0.2.0`: `.github/workflows/release.yml` (ADR-0053), `scripts/verify-release.sh`, `scripts/verify-download.sh`, `keys/release-keys.txt` and the `keys/retired/` directory. Today `keys/` holds only `security.asc`.
 
 ## Context
 
@@ -68,7 +68,9 @@ immutable from `0.2.0` on.
 The script is run in the maintainer's terminal before signing. It
 stops at the first failure.
 
-1. The pinned signature check (§7) on the tag, through
+1. Import the pin set (§6) from `origin/main`, as `precheck` does,
+   never from the maintainer's local keyring alone. Then run the pinned
+   signature check (§7) on the tag, through
    `git verify-tag --raw vX.Y.Z`, then
    `git merge-base --is-ancestor <tag commit> origin/main`.
 2. `gh release download` of the draft's assets into an empty directory.
@@ -119,12 +121,22 @@ new tag (ADR-0053 §4).
 `docs/deployment.md` and `SECURITY.md` document, in this order:
 
 1. **Import the pin set.**
-   - The pin set is a `keys/` manifest, `keys/release-keys.txt`. It has
-     one line per key: fingerprint, role (`current` or `retired`), first
-     use and retirement date.
+   - The pin set is a `keys/` manifest, `keys/release-keys.txt`, a new
+     file the implementing PR creates. It has one line per key:
+     fingerprint, role, first use, and retirement or revocation date.
+   - The role is one of three:
+     - `current`: the one signing key;
+     - `retired`: rotated out, and verifiable within its window under §7;
+     - `revoked`: compromised, so every signature it made fails.
    - Each key is kept in its own file: `keys/security.asc` for the
-     current key and `keys/retired/<fingerprint>.asc` for each retired
-     one.
+     current key, and `keys/retired/<fingerprint>.asc` (a new directory)
+     for each retired or revoked one. A revoked key's file carries its
+     revocation certificate.
+   - `scripts/verify-download.sh` treats the roles as follows: `current`
+     goes through §7 as is, `retired` goes through §7's window and
+     asset-digest rule, and `revoked` always fails. Revoked keys stay in
+     the imported set so that GnuPG reports `REVKEYSIG`, and the check
+     never falls back to `NO_PUBKEY`.
    - Import every key the manifest lists, and check the current
      fingerprint offline, as `SECURITY.md` already shows. After a
      rotation, a user who imported only the current key would see an
