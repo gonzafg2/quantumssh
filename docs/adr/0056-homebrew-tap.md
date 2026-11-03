@@ -99,12 +99,20 @@ Each release is a manual pull request to the tap:
 
 On every pull request, on a macOS arm64 runner and on `ubuntu-24.04`:
 
-1. Fetch `keys/security.asc` from this repository's `main`, check its
-   fingerprint against the value pinned in the workflow, and import it.
-2. Download `SHA256SUMS` and `SHA256SUMS.asc` for the formula's version,
-   run the pinned signature check of ADR-0054 §7 (a bare `gpg --verify`
-   would pass for a revoked key), and fail unless each `sha256` in the
-   formula equals its line.
+1. Fetch the whole pin-set bundle from this repository's `main` and
+   import every key it lists (ADR-0054 §6):
+   - `keys/release-keys.txt`;
+   - `keys/security.asc`;
+   - `keys/retired/*.asc`.
+
+   Check the current fingerprint against the value pinned in the
+   workflow. ADR-0057's rotation and compromise steps update that pin.
+2. Run `scripts/verify-download.sh <version>`, fetched from the same
+   `main`, for the formula's version. It implements ADR-0054 §7 in full,
+   retired-key branch included, so older releases and rotations stay
+   checkable. A bare `gpg --verify` would pass for a revoked key. Then
+   fail unless each `sha256` in the formula equals its line in the
+   verified `SHA256SUMS`.
 3. `brew install ./Formula/quantumssh.rb` and `brew test quantumssh`.
 4. Run the service end to end:
    - `brew install openssh`, because neither runner's own OpenSSH can

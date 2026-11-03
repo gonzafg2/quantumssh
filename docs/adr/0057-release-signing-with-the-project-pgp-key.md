@@ -51,7 +51,9 @@ dedicated signing subkey is deferred to the key's next rotation.
   - The successor key is published in `keys/`, signed by the old key,
     and added to `keys/release-keys.txt` (ADR-0054 §6). The old key moves
     to `keys/retired/` with its window. `SECURITY.md` names both
-    fingerprints during the overlap.
+    fingerprints during the overlap. The `_release-key.quantumssh.org`
+    TXT record and the tap's pinned current fingerprint are updated in
+    the same change (ADR-0056 §4).
   - The rotation reconsiders a signing-only subkey, which would keep one
     fingerprint for users while separating purposes.
   - Public keys that signed published releases stay in `keys/`, each
@@ -60,49 +62,64 @@ dedicated signing subkey is deferred to the key's next rotation.
     that section's retired-key rule. The rule accepts `EXPKEYSIG` only
     for a release whose immutable record dates it inside the key's
     window.
-- **Compromise.**
-  - Publish the revocation certificate (ADR-0005). It is a hard
-    revocation, so every signature the key ever made counts as made by a
-    revoked key, whatever its date. This is intended, because an attacker
-    holding the key can backdate a signature.
-  - `gpg --verify` alone still exits 0 and prints "Good signature" for
-    such a signature. Every check in the release chain is ADR-0054 §7's
-    pinned signature check, which fails on `REVKEYSIG` and `KEYREVOKED`.
-    After the revocation reaches a user's keyring, every PGP check of
-    every release fails.
-  - **"Unaffected" is decided without the PGP key.** An attacker can
-    forge signature timestamps. A release counts as unaffected only when
-    evidence the key does not control shows it was published, assets
-    and all, before the earliest possible exposure. That evidence is:
-    - GitHub's immutable-release record (`gh release verify`, ADR-0054
-      §5);
-    - the build attestations with their transparency-log time
-      (`gh attestation verify`, ADR-0054 §4).
-  - **The successor is authenticated without the old key.** In a
-    compromise the old key's certification proves nothing, because the
-    attacker holds that key too. The successor's fingerprint is
-    published through channels the PGP key does not control:
-    - an SSH-signed commit on `main` (ADR-0006: the maintainer's SSH
-      key, independent of the PGP key) that adds the key to `keys/` and
-      the manifest;
-    - `quantumssh.org`, a different origin, which `SECURITY.md` already
-      names for cross-checks.
-
-    The advisory names that fingerprint, and users check it on both
-    channels before trusting anything the successor signs.
-  - **A security advisory, signed by the successor key:**
-    - gives the earliest possible exposure time;
-    - lists each unaffected release with the SHA-256 of its
-      `SHA256SUMS`;
-    - lists as untrusted every release **signed with the compromised
-      key** at or after that time;
-    - lists the successor-signed fix as trusted, by its digest.
-  - **After a compromise, users verify old releases differently.** They
-    use the attestations plus the successor-signed advisory instead of
-    `SHA256SUMS.asc`. ADR-0054 §6 says so.
-  - **The fix ships as a new release** signed with the successor key.
-    Immutable releases (ADR-0054 §5) cannot take a replacement
-    signature.
+- **Compromise.** These steps are done in order:
+  1. **Revoke where verifiers look.**
+     - Append the hard revocation certificate (ADR-0005) to
+       `keys/security.asc` in an SSH-signed commit on `main`.
+     - In the same commit, mark the key `revoked` in
+       `keys/release-keys.txt`.
+     - Update `SECURITY.md` and the tap's pinned fingerprint
+       (ADR-0056 §4).
+     - Every documented verifier imports from `main`: ADR-0053's
+       `precheck`, `verify-download.sh` and the tap's CI. A revocation
+       published only to a keyserver would leave them importing a clean
+       key, and ADR-0054 §7 would see a clean `VALIDSIG`.
+  2. **Fail every PGP check.**
+     - The revocation is hard, so every signature the key ever made
+       counts as made by a revoked key, whatever its date. This is
+       intended, because an attacker holding the key can backdate a
+       signature.
+     - `gpg --verify` alone still exits 0. ADR-0054 §7's pinned check
+       fails on `REVKEYSIG` and `KEYREVOKED`, so once users re-fetch and
+       re-import, every PGP check of every release fails.
+     - The advisory tells users to re-fetch and re-import.
+     - A negative test in `verify-download.sh`'s suite and in the tap's
+       CI keeps this true: a revoked `keys/security.asc` must make both
+       fail.
+  3. **Classify releases without the PGP key, and exhaustively.**
+     - Signature timestamps are signer-chosen, so they decide nothing.
+     - A release is unaffected only when evidence the key does not
+       control shows it was published before the earliest possible
+       exposure, assets and all. That evidence is the immutable-release
+       publication record (`gh release verify` and `verify-asset`,
+       ADR-0054 §5) and the build attestations' transparency-log time.
+     - The advisory lists every unaffected release by the SHA-256 of its
+       `SHA256SUMS`, and states that **every release not on that list is
+       untrusted**. There is no denylist keyed to a signature time.
+     - The successor-signed fix is on the list, by digest.
+  4. **Authenticate the successor without the old key.**
+     - In a compromise the old key's certification proves nothing. The
+       successor's fingerprint must reach users through channels the PGP
+       key does not control:
+       - an SSH-signed commit on `main` (ADR-0006) that adds the key to
+         `keys/` and the manifest. It is independent only of a PGP-key
+         compromise: ADR-0006's SSH key lives on the same maintainer
+         endpoint, and threat model §5.5.2.b includes that endpoint;
+       - a DNSSEC-signed TXT record, `_release-key.quantumssh.org`,
+         carrying the current release-key fingerprint. It is set
+         when this ADR is implemented and updated at every rotation.
+         Changing it needs the Cloudflare account, a separate credential
+         with its own second factor. Users check it with
+         `dig +dnssec TXT _release-key.quantumssh.org`.
+     - `quantumssh.org` itself is **not** a channel. It is a 301 to the
+       GitHub repository (`docs/infrastructure.md` §"Web endpoints").
+     - **Residual risk.** A compromise of the maintainer's endpoint
+       together with the Cloudflare account defeats both channels. With
+       one maintainer there is no independent witness. That residual
+       belongs under threat model §7 (maintainer compromise).
+  5. **Ship the fix as a new release** signed with the successor key.
+     Immutable releases (ADR-0054 §5) cannot take a replacement
+     signature.
 
 ## Consequences
 

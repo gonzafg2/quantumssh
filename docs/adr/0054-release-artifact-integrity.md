@@ -72,11 +72,16 @@ stops at the first failure.
    `git verify-tag --raw vX.Y.Z`, then
    `git merge-base --is-ancestor <tag commit> origin/main`.
 2. `gh release download` of the draft's assets into an empty directory.
-   The draft must hold exactly the assets of §1, the three tarballs, the
-   SBOM and `SHA256SUMS`, and nothing else. A missing or extra asset,
-   such as an unsigned `install.sh`, stops the release. Once published,
-   an extra asset would ship inside the immutable release with no line
-   in `SHA256SUMS`.
+   Before signing, the draft must hold **exactly five** assets: the three
+   tarballs, the SBOM and the unsigned `SHA256SUMS`, and nothing else. A
+   missing or extra asset, such as an unsigned `install.sh`, stops the
+   release. Once published, an extra asset would ship inside the
+   immutable release with no line in `SHA256SUMS`.
+
+   After `SHA256SUMS.asc` is uploaded, and immediately before
+   publishing, the script checks again for exactly §1's **six** assets.
+   Both checks compare for equality. Checking only that the expected
+   assets are present would let an extra one through.
 3. For each tarball and the SBOM:
    - run `gh attestation verify` with `-R gonzafg2/quantumssh`,
      `--signer-workflow gonzafg2/quantumssh/.github/workflows/release.yml`,

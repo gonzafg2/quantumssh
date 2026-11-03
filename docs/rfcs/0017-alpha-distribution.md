@@ -6,6 +6,16 @@
 - **Roadmap issue:** [#248](https://github.com/gonzafg2/quantumssh/issues/248) (Phase 3)
 - **Implementation PR:** TBD
 
+> **Post-acceptance errata** (per [ADR-0052](../adr/0052-permit-annotated-errata-in-rfcs.md)):
+>
+> - **2026-11-03** ([PR #250](https://github.com/gonzafg2/quantumssh/pull/250)): the bare `gpg --verify`
+>   in the Linux install recipe, in §4 step 4 and in §7's tap CI fails
+>   open. GnuPG exits 0 and prints "Good signature" for a revoked or
+>   expired key. Every PGP check is instead [ADR-0054](../adr/0054-release-artifact-integrity.md)
+>   §7's pinned signature check, which users run through
+>   `scripts/verify-download.sh`. The commands below are kept as
+>   accepted. Read each `gpg --verify` as that check.
+
 ## Summary
 
 `0.1.0` shipped as source only: to run QuantumSSH you build it with
