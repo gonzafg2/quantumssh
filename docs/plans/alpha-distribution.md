@@ -3,7 +3,7 @@
   Non-authoritative design note (ADR-0027). It sequences the work that
   RFC-0017 (Draft) proposes and records the evidence gathered before the
   RFC was written. It decides nothing: the decisions are RFC-0017 and its
-  subsidiary ADRs 0053–0057, once accepted. Until then this note
+  subsidiary ADRs 0053–0057, once accepted. Host-key generation is RFC-0018's. Until then this note
   describes a proposal.
 -->
 # Alpha distribution — milestones and evidence (non-normative)
@@ -18,14 +18,14 @@ work and gives each milestone a check that says when it is done.
 |---|---|---|
 | M1 | RFC-0017 accepted | The PR merges after its comment period, with every substantive objection answered |
 | M2 | ADR-0053 to ADR-0057 | Merged as Proposed, each citing RFC-0017 |
-| M3 | `quantumssh keygen` (ADR-0057) | In the interop container, `ssh-keygen -y -f` 10.6 reads a key `keygen` wrote and prints the same public key, and the server loads a key `ssh-keygen` 10.6 wrote. Unit tests cover the refusal cases: an existing file, a symlink, an unsafe parent directory |
-| M4 | Release workflow (ADR-0053, ADR-0054) | A test tag on a branch produces a draft release with the three tarballs, `SHA256SUMS`, the SBOM and an attestation per asset, and `gh attestation verify` passes on each with the signer-workflow, source-ref and hosted-runner pins (RFC-0017 §3) |
-| M5 | Gates on the artifacts (ADR-0055) | Interop runs green against the draft's binaries on `x86_64` and `aarch64` Linux and on macOS arm64; the systemd reference-unit test runs green against the `x86_64` tarball |
+| M3 | `quantumssh keygen`, if [RFC-0018](https://github.com/gonzafg2/quantumssh/pull/249) is accepted (independent of RFC-0017) | In the interop container, `ssh-keygen -y -f` 10.6 reads a key `keygen` wrote and prints the same public key, and the server loads a key `ssh-keygen` 10.6 wrote. Unit tests cover the refusal cases: an existing file, a symlink, an unsafe parent directory |
+| M4 | Release workflow (ADR-0053, ADR-0054) | The `v*` tag ruleset is in place. The static-link check fails a deliberately dynamic build. A test tag produces a draft release with the three tarballs, `SHA256SUMS`, the SBOM and an attestation per asset, and `gh attestation verify` passes on each with the signer-workflow, source-ref and hosted-runner pins (RFC-0017 §3) |
+| M5 | Gates on the artifacts (ADR-0055) | Interop runs green against the draft's binaries on `x86_64` and `aarch64` Linux and on macOS arm64; the systemd reference-unit test runs green against the `x86_64` tarball; each gate job records the digests it ran |
 | M6 | Homebrew tap (ADR-0056) | `brew install`, `brew test` and `brew services start` are green in the tap's CI on macOS arm64 and on Linux |
-| M7 | Documentation | `docs/deployment.md` downloads and verifies a release and uses `keygen`; a WSL2 section; the client-floor table; `SECURITY.md`'s recipe covers the assets; the README roadmap and threat model §5.5.2 and §6.4 amended (RFC-0017 §10) |
-| M8 | `0.2.0` | Signed tag; a locally recomputed `SHA256SUMS` byte-identical to CI's, and its `SHA256SUMS.asc` on the draft; immutable release; `gh release verify v0.2.0` passes; tap updated; Zenodo record created; the WSL2 guide checked by hand on Windows 11 |
+| M7 | Documentation | `docs/deployment.md` downloads and verifies a release and points step 3 at the client-floor table (or `keygen` under RFC-0018); the Homebrew path documented as single-user evaluation; a WSL2 section; the client-floor table; `SECURITY.md`'s recipe covers the assets; the README roadmap and threat model §5.5.2 and §6.4 amended (RFC-0017 §10) |
+| M8 | `0.2.0` | Signed tag; `git tag -v` and ancestry checked; a locally recomputed `SHA256SUMS` byte-identical to CI's and equal to the gates' recorded digests, and its `SHA256SUMS.asc` on the draft; immutable release; `gh release verify v0.2.0` passes; tap updated; Zenodo record created; the WSL2 guide checked by hand on Windows 11 |
 
-M3 does not depend on M4 to M6, so the two lines can run in parallel.
+M3 belongs to RFC-0018 and does not depend on M4 to M6, so the two lines can run in parallel.
 
 ## Evidence gathered on 2026-11-03
 
