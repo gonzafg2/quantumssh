@@ -11,8 +11,8 @@
 `0.1.0` shipped as source only: to run QuantumSSH you build it with
 Cargo. From `0.2.0` on, each release also ships:
 
-- **Static binaries:** Linux binaries linked against musl for `x86_64` and
-  `aarch64`, and a macOS binary for `arm64`.
+- **Prebuilt binaries:** static Linux binaries linked against musl for
+  `x86_64` and `aarch64`, and a macOS binary for `arm64`.
 - **One binary per target, everywhere:** every target is built from the
   signed tag on a native GitHub runner. Each artifact carries a GitHub
   build-provenance attestation, plus a CycloneDX SBOM and a `SHA256SUMS`
@@ -81,7 +81,9 @@ OpenSSH 10.6 as the floor. In practice:
   `ssh-mldsa44-ed25519@openssh.com` name, so the handshake fails with
   "no matching host key type found".
 - Windows 11 25H2 ships `OpenSSH_for_Windows_9.5p2`, which offers no
-  post-quantum key exchange at all.
+  post-quantum key exchange at all. Win32-OpenSSH added
+  `mlkem768x25519-sha256` and `sntrup761x25519-sha512` only in
+  10.0.0.0p2-Preview (2025-10-27).
 - The newest Win32-OpenSSH, 10.4.0.0p1-Preview (2026-10-20), predates
   10.6.
 
@@ -117,7 +119,9 @@ The install guide lists where 10.6 comes from:
 gh release download v0.2.0 -R gonzafg2/quantumssh -p 'quantumssh-0.2.0-x86_64-unknown-linux-musl.tar.gz' -p 'SHA256SUMS*'
 gpg --verify SHA256SUMS.asc SHA256SUMS
 sha256sum --ignore-missing -c SHA256SUMS
-gh attestation verify quantumssh-0.2.0-x86_64-unknown-linux-musl.tar.gz -R gonzafg2/quantumssh
+gh attestation verify quantumssh-0.2.0-x86_64-unknown-linux-musl.tar.gz -R gonzafg2/quantumssh \
+  --signer-workflow gonzafg2/quantumssh/.github/workflows/release.yml \
+  --source-ref refs/tags/v0.2.0 --deny-self-hosted-runners
 tar -xzf quantumssh-0.2.0-x86_64-unknown-linux-musl.tar.gz
 sudo install -m 0755 quantumssh-0.2.0-x86_64-unknown-linux-musl/quantumssh /usr/local/bin/quantumssh
 sudo quantumssh keygen /etc/quantumssh/ssh_host_mldsa44_ed25519_key
@@ -205,7 +209,18 @@ Per release:
   dependency graph.
 
 Every tarball and the SBOM also carry a GitHub build-provenance
-attestation, stored by GitHub and checked with `gh attestation verify`.
+attestation, stored by GitHub. Verifying one means pinning everything
+the attestation records:
+
+- the signer workflow, `.github/workflows/release.yml`, the release
+  workflow this RFC adds (§4);
+- the source ref, `refs/tags/vX.Y.Z`;
+- a GitHub-hosted runner (`--deny-self-hosted-runners`).
+
+A check with only `-R gonzafg2/quantumssh` would accept an attestation
+from any workflow in the repository on any ref, including a branch or
+the test tags used to rehearse a release. That check is not the one
+documented.
 
 ### 4. Release procedure
 
@@ -213,7 +228,7 @@ From `0.2.0` on, a release follows these steps in order:
 
 1. **Tag.** The maintainer signs and pushes the annotated tag
    `vX.Y.Z` with the project PGP key, as for `v0.1.0`.
-2. **Build.** A workflow triggered by the tag builds §2's targets,
+2. **Build.** `.github/workflows/release.yml`, triggered by the tag, builds §2's targets,
    assembles §3's artifacts, attests them and creates a **draft**
    release carrying them.
 3. **Gates on the bytes.** The interop gate and the systemd reference-unit
@@ -221,9 +236,17 @@ From `0.2.0` on, a release follows these steps in order:
    those binaries. An interop job on the macOS runner runs the macOS
    tarball. A red gate stops the release.
 4. **Verify and sign.** In a local terminal, the maintainer:
-   - runs `gh attestation verify` on every asset;
-   - signs `SHA256SUMS` with the project PGP key;
-   - uploads `SHA256SUMS.asc` to the draft.
+   - downloads the draft's assets;
+   - runs `gh attestation verify` on every tarball and the SBOM, with
+     the pins of §3;
+   - **recomputes** the checksums of those verified files into a local
+     `SHA256SUMS`, and stops the release unless it is byte-identical to
+     the copy CI uploaded;
+   - signs the local `SHA256SUMS` with the project PGP key and uploads
+     `SHA256SUMS.asc` to the draft.
+
+   Signing the CI copy without recomputing it would let anyone able to
+   edit the draft swap one line of `SHA256SUMS` and get it signed.
 5. **Publish.** The draft is published. The repository's
    immutable-releases setting is on, so the tag and the assets are
    locked from then on and GitHub attaches a release attestation
@@ -320,8 +343,9 @@ quantumssh keygen <PATH>
   - the server loads a key `ssh-keygen` wrote, as it does today.
 
 This adds `keygen` to the binary's command line, which has only flags
-today (`--help`, `--version`, `--config` and the rest). ADR-0057 settles
-how the parser tells the subcommand from the flags.
+today (`--help`, `--version`, `--config` and the rest). The planned
+`keygen` ADR (§12) will settle how the parser tells the subcommand from
+the flags.
 
 ### 9. Windows
 
@@ -363,7 +387,8 @@ The new §6.4 control reads, in substance:
 >   attestation binds each asset to the workflow file, the commit and the
 >   tag that produced it;
 > - an asset swapped between CI and publication (`SHA256SUMS` signed by
->   the maintainer, who first checks the attestations).
+>   the maintainer, who first checks the attestations and recomputes the
+>   checksums from the verified files, §4 step 4).
 >
 > *Does **not** defend against:*
 > - a compromise of the release workflow itself or of GitHub Actions;
@@ -374,9 +399,14 @@ The new §6.4 control reads, in substance:
 > compare it.
 
 Attestations give SLSA Build Level 2. Level 3 needs the build in a
-reusable workflow, and that is left to ADR-0053.
+reusable workflow, and the planned release-workflow ADR (§12) will
+decide whether to move there.
 
-### 12. Subsidiary ADRs
+### 12. Subsidiary ADRs (planned)
+
+None of these ADRs exists yet. They are written after this RFC is
+accepted. The numbers are the next free ones today and may shift, since
+numbering follows merge order.
 
 | ADR | Decision |
 |---|---|
@@ -499,21 +529,23 @@ ships. Official distribution inclusion stays Phase 4.
 
 - **aarch64 interop image.** The interop container is pinned by digest
   (ADR-0048). Whether that digest is a multi-architecture index usable
-  on `ubuntu-24.04-arm` decides whether ADR-0055 needs a second pin.
+  on `ubuntu-24.04-arm` decides whether the planned interop ADR (§12) needs a second pin.
 - **Pinning the macOS client.** The macOS interop job uses Homebrew's
   `openssh`, which moves with Homebrew. ADR-0020 pins its client. How
-  ADR-0055 pins or records the macOS client version is open.
+  the planned interop ADR (§12) pins or records the macOS client version
+  is open.
 - **musl linking on the runners.** Rust's self-contained musl linking
   should not need `musl-gcc`, because the workspace has no C
   dependencies. A dry run on a test tag must confirm it.
 - **SBOM tool.** `cargo-cyclonedx` writes a separate file;
-  `cargo auditable` embeds the dependency list in the binary. ADR-0054
-  picks one or both.
+  `cargo auditable` embeds the dependency list in the binary. The planned
+  integrity ADR (§12) will pick one or both.
 - **Updating the tap.** By a manual PR per release, or by a workflow in
-  this repository with a token scoped to the tap. ADR-0056.
+  this repository with a token scoped to the tap. For the planned tap
+  ADR (§12).
 - **The `keygen` command line.** Whether it is `keygen <PATH>` or
   `keygen --file <PATH>`, and how the flag parser handles subcommands.
-  ADR-0057.
+  For the planned `keygen` ADR (§12).
 - **A native Windows client.** MSYS2 packages OpenSSH 10.6p1. Whether
   that build reaches the server from Windows has not been tested.
 - **Version.** `keygen` is a new feature, so the first release under
@@ -530,5 +562,5 @@ ships. Official distribution inclusion stays Phase 4.
   Cloudsmith's open-source tier.
 - Reproducible builds and an independent rebuild check (Phase 3).
 - homebrew-core once the project calls a version stable.
-- Tier 1 for macOS, once ADR-0055's job is required.
+- Tier 1 for macOS, once the planned interop ADR's macOS job is required.
 - mimalloc if musl's allocator shows up in measurements.

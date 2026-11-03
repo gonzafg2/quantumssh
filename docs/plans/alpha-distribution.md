@@ -19,11 +19,11 @@ work and gives each milestone a check that says when it is done.
 | M1 | RFC-0017 accepted | The PR merges after its comment period, with every substantive objection answered |
 | M2 | ADR-0053 to ADR-0057 | Merged as Proposed, each citing RFC-0017 |
 | M3 | `quantumssh keygen` (ADR-0057) | In the interop container, `ssh-keygen -y -f` 10.6 reads a key `keygen` wrote and prints the same public key, and the server loads a key `ssh-keygen` 10.6 wrote. Unit tests cover the refusal cases: an existing file, a symlink, an unsafe parent directory |
-| M4 | Release workflow (ADR-0053, ADR-0054) | A test tag on a branch produces a draft release with the three tarballs, `SHA256SUMS`, the SBOM and an attestation per asset, and `gh attestation verify` passes on each |
+| M4 | Release workflow (ADR-0053, ADR-0054) | A test tag on a branch produces a draft release with the three tarballs, `SHA256SUMS`, the SBOM and an attestation per asset, and `gh attestation verify` passes on each with the signer-workflow, source-ref and hosted-runner pins (RFC-0017 §3) |
 | M5 | Gates on the artifacts (ADR-0055) | Interop runs green against the draft's binaries on `x86_64` and `aarch64` Linux and on macOS arm64; the systemd reference-unit test runs green against the `x86_64` tarball |
 | M6 | Homebrew tap (ADR-0056) | `brew install`, `brew test` and `brew services start` are green in the tap's CI on macOS arm64 and on Linux |
 | M7 | Documentation | `docs/deployment.md` downloads and verifies a release and uses `keygen`; a WSL2 section; the client-floor table; `SECURITY.md`'s recipe covers the assets; the README roadmap and threat model §5.5.2 and §6.4 amended (RFC-0017 §10) |
-| M8 | `0.2.0` | Signed tag; `SHA256SUMS.asc` on the draft; immutable release; `gh release verify v0.2.0` passes; tap updated; Zenodo record created; the WSL2 guide checked by hand on Windows 11 |
+| M8 | `0.2.0` | Signed tag; a locally recomputed `SHA256SUMS` byte-identical to CI's, and its `SHA256SUMS.asc` on the draft; immutable release; `gh release verify v0.2.0` passes; tap updated; Zenodo record created; the WSL2 guide checked by hand on Windows 11 |
 
 M3 does not depend on M4 to M6, so the two lines can run in parallel.
 
