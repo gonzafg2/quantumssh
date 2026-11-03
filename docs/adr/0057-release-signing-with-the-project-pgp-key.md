@@ -57,10 +57,14 @@ dedicated signing subkey is deferred to the key's next rotation.
     releases remain verifiable.
 - **Compromise.**
   - Publish the revocation certificate (ADR-0005). It is a hard
-    revocation: after it is imported, `gpg --verify` reports every
-    signature the key ever made as made by a revoked key, whatever its
-    date. This is intended, because an attacker holding the key can
-    backdate a signature.
+    revocation, so every signature the key ever made counts as made by a
+    revoked key, whatever its date. This is intended, because an attacker
+    holding the key can backdate a signature.
+  - `gpg --verify` alone still exits 0 and prints "Good signature" for
+    such a signature. Every check in the release chain is ADR-0054 §7's
+    pinned signature check, which fails on `REVKEYSIG` and `KEYREVOKED`.
+    After the revocation reaches a user's keyring, every PGP check of
+    every release fails.
   - **"Unaffected" is decided without the PGP key.** An attacker can
     forge signature timestamps. A release counts as unaffected only when
     evidence the key does not control shows it was published, assets

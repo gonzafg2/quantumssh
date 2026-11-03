@@ -7,7 +7,7 @@
   - Implements [RFC-0017](../rfcs/0017-alpha-distribution.md) §1 and §4 step 3 (Accepted 2026-11-03), and resolves its unresolved questions "aarch64 interop image" and "Pinning the macOS client".
   - Extends [ADR-0020](0020-phase-1-ci-openssh-interop-gate.md), [ADR-0034](0034-openssh-interop-client-pinned-to-image-build-snapshot.md) and [ADR-0048](0048-openssh-interop-client-on-debian-forky.md) without changing the PR-time gate, and reuses [ADR-0043](0043-systemd-notify-service-and-reference-unit.md)'s systemd test.
   - Runs inside [ADR-0053](0053-release-workflow.md)'s workflow.
-  - Implementation: `.github/workflows/interop.yml` (made callable), `release.yml` and `tests/interop/run_openssh_client.sh`.
+  - Implementation: `.github/workflows/interop.yml` (made callable), `tests/interop/run_openssh_client.sh` (one new check, §5) and the new `.github/workflows/release.yml` (ADR-0053), created by the implementing PR.
 
 ## Context
 
@@ -71,8 +71,8 @@ depend on the architecture, and interop covers the `aarch64` binary.
 - **The build is `./configure --without-openssl --without-zlib && make
   ssh ssh-keygen`.** ML-KEM, ML-DSA, Ed25519 and
   `chacha20-poly1305@openssh.com` are internal implementations in 10.6.
-  `aes256-gcm@openssh.com` is not built, so this job exercises the
-  ChaCha20 suite.
+  `aes256-gcm@openssh.com` is not built, so this job skips §5's AES-GCM
+  check and its output says so.
 - **The gate script runs unchanged.** It gets the built client first on
   `PATH` and the macOS artifact in `QUANTUMSSH_BIN`. Any part of the
   script that is not portable to macOS is fixed in the script, not
@@ -91,6 +91,23 @@ and uploads it as the artifact `gate-digests-<job>`. ADR-0053's `attest`
 job and ADR-0054's maintainer script compare those records with the
 tarballs.
 
+### 5. AES-GCM against a real client
+
+Until now no OpenSSH client run has exercised `aes256-gcm@openssh.com`.
+The server offers `chacha20-poly1305@openssh.com,aes256-gcm@openssh.com`
+(`kex.rs`, `ENCRYPTION_LIST`), the gate script sets no `Ciphers=`, and
+stock OpenSSH prefers ChaCha20. The only end-to-end AES-GCM test is
+in-process (`tests/accept.rs`).
+
+- **A new check.** The gate script gains `openssh_aes_gcm`: one exec
+  with `-o Ciphers=aes256-gcm@openssh.com`. Its `-v` log must show
+  `cipher: aes256-gcm@openssh.com`.
+- **Where it runs.** It is mandatory wherever the client offers the
+  cipher (`ssh -Q cipher`): the PR-time gate and both Linux release
+  legs.
+- **The macOS leg.** It skips the check and logs that it skipped it,
+  because its client is built without OpenSSL.
+
 ## Consequences
 
 ### Positive
@@ -104,8 +121,8 @@ tarballs.
 ### Negative
 
 - Building OpenSSH on every macOS release run adds a few minutes.
-- `aes256-gcm@openssh.com` gets no macOS coverage. It keeps its Linux
-  coverage.
+- `aes256-gcm@openssh.com` gets no real-client coverage on macOS. On
+  Linux it gains that coverage through §5.
 
 ### Neutral
 

@@ -101,8 +101,9 @@ On every pull request, on a macOS arm64 runner and on `ubuntu-24.04`:
 1. Fetch `keys/security.asc` from this repository's `main`, check its
    fingerprint against the value pinned in the workflow, and import it.
 2. Download `SHA256SUMS` and `SHA256SUMS.asc` for the formula's version,
-   run `gpg --verify`, and fail unless each `sha256` in the formula
-   equals its line.
+   run the pinned signature check of ADR-0054 §7 (a bare `gpg --verify`
+   would pass for a revoked key), and fail unless each `sha256` in the
+   formula equals its line.
 3. `brew install ./Formula/quantumssh.rb` and `brew test quantumssh`.
 4. Generate a host key with the Homebrew `ssh-keygen`, start the
    service, and wait until `127.0.0.1:2222` accepts a connection.

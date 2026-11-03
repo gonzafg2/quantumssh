@@ -51,8 +51,9 @@ exact bytes being released.
 
 | Job | Permissions | Does |
 |---|---|---|
-| `precheck` | `contents: read` | Checks out with `fetch-depth: 0` and `persist-credentials: false`. It fails unless the tagged commit is an ancestor of `origin/main`. For a `v*` tag, it also fails unless the tag is annotated and `git tag -v` verifies it against the `keys/security.asc` read from `origin/main`, never from the tag's own tree. |
-| `build` (matrix of three) | `contents: read` | `rustup target add <t>`, then `cargo build --release --locked -p quantumssh --target <t>`. Runs the static-link check (§3), assembles the tarball (RFC-0017 §3), and generates the SBOM on the `x86_64` leg only (ADR-0054). Uploads them as workflow artifacts. |
+| `precheck` | `contents: read` | Checks out with `fetch-depth: 0` and `persist-credentials: false`. It fails unless the tagged commit is an ancestor of `origin/main`. For a `v*` tag, it also fails unless the tag is annotated and the pinned signature check of ADR-0054 §7 (`git verify-tag --raw`) passes against the `keys/security.asc` read from `origin/main`, never from the tag's own tree. |
+| `build` (matrix of three) | `contents: read` | `rustup target add <t>`, then `cargo build --release --locked -p quantumssh --target <t>`. Runs the static-link check (§3), assembles the tarball (RFC-0017 §3) and uploads it as a workflow artifact. It installs no tool beyond the pinned toolchain. |
+| `sbom` | `contents: read` | Its own runner. Installs the pinned `cargo-cyclonedx` and writes the SBOM (ADR-0054 §2). It never sees a tarball, so a compromised tool cannot touch the release binaries. |
 | gates (ADR-0055) | `contents: read` | Interop on the three binaries, and the systemd reference unit on `x86_64`. Each gate records the SHA-256 of the tarball it ran. |
 | `attest` | `contents: read`, `id-token: write`, `attestations: write` | Downloads the build artifacts and the gates' digest records. It fails unless every tarball's digest equals what each gate recorded. Then it attests the tarballs and the SBOM (ADR-0054). It runs no project code and installs no tool. |
 | `publish` | `contents: write` | Writes `SHA256SUMS` (ADR-0054) and creates the **draft** release with `gh release create --draft --verify-tag`. It uploads the assets and does nothing else. |
