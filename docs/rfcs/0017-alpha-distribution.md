@@ -3,7 +3,7 @@
 - **Status:** Draft
 - **Authors:** Gonzalo Fleming Garrido
 - **Created:** 2026-11-03
-- **Roadmap issue:** TBD. No Phase-3 roadmap issue exists yet; see Unresolved questions.
+- **Roadmap issue:** [#248](https://github.com/gonzafg2/quantumssh/issues/248) (Phase 3)
 - **Implementation PR:** TBD
 
 ## Summary
@@ -497,9 +497,6 @@ ships. Official distribution inclusion stays Phase 4.
 
 ## Unresolved questions
 
-- **Roadmap issue.** RFCs reference their Phase issue, and Phase 3 has
-  none; #43 tracks only privilege separation. Should a "Phase 3 / Hito 3"
-  issue be opened, and this RFC point at it?
 - **aarch64 interop image.** The interop container is pinned by digest
   (ADR-0048). Whether that digest is a multi-architecture index usable
   on `ubuntu-24.04-arm` decides whether ADR-0055 needs a second pin.
