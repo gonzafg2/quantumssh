@@ -68,15 +68,22 @@ depend on the architecture, and interop covers the `aarch64` binary.
   `a9dc9565dffe8640f64d863cd29a32bc4a3dbdec0566a7fc44c5d6ee767d5f39`, the
   tarball whose detached signature verified against the OpenSSH release
   key on 2026-11-03.
-- **The build is `./configure --without-openssl --without-zlib && make
-  ssh ssh-keygen`.** ML-KEM, ML-DSA, Ed25519 and
-  `chacha20-poly1305@openssh.com` are internal implementations in 10.6.
+- **The build installs the whole client set into one prefix.**
+  `./configure --prefix="$P" --without-openssl --without-zlib && make &&
+  make install-nosysconf` installs `ssh`, `ssh-keygen`, `sftp` and `scp`
+  under `$P/bin`. The gate script uses all four, and `scp` and `sftp`
+  run the `ssh` of their compiled-in prefix, so a partial build would
+  silently fall back to macOS's 10.5p1 client.
+- **What the internal implementations cover.** ML-KEM, ML-DSA, Ed25519
+  and `chacha20-poly1305@openssh.com` are internal in 10.6.
   `aes256-gcm@openssh.com` is not built, so this job skips §5's AES-GCM
   check and its output says so.
-- **The gate script runs unchanged.** It gets the built client first on
-  `PATH` and the macOS artifact in `QUANTUMSSH_BIN`. Any part of the
-  script that is not portable to macOS is fixed in the script, not
-  forked.
+- **No silent fallback.** Before the gate runs, the job asserts that
+  `command -v ssh ssh-keygen sftp scp` all resolve under `$P/bin`, and
+  that `"$P/bin/ssh" -V` prints the pinned version.
+- **The gate script runs unchanged.** It gets `$P/bin` first on `PATH`
+  and the macOS artifact in `QUANTUMSSH_BIN`. Any part of the script that
+  is not portable to macOS is fixed in the script, not forked.
 - **Moving the client version** is a reviewed change to the pinned
   version and hash, as moving the Debian snapshot is under ADR-0034.
 

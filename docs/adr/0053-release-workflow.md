@@ -44,6 +44,10 @@ exact bytes being released.
 - No cache action runs in this workflow: no `Swatinem/rust-cache` and
   no `actions/cache`. A cache written by a pull-request run could
   otherwise feed the release build.
+- Every `actions/checkout` in this workflow sets
+  `persist-credentials: false`, in every job and not only in `precheck`.
+  A build script or an executed binary must find no token in
+  `.git/config` (RFC-0017 §4 step 2).
 - Every action is pinned by commit SHA, as in the rest of
   `.github/workflows/`. The toolchain comes from `rust-toolchain.toml`.
 
@@ -63,9 +67,14 @@ exact bytes being released.
   - `ubuntu-24.04-arm` for `aarch64` Linux;
   - a versioned arm64 macOS label for `aarch64-apple-darwin`.
 
-  The build never uses `*-latest`, so the runner image cannot change
-  under a release. The label is the newest one available when the
-  workflow is written.
+  Avoiding `*-latest` prevents an unannounced jump to a new OS major. It
+  does not pin the image: GitHub updates a versioned hosted image in
+  place, including its linker, system libraries and macOS SDK. Each build
+  job therefore records `ImageOS` and `ImageVersion` from the runner
+  environment, along with `rustc -vV`, in a `build-env-<target>.txt`
+  workflow artifact, and the release notes state those values. Nothing
+  here claims a reproducible build; that is Phase-3 work. The label is
+  the newest one available when the workflow is written.
 - **No target is cross-compiled.**
 - **`needs:` encodes the order.** A failure anywhere stops the jobs
   after it.

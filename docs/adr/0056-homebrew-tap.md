@@ -40,6 +40,7 @@ reviewed pull request per release.
   - changes only through a pull request;
   - no force push and no deletion;
   - `enforce_admins: true`;
+  - resolved conversations before merge;
   - required status checks: §4's jobs on both runners. The checksum
     verification of step 2 is one of them, so a formula whose `sha256`
     does not match the signed `SHA256SUMS` cannot merge.
@@ -105,8 +106,17 @@ On every pull request, on a macOS arm64 runner and on `ubuntu-24.04`:
    would pass for a revoked key), and fail unless each `sha256` in the
    formula equals its line.
 3. `brew install ./Formula/quantumssh.rb` and `brew test quantumssh`.
-4. Generate a host key with the Homebrew `ssh-keygen`, start the
-   service, and wait until `127.0.0.1:2222` accepts a connection.
+4. Run the service end to end:
+   - `brew install openssh`, because neither runner's own OpenSSH can
+     create the composite key;
+   - generate the host key with
+     `"$(brew --prefix openssh)/bin/ssh-keygen" -t mldsa44-ed25519`;
+   - generate an Ed25519 client key and install its `.pub` as
+     `authorized_keys`; the server refuses to start without one;
+   - start the service;
+   - wait until `127.0.0.1:2222` accepts a connection;
+   - run `"$(brew --prefix openssh)/bin/ssh" … true`, which must exit
+     0.
 
 ## Consequences
 
