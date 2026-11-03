@@ -56,13 +56,31 @@ dedicated signing subkey is deferred to the key's next rotation.
   - Public keys that signed published releases stay in `keys/`, so old
     releases remain verifiable.
 - **Compromise.**
-  - Publish the revocation certificate (ADR-0005) and a security
-    advisory. The advisory gives the earliest time at which the key may
-    have been exposed.
-  - Releases whose signature is older than that time are listed as
-    unaffected. Newer ones are listed as untrusted.
-  - The fix ships as a new release signed with the new key. Immutable
-    releases (ADR-0054 §5) cannot take a replacement signature.
+  - Publish the revocation certificate (ADR-0005). It is a hard
+    revocation: after it is imported, `gpg --verify` reports every
+    signature the key ever made as made by a revoked key, whatever its
+    date. This is intended, because an attacker holding the key can
+    backdate a signature.
+  - **"Unaffected" is decided without the PGP key.** An attacker can
+    forge signature timestamps. A release counts as unaffected only when
+    evidence the key does not control shows it was published, assets
+    and all, before the earliest possible exposure. That evidence is:
+    - GitHub's immutable-release record (`gh release verify`, ADR-0054
+      §5);
+    - the build attestations with their transparency-log time
+      (`gh attestation verify`, ADR-0054 §4).
+  - **A security advisory, signed by the successor key** (published
+    under `keys/` as under rotation):
+    - gives the earliest possible exposure time;
+    - lists each unaffected release with the SHA-256 of its
+      `SHA256SUMS`;
+    - lists every later release as untrusted.
+  - **After a compromise, users verify old releases differently.** They
+    use the attestations plus the successor-signed advisory instead of
+    `SHA256SUMS.asc`. ADR-0054 §6 says so.
+  - **The fix ships as a new release** signed with the successor key.
+    Immutable releases (ADR-0054 §5) cannot take a replacement
+    signature.
 
 ## Consequences
 

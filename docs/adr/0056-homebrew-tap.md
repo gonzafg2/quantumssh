@@ -33,10 +33,16 @@ reviewed pull request per release.
 ### 1. Repository
 
 - **Repository:** `gonzafg2/homebrew-quantumssh`, Apache-2.0.
-- **Branch protection on `main`** is the same as this repository's:
+- **Branch protection on `main`** matches this repository's
+  (`docs/infrastructure.md` §"Branch protection on `main`"):
   - signed commits;
-  - changes through a pull request;
-  - no force push.
+  - linear history;
+  - changes only through a pull request;
+  - no force push and no deletion;
+  - `enforce_admins: true`;
+  - required status checks: §4's jobs on both runners. The checksum
+    verification of step 2 is one of them, so a formula whose `sha256`
+    does not match the signed `SHA256SUMS` cannot merge.
 - **Contents:** `Formula/quantumssh.rb`, a README stating the
   evaluation-path scope, and CI.
 
@@ -114,8 +120,10 @@ On every pull request, on a macOS arm64 runner and on `ubuntu-24.04`:
 ### Negative
 
 - It is a second repository to protect, and a compromised formula would
-  redirect users. RFC-0017 §11 lists this as a non-defence. Branch
-  protection and the CI check of step 2 narrow it.
+  redirect users. RFC-0017 §11 lists this as a non-defence. It is
+  narrowed by branch protection, which includes admins, and by the
+  required checksum check of §4 step 2. Neither defends against a
+  compromise of the maintainer's own GitHub account.
 - Each release needs a manual tap pull request.
 - The evaluation path is weaker than the Linux deployment, and some
   users will run it as a real server anyway.

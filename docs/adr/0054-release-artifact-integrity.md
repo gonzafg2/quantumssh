@@ -113,6 +113,15 @@ Step 4 is recommended, and steps 1 to 3 are the minimum. A user who
 skips the PGP signature and checks only attestations gets no tag
 signature check (RFC-0017 §11).
 
+If the project key is ever revoked for compromise (ADR-0057), step 2
+fails for every release, by design. For a release the advisory lists as
+unaffected, the recipe becomes:
+
+1. `gh release verify`;
+2. step 4;
+3. a match between the release's `SHA256SUMS` digest and the advisory,
+   which the successor key signs.
+
 ## Consequences
 
 ### Positive
