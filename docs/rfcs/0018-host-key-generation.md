@@ -1,6 +1,6 @@
 # RFC 0018: Host-key generation in the binary — `quantumssh keygen`
 
-- **Status:** Draft
+- **Status:** Accepted (2026-11-03)
 - **Authors:** Gonzalo Fleming Garrido
 - **Created:** 2026-11-03
 - **Roadmap issue:** [#248](https://github.com/gonzafg2/quantumssh/issues/248) (Phase 3)
@@ -45,11 +45,11 @@ should make the safe path the easy one.
 
 The problem does not depend on how QuantumSSH is installed: a source
 build on Ubuntu has it too. That is why this is its own decision rather
-than part of the distribution proposal in
-[#247](https://github.com/gonzafg2/quantumssh/pull/247), as
-`docs/rfcs/README.md` §"Scope: one decision per RFC" requires. That
-proposal, RFC-0017, is still under review, and each RFC can land without
-the other. While this RFC is pending, step 3 of the operator guide keeps
+than part of RFC-0017's distribution proposal
+([#247](https://github.com/gonzafg2/quantumssh/pull/247)), as
+`docs/rfcs/README.md` §"Scope: one decision per RFC" requires. The two
+RFCs were accepted together, and each can be implemented without the
+other. Until this one is implemented, step 3 of the operator guide keeps
 `ssh-keygen`.
 
 ## Guide-level explanation
