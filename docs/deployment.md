@@ -80,8 +80,11 @@ the following:
   their first connection.
 - It never replaces a file, the key or its `.pub`. To rotate the key,
   move both aside, run `keygen` and the `chown` above again, publish the
-  new fingerprint and restart. Once clients have the new fingerprint,
-  destroy the old private key.
+  new fingerprint and restart. Each client then removes the old entry
+  with `ssh-keygen -R`, as in step 5, and checks the new fingerprint on
+  its next connection; otherwise OpenSSH refuses the host with "REMOTE
+  HOST IDENTIFICATION HAS CHANGED". Once clients have the new
+  fingerprint, destroy the old private key.
 - It refuses a directory the server would refuse to read the key from
   (the StrictModes rule above).
 
