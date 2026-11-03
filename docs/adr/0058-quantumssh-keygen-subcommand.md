@@ -120,8 +120,10 @@ pub(crate) fn generate_host_key_with(
   - If the failure came after step 8 began writing the private key, the
     message says the key must be treated as never used (RFC-0018 §3).
 - **Injecting the generator.** The generator in step 7 is a parameter
-  of `keygen::run`. Production passes `generate_host_key`, and tests
-  pass a closure that fails.
+  of `keygen::run`. Production passes `generate_host_key`. Only the
+  `#[cfg(test)]` unit tests inside `keygen.rs` pass a closure that fails.
+  The shipped binary has no flag, environment variable or other hook
+  that can force a failure.
 
 Creating the files relative to the verified directory descriptor
 removes the race on the parent that a path-based `open` would leave.
@@ -145,9 +147,12 @@ Only the ancestors above it keep ADR-0029's best-effort window.
   - refusal when `<PATH>` exists, when only `.pub` exists, when the leaf
     is a symlink, when the parent is a symlink to a `0777` directory,
     and when an ancestor is group-writable. Each leaves no new file;
-  - a failing generator, which leaves neither file. It goes through a
-    test-only path into `keygen::run`;
   - every usage-error shape of §1.
+- **Binary unit tests** (`#[cfg(test)]` in `crates/quantumssh/src/keygen.rs`,
+  in-process, because the binary crate has no library target that
+  integration tests could call):
+  - `keygen::run` with a generator that returns `Err`. Neither file is
+    left, and the error says no key was written.
 
   The keys are generated at run time, and no private-key fixture is
   committed.
