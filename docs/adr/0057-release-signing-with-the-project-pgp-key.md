@@ -1,0 +1,113 @@
+# ADR 0057: Sign release tags and `SHA256SUMS` with the project PGP key's primary
+
+- **Status:** Proposed
+- **Date:** TBD (accepted on merge)
+- **Deciders:** Project lead
+- **Related:**
+  - Implements [RFC-0017](../rfcs/0017-alpha-distribution.md) §5 and §11 (Accepted 2026-11-03), and resolves its unresolved question "Primary key or subkey".
+  - Supersedes the disclosure-only wording of [ADR-0006](0006-commit-signing-ssh-not-gpg.md) §Decision and §Consequences/Neutral. Commit signing stays SSH.
+  - Rotation follows [ADR-0005](0005-pgp-key-two-year-expiry.md). Used by [ADR-0054](0054-release-artifact-integrity.md) §4.
+
+## Context
+
+ADR-0006 moved commit signing to SSH keys and kept the PGP key "for the
+embargoed-disclosure path", stressing "one keypair per purpose". In
+practice `v0.1.0` was then tagged with that key. RFC-0017 makes the key
+sign every release tag and every `SHA256SUMS`, so users verify one
+published key for both the source and the binaries.
+
+That broadens an accepted decision, so it needs a superseding ADR.
+
+The key is:
+
+```
+pub ed25519 2026-05-10 [SC] [expires: 2028-05-09]
+    66DB 5100 B070 0E4A E051  971F 9A8D FF06 AFD2 5B24
+sub cv25519 2026-05-10 [E]
+```
+
+The primary can sign and certify. The only subkey encrypts. There is no
+signing subkey.
+
+## Decision
+
+We will sign release tags and each release's `SHA256SUMS` with the
+project PGP key's **primary**, only in the maintainer's terminal. A
+dedicated signing subkey is deferred to the key's next rotation.
+
+- **Release tags.**
+  `git -c gpg.format=openpgp tag -s -u 9A8DFF06AFD25B24 vX.Y.Z`.
+- **`SHA256SUMS`.**
+  `gpg --armor --detach-sign -u 9A8DFF06AFD25B24` over the file the
+  maintainer recomputed (ADR-0054 §4).
+- **Commits.** Commits stay SSH-signed. ADR-0006's commit decision is
+  unchanged.
+- **Disclosure encryption** keeps using the `[E]` subkey.
+- **Where the key lives.**
+  - The private key, including its passphrase, never goes to CI, a
+    GitHub secret or any machine other than the maintainer's.
+  - Signing is a manual step that needs a TTY.
+- **Rotation (ADR-0005, by 2028-05-09).**
+  - The successor key is published in `keys/` with a signature from the
+    old key, and `SECURITY.md` names both fingerprints during the
+    overlap.
+  - The rotation reconsiders a signing-only subkey, which would keep one
+    fingerprint for users while separating purposes.
+  - Public keys that signed published releases stay in `keys/`, so old
+    releases remain verifiable.
+- **Compromise.**
+  - Publish the revocation certificate (ADR-0005) and a security
+    advisory. The advisory gives the earliest time at which the key may
+    have been exposed.
+  - Releases whose signature is older than that time are listed as
+    unaffected. Newer ones are listed as untrusted.
+  - The fix ships as a new release signed with the new key. Immutable
+    releases (ADR-0054 §5) cannot take a replacement signature.
+
+## Consequences
+
+### Positive
+
+- One fingerprint, already published in `SECURITY.md`, verifies tags
+  and binaries alike, and `v0.1.0` is already signed with it.
+- No new key material to generate, publish or teach before `0.2.0`.
+
+### Negative
+
+- The key that encrypts disclosures now also anchors releases.
+  Compromising it now harms two things. The mitigation is that it is
+  used only on the maintainer's machine, behind a passphrase.
+- ADR-0006's "one keypair per purpose" no longer holds for PGP. It still
+  holds between SSH (commits) and PGP (releases and disclosure).
+
+### Neutral
+
+- The signatures are Ed25519 (EdDSA), classical by design. Post-quantum
+  signatures over release artifacts depend on OpenPGP's post-quantum
+  work, outside Phase 3.
+
+## Alternatives considered
+
+### Alternative 1: a separate release-only PGP key
+
+This keeps "one keypair per purpose". It also means a second key to
+publish, rotate and explain, and `v0.1.0` would remain signed by the
+disclosure key.
+
+### Alternative 2: add a signing subkey now
+
+This separates purposes under one fingerprint. It changes the published
+key right after `0.1.0` was signed and adds no protection while the primary
+stays on the same machine. Deferred to the rotation.
+
+### Alternative 3: sign releases with the maintainer's SSH key
+
+`git` can SSH-sign tags, but `SHA256SUMS` would then need
+`ssh-keygen -Y sign`, and that key is personal, not the project's.
+Users would have to trust a personal key.
+
+## Links
+
+- [RFC-0017](../rfcs/0017-alpha-distribution.md) §5, §11
+- [ADR-0005](0005-pgp-key-two-year-expiry.md), [ADR-0006](0006-commit-signing-ssh-not-gpg.md)
+- `SECURITY.md`, `keys/security.asc`
