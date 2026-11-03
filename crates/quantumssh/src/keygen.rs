@@ -247,12 +247,21 @@ mod tests {
 
     use super::*;
 
-    /// A private directory under `target/`: the ancestor rule refuses
-    /// a directory below a world-writable one such as `/tmp`.
+    /// A private directory under `target/`. The ancestor rule refuses a
+    /// directory below a group- or world-writable one, such as `/tmp` or a
+    /// `target/` created under `umask 002`, so the directories this
+    /// repository owns on the way lose their group and world write bits,
+    /// as the interop script does for `target/`.
     fn tree(name: &str) -> PathBuf {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../target/keygen-unit-tests")
-            .join(format!("{name}-{}", std::process::id()));
+        let target = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target");
+        let base = target.join("keygen-unit-tests");
+        std::fs::create_dir_all(&base).expect("create test base");
+        for dir in [&target, &base] {
+            let mode = std::fs::metadata(dir).expect("stat").permissions().mode();
+            std::fs::set_permissions(dir, std::fs::Permissions::from_mode(mode & !0o022))
+                .expect("chmod");
+        }
+        let root = base.join(format!("{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).expect("create test tree");
         std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).expect("chmod");

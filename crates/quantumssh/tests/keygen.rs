@@ -11,12 +11,19 @@ use quantumssh_core::host_key::{HostKey, base64_encode_nopad};
 
 const BIN: &str = env!("CARGO_BIN_EXE_quantumssh");
 
-/// A private directory under `target/`: the ancestor rule refuses a
-/// directory below a world-writable one such as `/tmp`.
+/// A private directory under `target/`. The ancestor rule refuses a
+/// directory below a group- or world-writable one, such as `/tmp` or a
+/// `target/` created under `umask 002`, so the directories this repository
+/// owns on the way lose their group and world write bits, as the interop
+/// script does for `target/`.
 fn tree(name: &str) -> PathBuf {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../target/keygen-tests")
-        .join(format!("{name}-{}", std::process::id()));
+    let target = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target");
+    let base = target.join("keygen-tests");
+    std::fs::create_dir_all(&base).expect("create test base");
+    for dir in [&target, &base] {
+        chmod(dir, mode(dir) & !0o022);
+    }
+    let root = base.join(format!("{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).expect("create test tree");
     chmod(&root, 0o700);
