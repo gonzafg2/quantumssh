@@ -117,7 +117,9 @@ the subcommand from the flags (§8).
      - key type `ssh-mldsa44-ed25519`;
      - `string(mldsa_pk ‖ ed25519_pk)`;
      - `string(seeds)`;
-     - an empty comment;
+     - an empty comment. `ssh-keygen` writes `user@host` by default;
+       an empty comment says nothing about the machine that generated
+       the key;
      - padding bytes `1, 2, 3, …` until the private section's length is
        a multiple of 8, the block size OpenSSH uses for cipher `none`. No
        padding is added when the length is already a multiple of 8.
@@ -318,6 +320,18 @@ This mixes a one-shot tool into the server's flag set, where `--config`
 and `--listen` would have to be rejected next to it. A subcommand states
 the different mode more clearly.
 
+### Alternative 5: `keygen --file <PATH>`
+
+This would mirror `ssh-keygen -f`. The command takes exactly one
+argument (§1), so a flag adds nothing but a second spelling to parse.
+`keygen <PATH>` is kept.
+
+### Alternative 6: print the public key line as well
+
+It would help operators who paste the key into notes, but the `.pub`
+file already holds it. Keeping stdout to the two paths and the
+fingerprint (§4) keeps the output short and stable for scripts.
+
 ## Prior art
 
 - **OpenSSH** has `ssh-keygen`, and `ssh-keygen -A` for every default host
@@ -330,13 +344,9 @@ the different mode more clearly.
 
 ## Unresolved questions
 
-- **Spelling.** `keygen <PATH>` follows this RFC. `keygen --file <PATH>`
-  would mirror `ssh-keygen -f`. The ADR picks one.
-- **Printing the public key line.** Whether `keygen` also prints the
-  `.pub` line to stdout, for operators who paste it into their notes.
-- **Comment field.** It is empty. `ssh-keygen` writes `user@host` by
-  default. An empty comment leaks nothing about the host that generated
-  the key.
+None that affects the decision. §1 fixes the command line, §4 fixes the
+output, and §2 fixes the empty comment. The subsidiary ADR settles only
+the parsing mechanics, the module placement and the CI steps (§8).
 
 ## Future possibilities
 
