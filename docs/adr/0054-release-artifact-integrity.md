@@ -72,6 +72,11 @@ stops at the first failure.
    `git verify-tag --raw vX.Y.Z`, then
    `git merge-base --is-ancestor <tag commit> origin/main`.
 2. `gh release download` of the draft's assets into an empty directory.
+   The draft must hold exactly the assets of §1, the three tarballs, the
+   SBOM and `SHA256SUMS`, and nothing else. A missing or extra asset,
+   such as an unsigned `install.sh`, stops the release. Once published,
+   an extra asset would ship inside the immutable release with no line
+   in `SHA256SUMS`.
 3. For each tarball and the SBOM:
    - run `gh attestation verify` with `-R gonzafg2/quantumssh`,
      `--signer-workflow gonzafg2/quantumssh/.github/workflows/release.yml`,
@@ -108,10 +113,24 @@ new tag (ADR-0053 §4).
 
 `docs/deployment.md` and `SECURITY.md` document, in this order:
 
-1. Import the project key, and check its fingerprint offline, as
-   `SECURITY.md` already shows.
-2. The pinned signature check (§7) on `SHA256SUMS.asc`. The docs give
-   it as one command, because a bare `gpg --verify` is not enough.
+1. **Import the pin set.**
+   - The pin set is a `keys/` manifest, `keys/release-keys.txt`. It has
+     one line per key: fingerprint, role (`current` or `retired`), first
+     use and retirement date.
+   - Each key is kept in its own file: `keys/security.asc` for the
+     current key and `keys/retired/<fingerprint>.asc` for each retired
+     one.
+   - Import every key the manifest lists, and check the current
+     fingerprint offline, as `SECURITY.md` already shows. After a
+     rotation, a user who imported only the current key would see an
+     old release fail with `NO_PUBKEY` before §7 could run.
+2. **Run the pinned signature check (§7) on `SHA256SUMS.asc`.**
+   - It is not a one-line command: for a retired key it also needs
+     `gh release verify` and `gh release verify-asset`.
+   - The docs therefore ship it as `scripts/verify-download.sh vX.Y.Z`,
+     a new file created by the implementing PR. The script implements §7
+     in full, including the retired-key branch.
+   - A bare `gpg --verify` is not enough.
 3. `sha256sum --ignore-missing -c SHA256SUMS`.
 4. `gh attestation verify <tarball>` with the four pins of §4 step 3.
 
@@ -135,8 +154,10 @@ unaffected, the recipe becomes:
 signature from a **revoked** or **expired** key. It flags those cases
 only on `--status-fd`, as `REVKEYSIG`, `KEYREVOKED`, `EXPKEYSIG` and
 `EXPSIG`. Every PGP verification in the release chain therefore runs
-`gpg --status-fd 1 --verify` (`git verify-tag --raw` for tags) and
-passes only when both hold:
+`gpg --status-fd 1 --verify`, or for tags `git verify-tag --raw … 2>&1`
+(`--raw` writes the GnuPG status lines to **stderr**). It passes only
+when both conditions below hold. No `VALIDSIG` line at all is a failure,
+so empty output can never pass:
 
 - a `VALIDSIG` line names a fingerprint from the **pin set**. Today that
   is only `66DB5100B0700E4AE051971F9A8DFF06AFD25B24`. After a rotation
@@ -180,8 +201,7 @@ The check is used in four places:
 
 - ADR-0053's `precheck`;
 - `scripts/verify-release.sh` (§4);
-- the user recipe (§6), which `docs/deployment.md` gives as a one-line
-  shell function;
+- the user recipe (§6), through `scripts/verify-download.sh`;
 - the tap's CI (ADR-0056 §4).
 
 ## Consequences

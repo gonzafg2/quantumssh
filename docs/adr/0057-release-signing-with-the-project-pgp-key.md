@@ -48,9 +48,10 @@ dedicated signing subkey is deferred to the key's next rotation.
     GitHub secret or any machine other than the maintainer's.
   - Signing is a manual step that needs a TTY.
 - **Rotation (ADR-0005, by 2028-05-09).**
-  - The successor key is published in `keys/` with a signature from the
-    old key, and `SECURITY.md` names both fingerprints during the
-    overlap.
+  - The successor key is published in `keys/`, signed by the old key,
+    and added to `keys/release-keys.txt` (ADR-0054 §6). The old key moves
+    to `keys/retired/` with its window. `SECURITY.md` names both
+    fingerprints during the overlap.
   - The rotation reconsiders a signing-only subkey, which would keep one
     fingerprint for users while separating purposes.
   - Public keys that signed published releases stay in `keys/`, each
@@ -77,12 +78,25 @@ dedicated signing subkey is deferred to the key's next rotation.
       §5);
     - the build attestations with their transparency-log time
       (`gh attestation verify`, ADR-0054 §4).
-  - **A security advisory, signed by the successor key** (published
-    under `keys/` as under rotation):
+  - **The successor is authenticated without the old key.** In a
+    compromise the old key's certification proves nothing, because the
+    attacker holds that key too. The successor's fingerprint is
+    published through channels the PGP key does not control:
+    - an SSH-signed commit on `main` (ADR-0006: the maintainer's SSH
+      key, independent of the PGP key) that adds the key to `keys/` and
+      the manifest;
+    - `quantumssh.org`, a different origin, which `SECURITY.md` already
+      names for cross-checks.
+
+    The advisory names that fingerprint, and users check it on both
+    channels before trusting anything the successor signs.
+  - **A security advisory, signed by the successor key:**
     - gives the earliest possible exposure time;
     - lists each unaffected release with the SHA-256 of its
       `SHA256SUMS`;
-    - lists every later release as untrusted.
+    - lists as untrusted every release **signed with the compromised
+      key** at or after that time;
+    - lists the successor-signed fix as trusted, by its digest.
   - **After a compromise, users verify old releases differently.** They
     use the attestations plus the successor-signed advisory instead of
     `SHA256SUMS.asc`. ADR-0054 §6 says so.

@@ -41,13 +41,14 @@ exact bytes being released.
 - `on: push: tags: ['v*', 'rehearsal-*']`. There are no other triggers.
 - The workflow-level `permissions: {}` is empty, and every job declares
   its own permissions.
-- No cache action runs in this workflow: no `Swatinem/rust-cache` and
-  no `actions/cache`. A cache written by a pull-request run could
-  otherwise feed the release build.
-- Every `actions/checkout` in this workflow sets
-  `persist-credentials: false`, in every job and not only in `precheck`.
-  A build script or an executed binary must find no token in
-  `.git/config` (RFC-0017 §4 step 2).
+- These invariants hold for `release.yml` **and for every workflow it
+  calls**, including `interop.yml` on its artifact path (ADR-0055 §1):
+  - No cache action runs: no `Swatinem/rust-cache` and no
+    `actions/cache`. A cache written by a pull-request run could
+    otherwise feed the release build or a gate.
+  - Every `actions/checkout` sets `persist-credentials: false`, in every
+    job and not only in `precheck`. A build script or an executed binary
+    must find no token in `.git/config` (RFC-0017 §4 step 2).
 - Every action is pinned by commit SHA, as in the rest of
   `.github/workflows/`. The toolchain comes from `rust-toolchain.toml`.
 

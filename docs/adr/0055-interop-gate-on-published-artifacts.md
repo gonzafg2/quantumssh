@@ -41,10 +41,17 @@ from the OpenSSH portable release tarball, pinned by SHA-256.
   - `artifact`: the name of a workflow artifact holding a release
     tarball;
   - `runner`: `ubuntu-24.04` or `ubuntu-24.04-arm`.
-- **When `artifact` is set**, the job skips the toolchain and
-  `cargo build`, downloads and extracts the tarball, and runs
-  `tests/interop/run_openssh_client.sh` with `QUANTUMSSH_BIN` pointing
-  at the extracted binary.
+- **When `artifact` is set**, the job:
+  - skips the toolchain, the `Swatinem/rust-cache` step
+    (`if: inputs.artifact == ''`) and `cargo build`;
+  - checks out with `persist-credentials: false`;
+  - downloads and extracts the tarball;
+  - runs `tests/interop/run_openssh_client.sh` with `QUANTUMSSH_BIN`
+    pointing at the extracted binary.
+
+  This satisfies ADR-0053 §1's invariants, which cover called workflows.
+  The checkout setting also applies on the PR-time path, where it costs
+  nothing.
 - **What stays the same:** the same container digest, the same snapshot
   pin and the same `ssh -V` assertion.
 - **The PR-time behaviour (no inputs) does not change.** It stays the
