@@ -346,7 +346,7 @@ jobs:
                 "\(at($e.timestamp)) error \($e.error.type // "")"
               else empty end)
           PROMPT: |
-            You are reviewing a PR for QuantumSSH — a memory-safe, post-quantum-first SSH server in Rust (pre-alpha). Read CLAUDE.md for the project's review criteria.
+            You are reviewing a PR for QuantumSSH — a memory-safe, post-quantum-first SSH server in Rust (alpha). Read CLAUDE.md for the project's review criteria.
 
             Measure every change against the five MANIFIESTO commitments:
             1. Memory-safe by construction — no first-party `unsafe` (workspace is `unsafe_code = "forbid"`)
