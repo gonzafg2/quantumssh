@@ -7,7 +7,7 @@
   - Implements [RFC-0018](../rfcs/0018-host-key-generation.md) §8 (Accepted 2026-11-03; [#249](https://github.com/gonzafg2/quantumssh/pull/249)).
   - It reuses the loader of [ADR-0047](0047-host-key-algorithm-ssh-mldsa44-ed25519.md) and the composite key of [ADR-0035](0035-ml-dsa-crate-rustcrypto.md), and the ancestor rule of [ADR-0029](0029-phase-2-config-file-v1-schema-parser-strictmodes.md). It extends the [ADR-0020](0020-phase-1-ci-openssh-interop-gate.md) gate.
   - Phase 3 roadmap: [#248](https://github.com/gonzafg2/quantumssh/issues/248).
-  - Implementation: the `host_key` module of `quantumssh-core`; `crates/quantumssh/src/{main.rs,keygen.rs}`; `crates/quantumssh/tests/keygen.rs`; `.github/workflows/interop.yml`.
+  - Implementation: the `host_key` module of `quantumssh-core`, `crates/quantumssh/src/main.rs` and `.github/workflows/interop.yml`. Two files are new, created by the implementing PR: `crates/quantumssh/src/keygen.rs` and `crates/quantumssh/tests/keygen.rs`.
 
 ## Context
 
@@ -108,11 +108,17 @@ pub(crate) fn generate_host_key_with(
 9. **The output.** `fstat` both files and print the two paths with
    their observed modes, then the fingerprint.
 
-- **Failures.** A failure in steps 6 to 8 runs `unlinkat` on both leaves
-  through the directory descriptor. A failed `unlinkat` is reported as
-  its own error that names the path left behind. If the failure came
-  after step 8 began writing the private key, the message says the key
-  must be treated as never used (RFC-0018 §3).
+- **Failures.**
+  - `keygen::run` records each file this run created.
+  - A failure at any step from 5 on runs `unlinkat` through the directory
+    descriptor on exactly those files and on no others. A step-5 failure
+    therefore removes only the private file that step 4 created. If the
+    cause was an existing `.pub`, that file is the operator's and is left
+    alone.
+  - A failed `unlinkat` is reported as its own error that names the path
+    left behind.
+  - If the failure came after step 8 began writing the private key, the
+    message says the key must be treated as never used (RFC-0018 §3).
 - **Injecting the generator.** The generator in step 7 is a parameter
   of `keygen::run`. Production passes `generate_host_key`, and tests
   pass a closure that fails.
