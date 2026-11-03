@@ -146,11 +146,18 @@ itself (§6). The tests generate their keys at run time; no private-key fixture 
   - both files are opened with `O_CREAT | O_EXCL | O_NOFOLLOW`, so an
     existing file or a symlink at either path is an error, never a
     target;
-  - **modes are set explicitly, not left to `umask`:** an `open` mode
-    argument is reduced by the process `umask`, and a hardened `077`
-    would make the `.pub` file `0600`. So `keygen` sets `<PATH>` to
-    `0600` and `<PATH>.pub` to `0644` with `fchmod` on each open
-    descriptor, before any key byte is written;
+  - **the private file is never readable by anyone else, from the moment
+    it exists:** `<PATH>` is created with mode `0600` in the `open(2)`
+    call itself, never with a library default such as `0666`. The
+    `umask` can only remove bits, so the file can never start wider than
+    `0600`. Fixing the mode later with `fchmod` would not be enough: a
+    local user watching the directory could open the file in the window
+    before the `fchmod`, and the descriptor would stay valid after it;
+  - **the public file's mode is then widened explicitly:** `<PATH>.pub`
+    is created with `0644`. A hardened `umask` such as `077` would narrow
+    it to `0600`, so `keygen` sets it to `0644` with `fchmod` on the open
+    descriptor. `fchmod(0600)` on `<PATH>` likewise undoes any narrowing
+    of the owner bits;
   - the modes printed on success are the ones `fstat` reports, not the
     requested ones.
 - **Order.**
