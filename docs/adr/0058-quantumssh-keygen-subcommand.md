@@ -7,7 +7,7 @@
   - Implements [RFC-0018](../rfcs/0018-host-key-generation.md) §8 (Accepted 2026-11-03; [#249](https://github.com/gonzafg2/quantumssh/pull/249)).
   - It reuses the loader of [ADR-0047](0047-host-key-algorithm-ssh-mldsa44-ed25519.md) and the composite key of [ADR-0035](0035-ml-dsa-crate-rustcrypto.md), and the ancestor rule of [ADR-0029](0029-phase-2-config-file-v1-schema-parser-strictmodes.md). It extends the [ADR-0020](0020-phase-1-ci-openssh-interop-gate.md) gate.
   - Phase 3 roadmap: [#248](https://github.com/gonzafg2/quantumssh/issues/248).
-  - Implementation: the `host_key` module of `quantumssh-core`, `crates/quantumssh/src/main.rs` and `.github/workflows/interop.yml`. Two files are new, created by the implementing PR: `crates/quantumssh/src/keygen.rs` and `crates/quantumssh/tests/keygen.rs`.
+  - Implementation: the `host_key` module of `quantumssh-core`, `crates/quantumssh/src/main.rs`, `crates/quantumssh/src/config.rs` (the predicate becomes `pub(crate)`) and `tests/interop/run_openssh_client.sh`. Two files are new, created by the implementing PR: `crates/quantumssh/src/keygen.rs` and `crates/quantumssh/tests/keygen.rs`.
 
 ## Context
 
@@ -147,6 +147,8 @@ on those it keeps the RFC's acceptance.
     to 7;
   - the private section of a generated key has a length that is a
     multiple of 8 and padding bytes `1, 2, 3, …`;
+  - the private section's comment is the empty string, asserted
+    directly, because the loader and `ssh-keygen -y` both ignore it;
   - a failing `fill` returns `Err`.
 - **Binary integration tests** (`crates/quantumssh/tests/keygen.rs`,
   which spawn `CARGO_BIN_EXE_quantumssh`) cover:
@@ -167,14 +169,23 @@ on those it keeps the RFC's acceptance.
 
   The keys are generated at run time, and no private-key fixture is
   committed.
-- **CI interop**, in `interop.yml` after the release build:
-  - `quantumssh keygen "$W/hk"`;
-  - `ssh-keygen -y -f "$W/hk"` must equal the type and blob fields of
-    `"$W/hk.pub"`;
-  - `ssh-keygen -lf "$W/hk.pub"` must equal the fingerprint `keygen`
-    printed;
-  - the server started with `--host-key "$W/hk"` must accept
-    `ssh … true` with exit status 0 from the pinned client.
+- **CI interop**, in `tests/interop/run_openssh_client.sh` (the gate
+  `interop.yml` runs, ADR-0020). The check is a new step after the
+  existing checks finish and the first server has been stopped.
+  - **Setup.** It reuses `$BIN` and the ancestor-safe `$WORK` under
+    `target/`. A `/tmp` workdir would fail the ancestor rule this command
+    enforces.
+  - **Key generation.** It runs `"$BIN" keygen "$WORK/kghk"`. Then
+    `ssh-keygen -y -f "$WORK/kghk"` must equal the type and blob fields of
+    `"$WORK/kghk.pub"`, and `ssh-keygen -lf "$WORK/kghk.pub"` must equal
+    the fingerprint `keygen` printed.
+  - **Server.** It starts a second server with
+    `--host-key "$WORK/kghk"` and the same `authorized_keys` on
+    `$PORT + 1`. It records that server's PID in the script's cleanup
+    trap and waits on that port's readiness. `ssh … true` against that
+    port must exit 0 with the pinned client.
+  - **No false pass.** The first server is already stopped, so a pass
+    cannot come from it.
 
   The existing gate run keeps its `ssh-keygen` host key, so both
   directions stay covered.
