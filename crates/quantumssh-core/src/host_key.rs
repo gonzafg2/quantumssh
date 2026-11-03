@@ -1,17 +1,17 @@
 //! The composite `ssh-mldsa44-ed25519` host key (ADR-0047): loading
-//! (`openssh-key-v1`, unencrypted), public-blob encoding, signing, and
-//! the `SHA256:` fingerprint (ADR-0024 log format).
+//! (`openssh-key-v1`, unencrypted), generation (RFC-0018), public-blob
+//! encoding, signing, and the `SHA256:` fingerprint (ADR-0024 log format).
 //!
 //! It is the only host key type (RFC-0012); only the unencrypted
 //! `openssh-key-v1` container is accepted — host keys are generated with
-//! `ssh-keygen -t mldsa44-ed25519` (OpenSSH 10.6 or later) and protected
-//! by file permissions, not passphrases (a server cannot type one at
-//! boot).
+//! `quantumssh keygen` or `ssh-keygen -t mldsa44-ed25519` (OpenSSH 10.6 or
+//! later) and protected by file permissions, not passphrases (a server
+//! cannot type one at boot).
 
 use sha2::{Digest, Sha256};
 use zeroize::Zeroizing;
 
-use crate::composite::{self, SEEDS_LEN, SigningKey};
+use crate::composite::{self, PUBLIC_LEN, SEEDS_LEN, SigningKey};
 use crate::wire::{Reader, Writer};
 
 /// Algorithm name (`draft-ietf-sshm-composite-sigs-00` §4.1.1).
@@ -26,6 +26,14 @@ const PRIVATE_SECTION_BOUND: usize = 4096;
 const PEM_HEADER: &str = "-----BEGIN OPENSSH PRIVATE KEY-----";
 const PEM_FOOTER: &str = "-----END OPENSSH PRIVATE KEY-----";
 const AUTH_MAGIC: &[u8] = b"openssh-key-v1\0";
+/// The cipher and KDF name of an unencrypted container.
+const NONE: &[u8] = b"none";
+/// The block size OpenSSH pads the private section to under cipher `none`.
+const BLOCK_SIZE: usize = 8;
+/// The check word, written twice at the start of the private section.
+const CHECK_LEN: usize = 4;
+/// OpenSSH wraps the PEM body at 70 columns.
+const PEM_LINE: usize = 70;
 
 /// Errors loading or using a host key.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -202,6 +210,139 @@ impl HostKey {
     }
 }
 
+/// The OS random number generator failed. Nothing drawn from it was used
+/// (threat model §3.3, ADR-0035 §3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RngError;
+
+impl std::fmt::Display for RngError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "the operating system's random number generator failed")
+    }
+}
+
+impl std::error::Error for RngError {}
+
+/// A new host key, encoded as `ssh-keygen -t mldsa44-ed25519` writes it
+/// (RFC-0018 §2).
+pub struct GeneratedHostKey {
+    /// The unencrypted `openssh-key-v1` file. Erased on drop.
+    pub private_pem: Zeroizing<String>,
+    /// The `.pub` line, `ssh-mldsa44-ed25519 <base64>`, with no comment.
+    pub public_line: String,
+    /// The `SHA256:` fingerprint `server.started` logs for this key.
+    pub fingerprint: String,
+}
+
+impl std::fmt::Debug for GeneratedHostKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Never expose key material through Debug (threat model §4.3).
+        f.debug_struct("GeneratedHostKey")
+            .field("fingerprint", &self.fingerprint)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Generates a new host key from the operating system's RNG (RFC-0018 §2).
+///
+/// # Errors
+///
+/// [`RngError`] when the RNG fails. There is no fallback: no key exists
+/// then.
+pub fn generate_host_key() -> Result<GeneratedHostKey, RngError> {
+    generate_host_key_with(|buf| getrandom::fill(buf).map_err(|_| RngError))
+}
+
+/// [`generate_host_key`] with the randomness injected, so a test can make
+/// it fail (ADR-0058 §2).
+pub(crate) fn generate_host_key_with(
+    fill: impl FnOnce(&mut [u8]) -> Result<(), RngError>,
+) -> Result<GeneratedHostKey, RngError> {
+    // One draw: the seeds (`mldsa_seed ‖ ed25519_seed`), then the check
+    // word. A failed draw returns before any byte is used.
+    let mut draw = Zeroizing::new([0u8; SEEDS_LEN + CHECK_LEN]);
+    fill(draw.as_mut_slice())?;
+    let (seeds, check) = draw.split_at(SEEDS_LEN);
+    let seeds: &[u8; SEEDS_LEN] = seeds.try_into().expect("split at SEEDS_LEN");
+    let check = u32::from_be_bytes(check.try_into().expect("CHECK_LEN bytes"));
+    let key = HostKey {
+        signing: SigningKey::from_seeds(seeds),
+    };
+    let public_blob = key.public_key_blob();
+
+    // The private section, in OpenSSH `ssh-mldsa-eddsa.c`'s layout. Each
+    // buffer below is sized exactly, so it never reallocates and leaves no
+    // unerased copy of the seeds behind (threat model §4.3).
+    let unpadded = 2 * CHECK_LEN
+        + string_len(ALGORITHM.len())
+        + string_len(PUBLIC_LEN)
+        + string_len(SEEDS_LEN)
+        + string_len(0);
+    let padding = pad_to_block(unpadded);
+    let mut private = Writer::with_capacity(unpadded + padding);
+    private.put_uint32(check);
+    private.put_uint32(check);
+    private.put_string(ALGORITHM.as_bytes());
+    private.put_string(key.signing.public_key());
+    private.put_string(seeds);
+    // An empty comment says nothing about the machine that made the key.
+    private.put_string(b"");
+    for pad in (1u8..).take(padding) {
+        private.put_byte(pad);
+    }
+    debug_assert_eq!(private.len(), unpadded + padding);
+    let private = Zeroizing::new(private.into_bytes());
+
+    let container_len = AUTH_MAGIC.len()
+        + 2 * string_len(NONE.len())
+        + string_len(0)
+        + 4
+        + string_len(public_blob.len())
+        + string_len(private.len());
+    let mut container = Writer::with_capacity(container_len);
+    container.put_bytes(AUTH_MAGIC);
+    container.put_string(NONE); // cipher
+    container.put_string(NONE); // kdf
+    container.put_string(b""); // kdf options
+    container.put_uint32(1); // one key
+    container.put_string(&public_blob);
+    container.put_string(&private);
+    debug_assert_eq!(container.len(), container_len);
+    let container = Zeroizing::new(container.into_bytes());
+
+    let body = Zeroizing::new(base64_encode(&container));
+    let pem_len =
+        PEM_HEADER.len() + 1 + body.len() + body.len().div_ceil(PEM_LINE) + PEM_FOOTER.len() + 1;
+    let mut pem = Zeroizing::new(String::with_capacity(pem_len));
+    pem.push_str(PEM_HEADER);
+    pem.push('\n');
+    for line in body.as_bytes().chunks(PEM_LINE) {
+        pem.push_str(std::str::from_utf8(line).expect("base64 is ASCII"));
+        pem.push('\n');
+    }
+    pem.push_str(PEM_FOOTER);
+    pem.push('\n');
+    debug_assert_eq!(pem.len(), pem_len);
+
+    Ok(GeneratedHostKey {
+        private_pem: pem,
+        public_line: format!("{ALGORITHM} {}", base64_encode(&public_blob)),
+        fingerprint: key.fingerprint_sha256(),
+    })
+}
+
+/// The encoded length of an RFC 4251 `string` of `len` bytes.
+const fn string_len(len: usize) -> usize {
+    4 + len
+}
+
+/// The padding OpenSSH appends to the private section: up to the next
+/// multiple of the block size, and none when `len` is already one
+/// (RFC-0018 §2).
+const fn pad_to_block(len: usize) -> usize {
+    (BLOCK_SIZE - len % BLOCK_SIZE) % BLOCK_SIZE
+}
+
 /// OpenSSH-format fingerprint of a public-key blob: `SHA256:` + unpadded
 /// base64 of its SHA-256 (RFC-0014 §4).
 pub(crate) fn fingerprint_sha256(blob: &[u8]) -> String {
@@ -241,6 +382,17 @@ pub fn base64_encode_nopad(input: &[u8]) -> String {
         for &c in &chars[..keep] {
             out.push(char::from(c));
         }
+    }
+    out
+}
+
+/// Standard-alphabet base64 encode with `=` padding, as OpenSSH writes key
+/// files. [`base64_encode_nopad`] already reserves the padded length, so
+/// the padding never reallocates.
+fn base64_encode(input: &[u8]) -> String {
+    let mut out = base64_encode_nopad(input);
+    while !out.len().is_multiple_of(4) {
+        out.push('=');
     }
     out
 }
@@ -438,6 +590,93 @@ mod tests {
             ),
             Err(HostKeyError::BadContainer)
         ));
+    }
+
+    /// The private section of a PEM that [`generate_host_key_with`] wrote,
+    /// after checking the container fields around it.
+    fn private_section(pem: &str) -> Vec<u8> {
+        let body: String = pem.lines().filter(|l| !l.starts_with("-----")).collect();
+        let raw = base64_decode(body.as_bytes()).unwrap();
+        let mut r = Reader::new(raw.strip_prefix(AUTH_MAGIC).unwrap());
+        assert_eq!(r.string(64).unwrap(), NONE);
+        assert_eq!(r.string(64).unwrap(), NONE);
+        assert_eq!(r.string(64).unwrap(), b"");
+        assert_eq!(r.uint32().unwrap(), 1);
+        r.string(PUBLIC_BLOB_BOUND).unwrap();
+        let private = r.string(PRIVATE_SECTION_BOUND).unwrap().to_vec();
+        r.finish().unwrap();
+        private
+    }
+
+    #[test]
+    fn a_generated_key_round_trips_through_the_loader() {
+        let generated = generate_host_key().unwrap();
+        let loaded = HostKey::from_openssh_pem(&generated.private_pem).unwrap();
+        assert_eq!(
+            generated.public_line,
+            format!("{ALGORITHM} {}", base64_encode(&loaded.public_key_blob()))
+        );
+        assert_eq!(generated.fingerprint, loaded.fingerprint_sha256());
+        // OpenSSH's armor: 70-column lines of padded base64.
+        let lines: Vec<&str> = generated.private_pem.lines().collect();
+        assert_eq!(lines.first(), Some(&PEM_HEADER));
+        assert_eq!(lines.last(), Some(&PEM_FOOTER));
+        let body = &lines[1..lines.len() - 1];
+        assert!(body[..body.len() - 1].iter().all(|l| l.len() == PEM_LINE));
+        assert!(body.concat().len().is_multiple_of(4));
+        assert!(!format!("{generated:?}").contains(PEM_HEADER));
+    }
+
+    #[test]
+    fn pad_to_block_reaches_the_next_multiple_of_eight() {
+        for (residue, want) in [0, 7, 6, 5, 4, 3, 2, 1].into_iter().enumerate() {
+            assert_eq!(pad_to_block(1448 + residue), want, "residue {residue}");
+        }
+    }
+
+    /// RFC-0018 §2: the draw's layout, the empty comment and the padding
+    /// `1, 2, 3, …` that the loader skips.
+    #[test]
+    fn the_private_section_matches_openssh() {
+        let generated = generate_host_key_with(|buf| {
+            for (b, i) in buf.iter_mut().zip(0u8..) {
+                *b = i;
+            }
+            Ok(())
+        })
+        .unwrap();
+        let seeds: [u8; SEEDS_LEN] = std::array::from_fn(|i| u8::try_from(i).unwrap());
+        let check = u32::from_be_bytes([64, 65, 66, 67]);
+
+        let section = private_section(&generated.private_pem);
+        assert!(section.len().is_multiple_of(BLOCK_SIZE));
+        let mut p = Reader::new(&section);
+        assert_eq!(p.uint32().unwrap(), check);
+        assert_eq!(p.uint32().unwrap(), check);
+        assert_eq!(p.string(64).unwrap(), ALGORITHM.as_bytes());
+        assert_eq!(
+            p.string(PUBLIC_BLOB_BOUND).unwrap(),
+            SigningKey::from_seeds(&seeds).public_key()
+        );
+        assert_eq!(p.string(128).unwrap(), seeds);
+        assert_eq!(p.string(64).unwrap(), b"", "the comment is empty");
+        let mut padding = Vec::new();
+        while let Ok(b) = p.byte() {
+            padding.push(b);
+        }
+        assert!(padding.len() < BLOCK_SIZE);
+        assert_eq!(
+            padding,
+            (1..=u8::try_from(padding.len()).unwrap()).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn a_failing_rng_returns_an_error() {
+        assert_eq!(
+            generate_host_key_with(|_| Err(RngError)).unwrap_err(),
+            RngError
+        );
     }
 
     #[test]

@@ -312,6 +312,17 @@ impl Writer {
         Self { buf: Vec::new() }
     }
 
+    /// Creates an empty writer that holds `capacity` bytes before it
+    /// reallocates. An encoder of secret material sizes it so the buffer
+    /// never moves: a reallocation would leave an unerased copy behind
+    /// (threat model §4.3).
+    #[must_use]
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            buf: Vec::with_capacity(capacity),
+        }
+    }
+
     /// Appends one byte.
     pub fn put_byte(&mut self, v: u8) {
         self.buf.push(v);

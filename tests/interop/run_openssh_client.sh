@@ -8,7 +8,8 @@
 # hard subset checks ADR-0020 names — openssh_smoke, openssh_verbose_kex,
 # negative_no_hybrid — the two ADR-0047 adds for the composite host key —
 # openssh_hostkey_composite, negative_ed25519_hostkey — plus exit-status
-# propagation (ADR-0023).
+# propagation (ADR-0023), and that `quantumssh keygen` writes a key
+# ssh-keygen 10.6 reads and a server serves (RFC-0018 §6, ADR-0058 §4).
 #
 # Env overrides: QUANTUMSSH_BIN (default ./target/release/quantumssh),
 # QUANTUMSSH_PORT (default 2222).
@@ -55,17 +56,21 @@ printf 'schema_version = 1\n\n[auth]\ntrusted_user_ca_keys = "%s"\n\n[limits]\na
        > "$WORK/server.log" 2>&1 &
 SRV=$!
 
-# Wait for the listener (bash /dev/tcp; no nc dependency).
-ready=0
-for _ in $(seq 1 100); do
-    if (exec 3<>"/dev/tcp/127.0.0.1/$PORT") 2>/dev/null; then
-        exec 3>&- 3<&-
-        ready=1
-        break
-    fi
-    sleep 0.1
-done
-[ "$ready" -eq 1 ] || { echo "INTEROP FAIL: server never listened" >&2; cat "$WORK/server.log" >&2; exit 1; }
+LOG="$WORK/server.log"
+fail() { echo "INTEROP FAIL: $1" >&2; cat "$LOG" >&2; exit 1; }
+
+# Wait for a listener on port $1 (bash /dev/tcp; no nc dependency).
+wait_listening() {
+    for _ in $(seq 1 100); do
+        if (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; then
+            exec 3>&- 3<&-
+            return 0
+        fi
+        sleep 0.1
+    done
+    fail "server never listened on port $1"
+}
+wait_listening "$PORT"
 
 SSH_OPTS=(-i "$WORK/clientkey" -p "$PORT"
     -o StrictHostKeyChecking=no
@@ -73,8 +78,6 @@ SSH_OPTS=(-i "$WORK/clientkey" -p "$PORT"
     -o PasswordAuthentication=no
     -o IdentitiesOnly=yes
     -o ConnectTimeout=10)
-
-fail() { echo "INTEROP FAIL: $1" >&2; cat "$WORK/server.log" >&2; exit 1; }
 
 # 1. openssh_smoke: `ssh … echo hello` → hello, exit 0.
 out="$(ssh "${SSH_OPTS[@]}" tester@127.0.0.1 'echo hello')" || fail "smoke: ssh exited $?"
@@ -195,5 +198,40 @@ for refused in other expired untrusted; do
     fi
 done
 echo "ok: openssh_cert_refusals"
+
+# 9. quantumssh keygen (RFC-0018 §6, ADR-0058 §4): ssh-keygen reads the key
+# keygen wrote back to the same public key and fingerprint, and a server
+# started with that key serves the stock client. The first server is
+# stopped first, so a pass cannot come from it.
+kill "$SRV" && wait "$SRV" 2>/dev/null || true
+SRV=0
+kg_out="$("$BIN" keygen "$WORK/kghk")" || fail "keygen: exited $?"
+[ "$(ssh-keygen -y -f "$WORK/kghk")" = "$(cat "$WORK/kghk.pub")" ] \
+    || fail "keygen: ssh-keygen -y does not reproduce kghk.pub"
+kg_fp="$(tail -n 1 <<<"$kg_out")"
+[ "$(ssh-keygen -lf "$WORK/kghk.pub" | awk '{print $2}')" = "$kg_fp" ] \
+    || fail "keygen: ssh-keygen -lf disagrees with the fingerprint keygen printed"
+echo "ok: keygen_read_by_ssh_keygen"
+
+KG_PORT=$((PORT + 1))
+LOG="$WORK/server-keygen.log"
+"$BIN" --listen "127.0.0.1:$KG_PORT" \
+       --host-key "$WORK/kghk" \
+       --authorized-keys "$WORK/authorized_keys" \
+       --log-format human \
+       > "$LOG" 2>&1 &
+SRV=$!
+wait_listening "$KG_PORT"
+KG_OPTS=(-i "$WORK/clientkey" -p "$KG_PORT"
+    -o StrictHostKeyChecking=no
+    -o UserKnownHostsFile=/dev/null
+    -o PasswordAuthentication=no
+    -o IdentitiesOnly=yes
+    -o ConnectTimeout=10)
+verbose="$(ssh -v "${KG_OPTS[@]}" tester@127.0.0.1 'true' 2>&1)" \
+    || fail "keygen: ssh against the keygen host key exited $?"
+grep -q "Server host key: ssh-mldsa44-ed25519 $kg_fp" <<<"$verbose" \
+    || fail "keygen: the server did not present the keygen host key"
+echo "ok: keygen_host_key_serves"
 
 echo "INTEROP PASS"
