@@ -28,6 +28,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fails. Every line of `SHA256SUMS` must name an asset of the version
   being checked ([ADR-0054](docs/adr/0054-release-artifact-integrity.md)
   §6–§7).
+- `scripts/verify-release.sh vX.Y.Z <dir>` is the maintainer's check of a
+  release draft before signing it. It checks the tag's signature against
+  the pin set of `origin/main` and that the tag's commit is on `main`. It
+  requires the draft to hold exactly the five expected assets, and each
+  tarball and the SBOM to pass `gh attestation verify` for the tag's
+  commit. `SHA256SUMS` recomputed from those files must be
+  byte-identical, and it must equal the digests the four gates tested.
+  `--publish` repeats the asset check with the uploaded signature, and
+  requires immutable releases to be on
+  ([ADR-0054](docs/adr/0054-release-artifact-integrity.md) §4).
 
 ## [0.1.0] - 2026-11-02
 
