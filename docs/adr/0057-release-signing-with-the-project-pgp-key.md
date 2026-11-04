@@ -1,7 +1,7 @@
 # ADR 0057: Sign release tags and `SHA256SUMS` with the project PGP key's primary
 
-- **Status:** Proposed
-- **Date:** TBD (accepted on merge)
+- **Status:** Accepted
+- **Date:** 2026-11-03 (accepted on the merge of [#250](https://github.com/gonzafg2/quantumssh/pull/250); drafted 2026-11-03)
 - **Deciders:** Project lead
 - **Related:**
   - Implements [RFC-0017](../rfcs/0017-alpha-distribution.md) §5 and §11 (Accepted 2026-11-03), and resolves its unresolved question "Primary key or subkey".
