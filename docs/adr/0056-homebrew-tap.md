@@ -1,13 +1,13 @@
 # ADR 0056: Ship a Homebrew tap, `gonzafg2/homebrew-quantumssh`, as a single-user evaluation path
 
-- **Status:** Proposed
-- **Date:** TBD (accepted with the implementing PR)
+- **Status:** Accepted
+- **Date:** 2026-11-04 (accepted with the implementing PR, [gonzafg2/homebrew-quantumssh#1](https://github.com/gonzafg2/homebrew-quantumssh/pull/1), merged as `0059265` after its CI passed on `macos-26` and `ubuntu-24.04` against the published `v0.2.0`; drafted 2026-11-03)
 - **Deciders:** Project lead
 - **Related:**
   - Implements [RFC-0017](../rfcs/0017-alpha-distribution.md) §7 (Accepted 2026-11-03) and resolves its unresolved question "Updating the tap".
   - It records a departure from [ADR-0016](0016-phase-1-service-account-uid-model.md) for the tap path only.
   - Installs the artifacts of [ADR-0053](0053-release-workflow.md), with the checksums of [ADR-0054](0054-release-artifact-integrity.md).
-  - Implementation: the new repository `gonzafg2/homebrew-quantumssh`.
+  - Implementation: the repository [`gonzafg2/homebrew-quantumssh`](https://github.com/gonzafg2/homebrew-quantumssh), created 2026-11-04 with §1's branch protection.
 
 > **Post-acceptance errata** (per [ADR-0015](0015-permit-annotated-errata-in-adrs.md)):
 >
@@ -22,6 +22,29 @@
 >   binary on 2026-11-03. Homebrew's installer itself applies `go-w`
 >   for a non-admin account, so an `etc` at mode 755 is a layout it
 >   supports. The decision, its layout and its paths are unchanged.
+> - **2026-11-04** ([PR #261](https://github.com/gonzafg2/quantumssh/pull/261), after [gonzafg2/homebrew-quantumssh#1](https://github.com/gonzafg2/homebrew-quantumssh/pull/1)):
+>   the tap's first CI runs showed three steps of this ADR that do not
+>   work as written. The decision, its layout and its paths are
+>   unchanged.
+>   - §4 step 3: Homebrew 7 refuses `brew install ./Formula/quantumssh.rb`,
+>     a bare file path. CI taps the checkout and trusts it with
+>     `brew trust`. Then it runs `brew style`,
+>     `brew readall --os=all --arch=all`, `brew audit --strict`,
+>     `brew install` and `brew test`.
+>   - §4 step 4: CI creates the host key with `quantumssh keygen`
+>     (ADR-0058), as the caveats tell the user to, not with
+>     `ssh-keygen`. On `ubuntu-24.04`, Homebrew's `etc` carries a
+>     default ACL. The umask there is 0022, but under that ACL
+>     `ssh-keygen` 10.6p1 left the composite private key at mode 0644,
+>     and ADR-0029 refuses a group-readable private key. `quantumssh
+>     keygen` creates the file at 0600. `brew install openssh` stays,
+>     for the client only.
+>   - §2 "Install" and the caveats: Homebrew's `write_file` gives a new
+>     file the mode that the directory's defaults allow. That same ACL
+>     left `config.toml` group-writable, as a umask of 002 would, and
+>     ADR-0029 refuses it. The formula sets `config.toml` to 0600 after
+>     writing it. The caveats install `authorized_keys` with
+>     `install -m 0644`, as `docs/deployment.md` §12 does.
 
 ## Context
 

@@ -20,7 +20,10 @@ It is built greenfield on audited cryptographic primitive crates — it does
 **Status: alpha.** `0.1.0`, the first public release, closed Phase 2
 ([issue #109](https://github.com/gonzafg2/quantumssh/issues/109)): PTY
 sessions, SFTP, the TOML configuration file, systemd and user certificates
-on top of the Phase-1 path below. Phase 0 (foundation: manifesto, governance, threat
+on top of the Phase-1 path below. `0.2.0` adds prebuilt binaries with
+provenance, `quantumssh keygen` and the Homebrew tap
+`gonzafg2/homebrew-quantumssh` (RFC-0017, RFC-0018; Phase 3,
+[issue #248](https://github.com/gonzafg2/quantumssh/issues/248)). Phase 0 (foundation: manifesto, governance, threat
 model, ADR/RFC catalog, supporting infrastructure) is complete. Phase 1
 (the walking-skeleton server, [issue #9](https://github.com/gonzafg2/quantumssh/issues/9))
 has **landed**: milestones M1–M6 are merged. The `quantumssh-core` library
