@@ -1,7 +1,7 @@
 # ADR 0054: Release artifacts carry provenance attestations, a CycloneDX SBOM and a maintainer-signed `SHA256SUMS`, and releases are immutable
 
-- **Status:** Proposed
-- **Date:** TBD (accepted with the implementing PR)
+- **Status:** Accepted
+- **Date:** 2026-11-04 (accepted with the last of its implementing PRs, [#258](https://github.com/gonzafg2/quantumssh/pull/258), after [#253](https://github.com/gonzafg2/quantumssh/pull/253), [#255](https://github.com/gonzafg2/quantumssh/pull/255) and [#257](https://github.com/gonzafg2/quantumssh/pull/257), once immutable releases were turned on on 2026-11-04; drafted 2026-11-03)
 - **Deciders:** Project lead
 - **Related:**
   - Implements [RFC-0017](../rfcs/0017-alpha-distribution.md) §3, §4 step 4, §5 and §11 (Accepted 2026-11-03).

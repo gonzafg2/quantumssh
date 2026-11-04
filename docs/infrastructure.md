@@ -319,6 +319,15 @@ a whole ruleset, not to one rule, so each rule set sits in its own:
 `rehearsal-*` tags are outside both, so a rehearsal's tag and draft can
 be deleted afterwards.
 
+### Immutable releases
+
+The repository's immutable-releases setting is on since 2026-11-04
+([ADR-0054](./adr/0054-release-artifact-integrity.md) §5). A published
+release's tag and assets are locked, and GitHub attaches a release
+attestation that `gh release verify` and `gh release verify-asset`
+check. `v0.1.0`, published before the setting, stays mutable.
+`gh api repos/gonzafg2/quantumssh/immutable-releases` reads it back.
+
 ### Required status checks
 
 Five CI contexts must report success before a PR can merge
