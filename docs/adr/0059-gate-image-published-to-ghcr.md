@@ -12,7 +12,8 @@
   - Implementation:
     - new files: `tests/gate-image/Dockerfile`, `tests/gate-image/verify.sh` and `.github/workflows/gate-image.yml`;
     - changed files: `.github/workflows/interop.yml`, `.github/workflows/ci.yml`, `.github/workflows/release.yml` and `tests/systemd/run_in_docker.sh`;
-    - `tests/systemd/Dockerfile` is removed.
+    - `tests/systemd/Dockerfile` is removed;
+    - `docs/threat-model.md` §6.4 lists a compromise of `gate-image.yml` among its non-defences, next to the release workflow's.
 
 ## Context
 
