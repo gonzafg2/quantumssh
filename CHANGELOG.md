@@ -7,8 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-04
+
+The first release with prebuilt binaries. Every binary is built, tested on
+its own bytes and attested by the project's release workflow, and the
+maintainer signs its checksums
+([RFC-0017](docs/rfcs/0017-alpha-distribution.md)).
+
 ### Added
 
+- Prebuilt binaries for Linux `x86_64` and `aarch64` (static, musl) and
+  for macOS arm64. Each release also carries a CycloneDX SBOM,
+  `SHA256SUMS` and `SHA256SUMS.asc`:
+  - a tag-triggered workflow of least-privileged jobs builds them
+    ([ADR-0053](docs/adr/0053-release-workflow.md));
+  - the OpenSSH 10.6p1 interop gate, and on `x86_64` the systemd test,
+    run on the exact tarballs, on `x86_64`, `aarch64` and macOS, before
+    anything is attested ([ADR-0055](docs/adr/0055-interop-gate-on-published-artifacts.md));
+  - each tarball and the SBOM carry a build-provenance attestation
+    (SLSA Build Level 2);
+  - the maintainer signs the recomputed `SHA256SUMS` with the project
+    PGP key's primary
+    ([ADR-0057](docs/adr/0057-release-signing-with-the-project-pgp-key.md));
+  - the release is immutable
+    ([ADR-0054](docs/adr/0054-release-artifact-integrity.md)).
+- `v*` tags can be created only by the repository admin, and never moved
+  or deleted (two repository rulesets, ADR-0053 §4).
+- `_release-key.quantumssh.org`, a DNSSEC-signed TXT record holding the
+  current release-key fingerprint, checked with `delv` (ADR-0057).
+- Documentation:
+  - `docs/deployment.md` downloads and verifies a release;
+  - it lists where each platform gets the OpenSSH 10.6 client;
+  - it covers WSL2 and the Homebrew single-user evaluation path;
+  - `SECURITY.md` has the release verification recipe, including the
+    one after a key compromise.
 - `quantumssh keygen <PATH>` writes a new `ssh-mldsa44-ed25519` host key
   and its `.pub` file, so a server host no longer needs OpenSSH 10.6 to
   create one. It refuses an existing file, a symlink, and a directory the
@@ -580,6 +612,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the project accepts this in exchange for protecting first-time
   HTTP visitors from active downgrade attacks on initial request.
 
-[Unreleased]: https://github.com/gonzafg2/quantumssh/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/gonzafg2/quantumssh/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/gonzafg2/quantumssh/releases/tag/v0.2.0
 [0.1.0]: https://github.com/gonzafg2/quantumssh/releases/tag/v0.1.0
 [0.0.1]: https://github.com/gonzafg2/quantumssh/releases/tag/v0.0.1
