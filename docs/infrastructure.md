@@ -149,6 +149,7 @@ exact `dig` invocation.
 | TXT (DKIM) | `cf2024-1._domainkey` | Auto-managed by Cloudflare Email Routing |
 | CAA | `quantumssh.org` | Eleven records — see [Certificate Authority Authorization](#certificate-authority-authorization) |
 | DNSKEY | `quantumssh.org` | KSK + ZSK, ECDSA P-256 (algorithm 13) |
+| TXT | `_release-key` | The current release-key fingerprint, DNSSEC-signed; updated at every key rotation ([ADR-0057](./adr/0057-release-signing-with-the-project-pgp-key.md)) |
 
 Reproducing these records requires registrar and DNS-host accounts the
 project does not share; the `dig` invocations to read them are in
@@ -263,6 +264,14 @@ years from issue. Rotation is reminded 60 and 30 days before expiry.
 Decision rationale (the two-year expiry): see
 [ADR-0005](./adr/0005-pgp-key-two-year-expiry.md).
 
+The same key's primary signs release tags and each release's
+`SHA256SUMS`
+([ADR-0057](./adr/0057-release-signing-with-the-project-pgp-key.md)).
+[`keys/release-keys.txt`](../keys/release-keys.txt) is the pin set of
+release keys with their roles, and `_release-key.quantumssh.org`
+publishes the current fingerprint through a credential other than the
+repository's.
+
 Fingerprint verification, key import, and the embargoed-disclosure
 workflow itself are documented in [`SECURITY.md`](../SECURITY.md) and
 in the "Project PGP key" section of [`operations.md`](./operations.md).
@@ -295,6 +304,20 @@ is disallowed, and admins are not exempt (`enforce_admins` is `true`).
 Decision rationale (the zero approving-reviews configuration during
 solo maintainership): see
 [ADR-0008](./adr/0008-branch-protection-zero-required-reviews.md).
+
+### Tag rulesets on `v*`
+
+Two repository rulesets protect release tags
+([ADR-0053](./adr/0053-release-workflow.md) §4). Bypass actors apply to
+a whole ruleset, not to one rule, so each rule set sits in its own:
+
+| Ruleset | Rules | Bypass |
+|---|---|---|
+| `v* tags: only the admin creates them (ADR-0053 §4)` | `creation` | The repository admin role |
+| `v* tags: never moved or deleted, no bypass (ADR-0053 §4)` | `update`, `deletion` | None |
+
+`rehearsal-*` tags are outside both, so a rehearsal's tag and draft can
+be deleted afterwards.
 
 ### Required status checks
 
