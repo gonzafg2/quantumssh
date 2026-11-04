@@ -1,7 +1,7 @@
 # ADR 0053: Build releases in a tag-triggered workflow of least-privileged jobs, gated before anything is attested
 
-- **Status:** Proposed
-- **Date:** TBD (accepted with the implementing PR)
+- **Status:** Accepted
+- **Date:** 2026-11-03 (accepted with the implementing PR [#253](https://github.com/gonzafg2/quantumssh/pull/253), once the rehearsal run [41751733656](https://github.com/gonzafg2/quantumssh/actions/runs/41751733656) passed; drafted 2026-11-03)
 - **Deciders:** Project lead
 - **Related:**
   - Implements [RFC-0017](../rfcs/0017-alpha-distribution.md) §2, §4 and §12 (Accepted 2026-11-03; [#247](https://github.com/gonzafg2/quantumssh/pull/247)).
