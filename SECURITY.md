@@ -124,9 +124,10 @@ unaffected, the recipe becomes:
 
 1. `gh release verify-asset vX.Y.Z SHA256SUMS`, which checks the file
    against the immutable release's recorded digest;
-2. step 3;
-3. a match between the release's `SHA256SUMS` digest and the advisory,
-   which the successor key signs.
+2. a match between that `SHA256SUMS` digest and the advisory, which the
+   successor key signs;
+3. step 2, so the downloads match the `SHA256SUMS` just authenticated;
+4. step 3.
 
 ## What you can expect from us
 

@@ -83,7 +83,7 @@ Then verify it, in this order
    ```
 
 Steps 1 and 2 are the minimum. A user who checks only the attestation
-gets no check of the tag's signature. Then install the binary where the
+gets no check of the maintainer's signature. Then install the binary where the
 unit expects it:
 
 ```sh
