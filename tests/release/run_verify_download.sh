@@ -27,7 +27,7 @@ bad() { echo "FAIL: $1" >&2; failures=$((failures + 1)); }
 gen() { # gen <name> [faked time] -> prints the primary fingerprint
     local name="$1" faked=() expiry=1y
     if [ "$#" -eq 2 ]; then faked=(--faked-system-time "$2"); expiry=1d; fi
-    gpg --batch --quiet "${faked[@]}" --pinentry-mode loopback --passphrase '' \
+    gpg --batch --quiet ${faked[@]+"${faked[@]}"} --pinentry-mode loopback --passphrase '' \
         --quick-gen-key "Test $name <$name@test.invalid>" ed25519 sign "$expiry" 2>/dev/null
     gpg --batch --with-colons --list-keys "$name@test.invalid" 2>/dev/null | awk -F: '$1 == "fpr" { print $10; exit }'
 }
@@ -38,7 +38,7 @@ sign() { # sign <dir> [faked time] <fingerprint>...
     case "${1:-}" in *T*!) faked=(--faked-system-time "$1"); shift ;; esac
     local users=()
     for f in "$@"; do users+=(-u "$f"); done
-    gpg --batch --quiet "${faked[@]}" --pinentry-mode loopback --passphrase '' \
+    gpg --batch --quiet ${faked[@]+"${faked[@]}"} --pinentry-mode loopback --passphrase '' \
         "${users[@]}" --armor --detach-sign -o "$dir/SHA256SUMS.asc" "$dir/SHA256SUMS" 2>/dev/null
 }
 
@@ -65,7 +65,7 @@ keys_dir() { # keys_dir <name> <manifest lines> <current fpr> [<fpr> to retired/
 
 expect() { # expect <case> <want exit> <want stderr substring> <keys> <tag> <dir>
     local name="$1" want="$2" needle="$3" rc=0
-    QUANTUMSSH_KEYS="$4" bash "$verify" "$5" "$6" >"$work/out" 2>"$work/err" || rc=$?
+    QUANTUMSSH_KEYS="$4" "$BASH" "$verify" "$5" "$6" >"$work/out" 2>"$work/err" || rc=$?
     if [ "$rc" -ne "$want" ]; then
         bad "$name: exit $rc, wanted $want"; sed 's/^/    /' "$work/err" >&2; return
     fi
@@ -111,7 +111,7 @@ expect "SHA256SUMS of another version" 1 "is not a v0.2.0 asset" "$k_all" v0.2.0
 expect "revoked key" 1 "REVKEYSIG" "$k_all" v0.1.0 "$d_revoked"
 
 d_retired="$(release_dir retired 0.1.0)"; sign "$d_retired" "$retired"
-rc=0; bash "$check" "$k_all/release-keys.txt" \
+rc=0; "$BASH" "$check" "$k_all/release-keys.txt" \
     < <(gpg --batch --status-fd 1 --verify "$d_retired/SHA256SUMS.asc" "$d_retired/SHA256SUMS" 2>/dev/null) \
     >"$work/out" 2>/dev/null || rc=$?
 if [ "$rc" -eq 3 ] && grep -qx "retired $retired 2020-01-01 $today" "$work/out"; then

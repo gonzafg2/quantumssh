@@ -84,7 +84,7 @@ echo "current release key: $(awk '$2 == "current" { print $1 }' <<<"$listed")"
 # 3. The pinned signature check.
 status="$(gpg --batch --status-fd 1 --verify "$dir/SHA256SUMS.asc" "$dir/SHA256SUMS" 2>/dev/null || true)"
 rc=0
-verdict="$(bash "$here/release/pinned-signature-check.sh" "$pins" <<<"$status")" || rc=$?
+verdict="$("$BASH" "$here/release/pinned-signature-check.sh" "$pins" <<<"$status")" || rc=$?
 case "$rc" in
     0) echo "$verdict"; echo "$tag: SHA256SUMS is signed by the current release key"; exit 0 ;;
     3) ;;
