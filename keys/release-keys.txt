@@ -1,0 +1,12 @@
+# QuantumSSH release-signing keys: the pin set (ADR-0054 §6, ADR-0057).
+#
+# One key per line: fingerprint, role, first use, end date.
+#   role:      current (the one signing key), retired (rotated out,
+#              verifiable within its window) or revoked (every signature
+#              it made fails).
+#   end date:  the retirement or revocation date, or "-" for the current
+#              key.
+# The current key is keys/security.asc; a retired or revoked key is
+# keys/retired/<fingerprint>.asc. Changing this file is a reviewed,
+# SSH-signed commit to main (ADR-0057).
+66DB5100B0700E4AE051971F9A8DFF06AFD25B24 current 2026-11-03 -

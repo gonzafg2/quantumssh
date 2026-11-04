@@ -7,15 +7,32 @@ name: Interop
 # ssh-mldsa44-ed25519), so the job runs in a Debian forky container with
 # openssh-client pinned to the exact build named below (OpenSSH 10.6p1,
 # package 1:10.6p1-1; ADR-0048 on ADR-0034's mechanics).
+#
+# release.yml also calls it on a release tarball (ADR-0055 §1): the job then
+# runs the tarball's binary instead of building one, and records the
+# tarball's digest for the attest job.
 
 on:
   push:
     branches: [main]
   pull_request:
+  workflow_call:
+    inputs:
+      artifact:
+        description: Workflow artifact holding one release tarball, whose binary the gate runs
+        type: string
+        required: true
+      runner:
+        description: ubuntu-24.04 or ubuntu-24.04-arm
+        type: string
+        required: true
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Under workflow_call, github.workflow and github.ref are the caller's, so
+  # the runner keeps the two release legs apart, and a release gate is never
+  # cancelled.
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.runner }}
+  cancel-in-progress: ${{ !inputs.artifact }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -27,7 +44,7 @@ permissions:
 jobs:
   openssh-interop:
     name: openssh-interop
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
     # ADR-0020 / ADR-0034 / ADR-0048: the base image is pinned by digest
     # (the `debian:forky-slim` tag is mutable) and the packages come from the
     # snapshot.debian.org archive state that image was built from, with
@@ -96,14 +113,19 @@ jobs:
           ssh -Q key | grep -qx "ssh-mldsa44-ed25519" \
             || { echo "::error::ssh-mldsa44-ed25519 not offered by this client"; exit 1; }
 
+      # No token is left in .git/config for the binary under test to find
+      # (ADR-0053 §1).
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       # ADR-0039: rust-toolchain.toml is the only place a Rust version is
       # named. Pass its exact `channel` to the installer; anything but
       # MAJOR.MINOR.PATCH fails here, so the pin cannot float again
       # silently, and the input is digits and dots only.
       - name: Read pinned toolchain
+        if: ${{ !inputs.artifact }}
         id: toolchain
         shell: bash
         run: |
@@ -115,15 +137,53 @@ jobs:
           echo "channel=$channel" >> "$GITHUB_OUTPUT"
 
       - name: Install Rust toolchain
+        if: ${{ !inputs.artifact }}
         uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
           toolchain: ${{ steps.toolchain.outputs.channel }}
 
+      # No cache on the release path: a cache written by a pull-request run
+      # must not reach a release gate (ADR-0053 §1).
       - name: Cache cargo registry, index and target
+        if: ${{ !inputs.artifact }}
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
 
       - name: Build release binary
+        if: ${{ !inputs.artifact }}
         run: cargo build --workspace --release
+
+      - name: Download the release tarball
+        if: ${{ inputs.artifact }}
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        # A workspace path: in a container job, runner.temp names the host's
+        # directory, not the container's.
+        with:
+          name: ${{ inputs.artifact }}
+          path: release-artifact
+
+      # The digest is recorded before the binary runs (ADR-0055 §4).
+      - name: Extract the release tarball
+        if: ${{ inputs.artifact }}
+        shell: bash
+        env:
+          ARTIFACT: ${{ inputs.artifact }}
+        run: |
+          set -euo pipefail
+          cd release-artifact
+          tarballs=(quantumssh-*.tar.gz)
+          [ "${#tarballs[@]}" -eq 1 ] && [ -f "${tarballs[0]}" ] \
+            || { echo "::error::expected exactly one release tarball in $ARTIFACT"; exit 1; }
+          sha256sum "${tarballs[0]}" > ../gate-digests.txt
+          tar -xzf "${tarballs[0]}"
+          echo "QUANTUMSSH_BIN=$PWD/${tarballs[0]%.tar.gz}/quantumssh" >> "$GITHUB_ENV"
 
       - name: OpenSSH interop gate
         run: bash tests/interop/run_openssh_client.sh
+
+      - name: Record the gated tarball's digest
+        if: ${{ inputs.artifact }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: gate-digests-interop-${{ inputs.runner }}
+          path: gate-digests.txt
+          if-no-files-found: error
