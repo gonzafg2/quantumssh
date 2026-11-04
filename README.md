@@ -18,7 +18,7 @@ We are not forking OpenSSH. We are not adding PQ algorithms as an option. We are
 
 ## Status
 
-🚧 **Alpha — `0.1.0` released; Phase 2 complete. Not for production before Phase 3.**
+🚧 **Alpha — `0.2.0` released, with prebuilt binaries; Phase 2 complete. Not for production before Phase 3.**
 
 Phase 0 (foundation) and Phase 1 (walking skeleton) are done: the greenfield SSH-2 server in Rust accepts OpenSSH 10.x clients end-to-end (hybrid `mlkem768x25519-sha256`, Ed25519 host keys at the time, publickey auth, single-command `exec`, structured `tracing`, CI interop gate).
 
@@ -134,7 +134,7 @@ Tracked in [#109](https://github.com/gonzafg2/quantumssh/issues/109). Scoping (n
 - Conformance tests against OpenSSH client
 - Security audit (community-funded or grant-funded)
 - First production-candidate release: `0.5.0`
-- Prebuilt binaries (Linux x86_64/aarch64, macOS arm64) with provenance, and a Homebrew tap ([RFC-0017](docs/rfcs/0017-alpha-distribution.md))
+- ✅ Prebuilt binaries (Linux x86_64/aarch64, macOS arm64) with provenance, and a Homebrew tap ([RFC-0017](docs/rfcs/0017-alpha-distribution.md)): shipped in [`0.2.0`](https://github.com/gonzafg2/quantumssh/releases/tag/v0.2.0), tap [`gonzafg2/homebrew-quantumssh`](https://github.com/gonzafg2/homebrew-quantumssh)
 
 ### Phase 4 — Ecosystem
 - Distribution packages (Debian, Arch, Alpine, homebrew-core)
