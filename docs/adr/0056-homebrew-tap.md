@@ -22,7 +22,7 @@
 >   binary on 2026-11-03. Homebrew's installer itself applies `go-w`
 >   for a non-admin account, so an `etc` at mode 755 is a layout it
 >   supports. The decision, its layout and its paths are unchanged.
-> - **2026-11-04** (this PR, after [gonzafg2/homebrew-quantumssh#1](https://github.com/gonzafg2/homebrew-quantumssh/pull/1)):
+> - **2026-11-04** ([PR #261](https://github.com/gonzafg2/quantumssh/pull/261), after [gonzafg2/homebrew-quantumssh#1](https://github.com/gonzafg2/homebrew-quantumssh/pull/1)):
 >   the tap's first CI runs showed three steps of this ADR that do not
 >   work as written. The decision, its layout and its paths are
 >   unchanged.
