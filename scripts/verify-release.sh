@@ -24,8 +24,8 @@
 #     the local signature with scripts/verify-download.sh and the pin set
 #     of origin/main. It then downloads the draft again,
 #     requires exactly six assets, byte-identical to the verified files,
-#     repeats the attestation check on them, and requires immutable
-#     releases to be on. Last, it prints the
+#     repeats the checksum and attestation checks on them, and requires
+#     immutable releases to be on. Last, it prints the
 #     publish command.
 #
 # A rehearsal-<name> tag (ADR-0053 §4) runs the first form with no tag
@@ -115,6 +115,16 @@ check_attestations() { # check_attestations <dir>: step 3; --publish runs it aga
     done
 }
 
+check_sums() { # check_sums <dir>: step 4; --publish runs it again
+    # shellcheck disable=SC2086 # $expected is a list of file names without spaces
+    (cd "$1" && sha256 $expected | LC_ALL=C sort -k2) > "$keys/SHA256SUMS.recomputed"
+    cmp -s "$keys/SHA256SUMS.recomputed" "$1/SHA256SUMS" || {
+        diff "$keys/SHA256SUMS.recomputed" "$1/SHA256SUMS" >&2 || true
+        fail "SHA256SUMS recomputed from $1 differs from the draft's"
+    }
+    echo "ok"
+}
+
 if [ "$publish" -eq 1 ]; then
     step "the tag, again: it must not have moved since the check"
     check_tag
@@ -124,14 +134,16 @@ if [ "$publish" -eq 1 ]; then
     [ "$(gh api "repos/$REPO/immutable-releases" -q .enabled)" = true ] \
         || fail "immutable releases are off; turn them on before publishing (ADR-0054 §5)"
     step "the draft holds exactly six assets, byte-identical to the verified files"
-    again="$dir/.before-publish"
+    # Under $keys, so the EXIT trap removes it on any failure.
+    again="$keys/before-publish"
     download "$again" "$(assets SHA256SUMS SHA256SUMS.asc)"
     for f in $(assets SHA256SUMS SHA256SUMS.asc); do
         cmp -s "$dir/$f" "$again/$f" || fail "$f on the draft differs from the verified $dir/$f"
     done
+    step "the downloads, again: they must match the signed SHA256SUMS"
+    check_sums "$again"
     step "the attestations, again: they must name the tag's commit now"
     check_attestations "$again"
-    rm -rf "$again"
     echo
     echo "ready to publish $tag:"
     echo "  gh release edit $tag -R $REPO --draft=false"
@@ -149,13 +161,7 @@ step "3. attestations"
 check_attestations "$dir"
 
 step "4. SHA256SUMS recomputed byte for byte"
-# shellcheck disable=SC2086 # $expected is a list of file names without spaces
-(cd "$dir" && sha256 $expected | LC_ALL=C sort -k2) > "$keys/SHA256SUMS.recomputed"
-cmp -s "$keys/SHA256SUMS.recomputed" "$dir/SHA256SUMS" || {
-    diff "$keys/SHA256SUMS.recomputed" "$dir/SHA256SUMS" >&2 || true
-    fail "the recomputed SHA256SUMS differs from the draft's"
-}
-echo "ok"
+check_sums "$dir"
 
 step "5. the gates' digest records"
 runs="$(gh run list -R "$REPO" --workflow release.yml --branch "$tag" --json databaseId,headSha,conclusion \
