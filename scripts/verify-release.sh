@@ -20,10 +20,12 @@
 #
 #   scripts/verify-release.sh --publish vX.Y.Z <dir>
 #     Run once SHA256SUMS.asc is uploaded, immediately before publishing.
-#     It checks the local signature with scripts/verify-download.sh and
-#     the pin set of origin/main. It then downloads the draft again,
+#     It repeats step 1, so a tag moved since the check fails. It checks
+#     the local signature with scripts/verify-download.sh and the pin set
+#     of origin/main. It then downloads the draft again,
 #     requires exactly six assets, byte-identical to the verified files,
-#     and requires immutable releases to be on. Last, it prints the
+#     repeats the attestation check on them, and requires immutable
+#     releases to be on. Last, it prints the
 #     publish command.
 #
 # A rehearsal-<name> tag (ADR-0053 §4) runs the first form with no tag
@@ -75,6 +77,10 @@ download() { # download <empty dir> <expected names>: the draft's assets, exactl
     [ "$have" = "$2" ] || fail "the draft's assets are not exactly the expected ones:
 $(diff <(echo "$2") <(echo "$have") || true)"
     gh release download "$tag" -R "$REPO" -D "$1"
+    # A second API call: an asset added in between would land here too.
+    got="$(find "$1" -mindepth 1 -maxdepth 1 -exec basename {} \; | LC_ALL=C sort)"
+    [ "$got" = "$2" ] || fail "the downloaded files are not exactly the expected ones:
+$(diff <(echo "$2") <(echo "$got") || true)"
 }
 
 # The pin set and keys of origin/main, never the local tree's.
@@ -85,7 +91,33 @@ trap 'gpgconf --kill all >/dev/null 2>&1 || true; rm -rf "$keys" "$GNUPGHOME"' E
 git archive origin/main keys | tar -x -C "$keys"
 pins="$keys/keys/release-keys.txt"
 
+check_tag() { # step 1; --publish runs it again
+    [ "$(git cat-file -t "refs/tags/$tag")" = tag ] || fail "$tag is not an annotated tag"
+    if [ "$rehearsal" -eq 1 ]; then
+        echo "rehearsal tag: no signature to check"
+    else
+        gpg --batch --quiet --import "$keys/keys/security.asc" 2>/dev/null
+        status="$(git verify-tag --raw "$tag" 2>&1 || true)"
+        "$BASH" "$here/release/pinned-signature-check.sh" "$pins" <<<"$status"
+    fi
+    git merge-base --is-ancestor "$commit" origin/main || fail "$tag ($commit) is not on origin/main"
+    echo "$tag -> $commit, version $version, on origin/main"
+}
+
+check_attestations() { # check_attestations <dir>: step 3; --publish runs it again
+    for f in $expected; do
+        out="$(gh attestation verify "$1/$f" -R "$REPO" \
+            --signer-workflow "$REPO/$WORKFLOW" --source-ref "refs/tags/$tag" \
+            --deny-self-hosted-runners --format json)" || fail "$f: attestation verification failed"
+        attested="$(jq -r '.[].verificationResult.statement.predicate.buildDefinition.resolvedDependencies[]?.digest.gitCommit // empty' <<<"$out" | sort -u)"
+        [ "$attested" = "$commit" ] || fail "$f: attested commit '$attested', not $commit"
+        echo "ok: $f"
+    done
+}
+
 if [ "$publish" -eq 1 ]; then
+    step "the tag, again: it must not have moved since the check"
+    check_tag
     step "the local signature, with the pin set of origin/main"
     QUANTUMSSH_KEYS="$keys/keys" "$BASH" "$here/verify-download.sh" "$tag" "$dir"
     step "immutable releases"
@@ -97,6 +129,8 @@ if [ "$publish" -eq 1 ]; then
     for f in $(assets SHA256SUMS SHA256SUMS.asc); do
         cmp -s "$dir/$f" "$again/$f" || fail "$f on the draft differs from the verified $dir/$f"
     done
+    step "the attestations, again: they must name the tag's commit now"
+    check_attestations "$again"
     rm -rf "$again"
     echo
     echo "ready to publish $tag:"
@@ -105,30 +139,14 @@ if [ "$publish" -eq 1 ]; then
 fi
 
 step "1. the tag: annotated, signed by the current release key, on main"
-[ "$(git cat-file -t "refs/tags/$tag")" = tag ] || fail "$tag is not an annotated tag"
-if [ "$rehearsal" -eq 1 ]; then
-    echo "rehearsal tag: no signature to check"
-else
-    gpg --batch --quiet --import "$keys/keys/security.asc" 2>/dev/null
-    status="$(git verify-tag --raw "$tag" 2>&1 || true)"
-    "$BASH" "$here/release/pinned-signature-check.sh" "$pins" <<<"$status"
-fi
-git merge-base --is-ancestor "$commit" origin/main || fail "$tag ($commit) is not on origin/main"
-echo "$tag -> $commit, version $version, on origin/main"
+check_tag
 
 step "2. the draft holds exactly five assets"
 download "$dir" "$(assets SHA256SUMS)"
 ls -1 "$dir"
 
 step "3. attestations"
-for f in $expected; do
-    out="$(gh attestation verify "$dir/$f" -R "$REPO" \
-        --signer-workflow "$REPO/$WORKFLOW" --source-ref "refs/tags/$tag" \
-        --deny-self-hosted-runners --format json)" || fail "$f: attestation verification failed"
-    attested="$(jq -r '.[].verificationResult.statement.predicate.buildDefinition.resolvedDependencies[]?.digest.gitCommit // empty' <<<"$out" | sort -u)"
-    [ "$attested" = "$commit" ] || fail "$f: attested commit '$attested', not $commit"
-    echo "ok: $f"
-done
+check_attestations "$dir"
 
 step "4. SHA256SUMS recomputed byte for byte"
 # shellcheck disable=SC2086 # $expected is a list of file names without spaces
