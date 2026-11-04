@@ -9,6 +9,20 @@
   - Installs the artifacts of [ADR-0053](0053-release-workflow.md), with the checksums of [ADR-0054](0054-release-artifact-integrity.md).
   - Implementation: the new repository `gonzafg2/homebrew-quantumssh`.
 
+> **Post-acceptance errata** (per [ADR-0015](0015-permit-annotated-errata-in-adrs.md)):
+>
+> - **2026-11-03** ([PR #256](https://github.com/gonzafg2/quantumssh/pull/256)):
+>   §2's caveats and §4 step 4 gained one step, `chmod g-w "$(brew --prefix)/etc"`.
+>   Without it the service described here cannot start on a default
+>   install. For an account in the `admin` group, Homebrew's installer
+>   leaves `$(brew --prefix)/etc` group-writable (mode 775), and
+>   ADR-0029 refuses `config.toml`, the host key and `authorized_keys`
+>   under a group-writable ancestor. `quantumssh keygen` refuses to
+>   write there too (ADR-0058). This was checked with the release
+>   binary on 2026-11-03. Homebrew's installer itself applies `go-w`
+>   for a non-admin account, so an `etc` at mode 755 is a layout it
+>   supports. The decision, its layout and its paths are unchanged.
+
 ## Context
 
 RFC-0017 chose a tap over homebrew-core, which needs a stable upstream
@@ -81,6 +95,10 @@ reviewed pull request per release.
   - the OpenSSH ≥ 10.6 client floor, and that the Homebrew `ssh` is run
     by full path after `brew unlink openssh`;
   - how to create the host key and `authorized_keys`;
+  - that `$(brew --prefix)/etc` must not be group-writable, with the
+    command `chmod g-w "$(brew --prefix)/etc"`, because ADR-0029 refuses
+    the configuration and both key files under a group-writable
+    ancestor;
   - the link to the Linux deployment guide as the supported posture.
 - **No `depends_on "openssh"`** (RFC-0017 §7).
 
@@ -115,6 +133,8 @@ On every pull request, on a macOS arm64 runner and on `ubuntu-24.04`:
    verified `SHA256SUMS`.
 3. `brew install ./Formula/quantumssh.rb` and `brew test quantumssh`.
 4. Run the service end to end:
+   - `chmod g-w "$(brew --prefix)/etc"`, as the caveats tell the user
+     to;
    - `brew install openssh`, because neither runner's own OpenSSH can
      create the composite key;
    - generate the host key with
