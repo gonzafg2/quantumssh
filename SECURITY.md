@@ -126,8 +126,10 @@ unaffected, the recipe becomes:
    against the immutable release's recorded digest;
 2. a match between that `SHA256SUMS` digest and the advisory, which the
    successor key signs;
-3. step 2, so the downloads match the `SHA256SUMS` just authenticated;
-4. step 3.
+3. `sha256sum --ignore-missing -c SHA256SUMS`, so the downloads match
+   the `SHA256SUMS` just authenticated;
+4. the provenance check, `gh attestation verify` with the pins shown
+   above. It is not optional here, because the PGP path is unavailable.
 
 ## What you can expect from us
 
