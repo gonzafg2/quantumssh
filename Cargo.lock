@@ -463,7 +463,7 @@ dependencies = [
 
 [[package]]
 name = "quantumssh"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "ed25519-dalek",
  "ml-dsa",
@@ -482,7 +482,7 @@ dependencies = [
 
 [[package]]
 name = "quantumssh-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "aes",
  "aes-gcm",
