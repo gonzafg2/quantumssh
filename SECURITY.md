@@ -45,9 +45,23 @@ gpg --show-keys quantumssh-security.asc
 gpg --import quantumssh-security.asc
 ```
 
-For extra assurance, cross-check the fingerprint against this README on
-`quantumssh.org` (served from a different origin) and against the
-project's signed git tags once the first release ships.
+For extra assurance, cross-check the fingerprint against the
+DNSSEC-signed record `_release-key.quantumssh.org`, which a separate
+credential controls
+([ADR-0057](docs/adr/0057-release-signing-with-the-project-pgp-key.md)):
+
+```sh
+delv @1.1.1.1 TXT _release-key.quantumssh.org
+```
+
+Accept it only when the output says `; fully validated`. `delv`
+validates the DNSSEC chain against the root trust anchor itself, so the
+resolver only carries the records. Neither `dig +dnssec` nor a
+resolver's `ad` flag over plain UDP proves anything. macOS's own `delv`
+is built without crypto support and cannot validate; use the one in
+Homebrew's `bind`, or `bind9-dnsutils`/`bind-tools` on Linux.
+`quantumssh.org` itself is not a second channel, because it redirects to
+this repository.
 
 If you cannot encrypt your report, plain email is acceptable; do not
 delay disclosure waiting on PGP setup.
@@ -60,6 +74,59 @@ A useful report typically includes:
 - Any suggested mitigation or fix, if you have one.
 - Whether you intend to publish independently, and your preferred
   attribution (real name, handle, or anonymous).
+
+## Verifying a release
+
+From `0.2.0` on, each release publishes three tarballs (Linux `x86_64`
+and `aarch64`, macOS arm64), a CycloneDX SBOM, `SHA256SUMS` and
+`SHA256SUMS.asc`. The same key as above signs the release's `v*` tag and
+its `SHA256SUMS`
+([ADR-0057](docs/adr/0057-release-signing-with-the-project-pgp-key.md)).
+In this order
+([ADR-0054](docs/adr/0054-release-artifact-integrity.md) §6):
+
+1. **The pin set and the signature.**
+   [`keys/release-keys.txt`](keys/release-keys.txt) lists every release
+   key and its role: `current`, `retired` (rotated out, valid within its
+   window) or `revoked`. From a checkout of `main`, run
+   `scripts/verify-download.sh vX.Y.Z <dir>` on the directory holding
+   `SHA256SUMS` and `SHA256SUMS.asc`. It imports every listed key into
+   a throwaway GnuPG home and runs the pinned signature check:
+   - it fails on a revoked, bad or, for the current key, expired
+     signature;
+   - it accepts a retired key only for a release whose immutable record
+     GitHub timestamped inside the key's window, on that release's
+     recorded assets.
+
+   A bare `gpg --verify` is not enough, because it reports "Good
+   signature" for a revoked or expired key. Check the current
+   fingerprint the script prints against the one above.
+2. **The downloads:** `sha256sum --ignore-missing -c SHA256SUMS`.
+3. **The provenance (recommended):**
+
+   ```sh
+   gh attestation verify <tarball> -R gonzafg2/quantumssh \
+     --signer-workflow gonzafg2/quantumssh/.github/workflows/release.yml \
+     --source-ref refs/tags/vX.Y.Z --deny-self-hosted-runners
+   ```
+
+Steps 1 and 2 are the minimum. Checking only the attestation gives no
+check of the maintainer's signature. To check a tag itself, with the key
+imported, run
+`git verify-tag --raw vX.Y.Z 2>&1 | scripts/release/pinned-signature-check.sh keys/release-keys.txt`.
+That runs the same pinned check on GnuPG's status lines.
+[`docs/deployment.md`](docs/deployment.md) §1 walks through a Linux
+install with these steps.
+
+If the release key is ever revoked for compromise, step 1 fails for
+every release, by design. For a release the advisory lists as
+unaffected, the recipe becomes:
+
+1. `gh release verify-asset vX.Y.Z SHA256SUMS`, which checks the file
+   against the immutable release's recorded digest;
+2. step 3;
+3. a match between the release's `SHA256SUMS` digest and the advisory,
+   which the successor key signs.
 
 ## What you can expect from us
 

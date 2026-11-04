@@ -134,9 +134,10 @@ Tracked in [#109](https://github.com/gonzafg2/quantumssh/issues/109). Scoping (n
 - Conformance tests against OpenSSH client
 - Security audit (community-funded or grant-funded)
 - First production-candidate release: `0.5.0`
+- Prebuilt binaries (Linux x86_64/aarch64, macOS arm64) with provenance, and a Homebrew tap ([RFC-0017](docs/rfcs/0017-alpha-distribution.md))
 
 ### Phase 4 — Ecosystem
-- Distribution packages (Debian, Arch, Alpine, Homebrew)
+- Distribution packages (Debian, Arch, Alpine, homebrew-core)
 - Documentation site
 - Reference deployment patterns
 - Quantum-readiness guidance for regulated industries

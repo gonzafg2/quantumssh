@@ -4,7 +4,9 @@ This guide installs QuantumSSH as a systemd service with the reference
 unit [`contrib/systemd/quantumssh.service`](../contrib/systemd/quantumssh.service).
 [ADR-0043](adr/0043-systemd-notify-service-and-reference-unit.md) records
 why the unit looks the way it does. CI runs these same steps under a
-real systemd ([`tests/systemd/`](../tests/systemd/)).
+real systemd ([`tests/systemd/`](../tests/systemd/)). Clients need
+OpenSSH 10.6 or newer (§10). Windows runs the server through WSL2 (§11),
+and Homebrew offers a single-user evaluation path (§12).
 
 QuantumSSH is **alpha**. Read the next section before you expose it
 to anyone.
@@ -26,7 +28,74 @@ identity (threat model §8.12). Concretely:
 
 ## 1. Install the binary
 
-Build the release binary and install it where the unit expects it:
+From `0.2.0` on, each release publishes a static binary for Linux on
+`x86_64` and `aarch64` ([RFC-0017](rfcs/0017-alpha-distribution.md)).
+Download one and verify it before you install it, or build from source.
+
+### From a release
+
+Download the tarball for your machine, `x86_64-unknown-linux-musl` or
+`aarch64-unknown-linux-musl`, with the release's checksums and their
+signature:
+
+```sh
+V=0.2.0
+T=x86_64-unknown-linux-musl
+base="https://github.com/gonzafg2/quantumssh/releases/download/v$V"
+curl -fsSLO "$base/quantumssh-$V-$T.tar.gz"
+curl -fsSLO "$base/SHA256SUMS"
+curl -fsSLO "$base/SHA256SUMS.asc"
+```
+
+Then verify it, in this order
+([ADR-0054](adr/0054-release-artifact-integrity.md) §6):
+
+1. **The signature on `SHA256SUMS`.** Run `scripts/verify-download.sh`
+   from a checkout of this repository's `main`. It imports every key of
+   the pin set [`keys/release-keys.txt`](../keys/release-keys.txt) into
+   a throwaway GnuPG home. It accepts only a signature by the current
+   release key, or by a retired key inside its window, and a revoked
+   key always fails. A bare `gpg --verify` is not enough: it reports
+   "Good signature" for a revoked or expired key.
+
+   ```sh
+   git clone --depth 1 https://github.com/gonzafg2/quantumssh.git
+   quantumssh/scripts/verify-download.sh "v$V" .
+   ```
+
+   Check the current release-key fingerprint it prints against
+   [`SECURITY.md`](../SECURITY.md). The current-key path needs only
+   `gpg`. A release signed by a retired key also needs `gh` and `jq`,
+   because the script reads GitHub's immutable-release record.
+2. **The tarball against `SHA256SUMS`:**
+
+   ```sh
+   sha256sum --ignore-missing -c SHA256SUMS
+   ```
+
+3. **Its provenance (recommended).** The attestation binds the tarball
+   to the release workflow, the commit and the tag:
+
+   ```sh
+   gh attestation verify "quantumssh-$V-$T.tar.gz" -R gonzafg2/quantumssh \
+     --signer-workflow gonzafg2/quantumssh/.github/workflows/release.yml \
+     --source-ref "refs/tags/v$V" --deny-self-hosted-runners
+   ```
+
+Steps 1 and 2 are the minimum. A user who checks only the attestation
+gets no check of the tag's signature. Then install the binary where the
+unit expects it:
+
+```sh
+tar -xzf "quantumssh-$V-$T.tar.gz"
+sudo install -m 0755 "quantumssh-$V-$T/quantumssh" /usr/local/bin/quantumssh
+```
+
+The tarball also holds the reference unit
+(`contrib/systemd/quantumssh.service`, step 5) and `config.toml`, the
+configuration of step 4.
+
+### From source
 
 ```sh
 cargo build --release
@@ -89,7 +158,8 @@ the following:
   (the StrictModes rule above).
 
 `ssh-keygen -t mldsa44-ed25519 -N "" -f <path>` from OpenSSH 10.6 or
-later writes the same format and remains an alternative. Either way,
+later writes the same format and remains an alternative; §10 lists
+where each platform gets 10.6. Either way,
 generate a new key: do not reuse the Ed25519 half of an existing key
 ([RFC-0012](rfcs/0012-composite-host-key-cutover.md)). A host key of any
 other type, `ssh-ed25519` included, stops the server at startup with
@@ -185,6 +255,8 @@ file ships as `schema_version = 2`
 
 ## 5. Install and start the unit
 
+From the checkout, or from the extracted tarball of step 1:
+
 ```sh
 sudo install -m 0644 contrib/systemd/quantumssh.service /etc/systemd/system/
 sudo systemctl daemon-reload
@@ -196,10 +268,11 @@ sudo systemctl enable --now quantumssh
   `journalctl -u quantumssh` shows it as `server.config_error`.
 - The `server.started` record names the host-key fingerprint, so you
   can check it before the first connection.
-- The client must be OpenSSH 10.6 or newer, because the server offers
-  only `mlkem768x25519-sha256` (9.9 or newer) and only the
+- The client must be OpenSSH 10.6 or newer (§10), because the server
+  offers only `mlkem768x25519-sha256` (9.9 or newer) and only the
   `ssh-mldsa44-ed25519` host key (10.6 or newer). An older client fails
-  with "no matching host key type".
+  with "no matching host key type found. Their offer:
+  ssh-mldsa44-ed25519".
 - A client that trusted an Ed25519 key for this host before the switch
   to the composite key must forget it and learn the new fingerprint out
   of band: `ssh-keygen -R <host>` on port 22, and
@@ -304,3 +377,103 @@ effect:
 
 Per-session confinement and per-user identity are Phase-3 work
 ([#43](https://github.com/gonzafg2/quantumssh/issues/43)).
+
+## 10. Clients: OpenSSH 10.6 or newer
+
+Every client must be OpenSSH 10.6 or newer, on every platform, and there
+is no fallback ([RFC-0017](rfcs/0017-alpha-distribution.md)). An older
+client fails with "no matching host key type found. Their offer:
+ssh-mldsa44-ed25519". Where 10.6 comes from, as of November 2026:
+
+| Platform | How to get OpenSSH 10.6 or newer |
+|---|---|
+| Arch, Alpine edge, Debian forky or sid, Fedora rawhide, openSUSE Tumbleweed, Void, NixOS 26.05 | The distribution package |
+| Ubuntu (every release), Debian 13, Fedora 44 | Homebrew on Linux (`brew install openssh`), Homebrew's Tier 1 at glibc 2.39 or newer. On Ubuntu 22.04 (glibc 2.35), Homebrew installs its own glibc and supports it only at its Tier 2 |
+| RHEL 9 and its rebuilds (glibc 2.34), openSUSE Leap | No supported route. Homebrew's Tier 2 is best effort only. `quantumssh keygen` creates the host key without OpenSSH (step 3) |
+| macOS (arm64) | Homebrew's `openssh`, run by full path after `brew unlink openssh`, so the system `ssh` stays in place: `"$(brew --prefix openssh)/bin/ssh"` |
+| Windows | A client inside WSL2 (§11). No native Windows build of 10.6 is known to work |
+
+On macOS, the system `ssh` is 10.5p1 and does not connect. If
+`~/.ssh/config` sets `UseKeychain`, an option only Apple's `ssh` knows,
+Homebrew's `ssh` refuses the whole file ("Bad configuration option:
+usekeychain"). Put `IgnoreUnknown UseKeychain` on its first line, before
+any `Host`: the option applies only to the lines after it. Homebrew's
+`ssh` does not read passphrases from the Keychain either;
+`/usr/bin/ssh-add --apple-load-keychain` loads them into the agent.
+
+## 11. Windows through WSL2
+
+QuantumSSH does not run natively on Windows. On Windows 10 or 11, run it
+in a WSL2 distribution with the Linux binary for the machine's
+architecture. Nothing here is tested in CI.
+
+1. Install a distribution. Arch Linux is the recommended one, because
+   it ships OpenSSH 10.6 for the client (§10):
+
+   ```powershell
+   wsl --install archlinux
+   ```
+
+2. Turn on systemd if the distribution does not, in its
+   `/etc/wsl.conf`, then restart it with `wsl --shutdown`:
+
+   ```ini
+   [boot]
+   systemd=true
+   ```
+
+3. Inside the distribution, follow steps 1 to 5 of this guide.
+
+**Reaching the server.** In WSL's default NAT mode, Windows itself
+reaches the server on `localhost`, but other machines on the LAN do not.
+To reach it from the LAN, use mirrored networking: on Windows 11 22H2 or
+newer, set `networkingMode=mirrored` under `[wsl2]` in
+`%UserProfile%\.wslconfig`. Then allow the port through the Hyper-V
+firewall, in an administrator PowerShell:
+
+```powershell
+New-NetFirewallHyperVRule -Name "QuantumSSH" -DisplayName "QuantumSSH" -Direction Inbound -VMCreatorId '{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}' -Protocol TCP -LocalPorts 2222
+```
+
+**A systemd service does not keep WSL running.** The server stops with
+the WSL instance, so a WSL2 deployment serves only while the instance is
+running.
+
+## 12. Homebrew: a single-user evaluation path
+
+From `0.2.0` on, the tap `gonzafg2/homebrew-quantumssh` installs the
+release binary on macOS arm64 and on Linux `x86_64` and `aarch64`
+([ADR-0056](adr/0056-homebrew-tap.md)). Its CI checks each `sha256` in
+the formula against the signed `SHA256SUMS` before it installs anything.
+
+```sh
+brew install gonzafg2/quantumssh/quantumssh openssh
+brew unlink openssh
+chmod g-w "$(brew --prefix)/etc"
+E="$(brew --prefix)/etc/quantumssh"
+quantumssh keygen "$E/ssh_host_mldsa44_ed25519_key"
+install -m 0644 ~/.ssh/id_ed25519.pub "$E/authorized_keys"
+brew services start quantumssh
+"$(brew --prefix openssh)/bin/ssh" -p 2222 "$USER@127.0.0.1"
+```
+
+- Installing by the full name trusts that formula (Homebrew's tap
+  trust).
+- The formula writes `$(brew --prefix)/etc/quantumssh/config.toml` once,
+  and an upgrade keeps your edits. Its paths point inside that
+  directory, and its `listen` is `127.0.0.1:2222`.
+- The `chmod`: Homebrew's installer leaves its `etc` group-writable on
+  macOS for an account in the `admin` group, and the server refuses its
+  configuration and keys below a group-writable directory (step 3).
+- `brew install` trusts the formula's `sha256`, not the PGP signature.
+  For the full chain, verify the tarball as in step 1.
+
+**This is not the deployment the rest of this guide describes.**
+`brew services` runs the server as the user who started it, on macOS
+usually an administrator account. That account owns the configuration
+under `$(brew --prefix)/etc/quantumssh/`, `authorized_keys` included,
+so the server's own account can rewrite its trust anchors, and every
+session carries that user's full authority. Steps 2 and 3 instead run it
+as a dedicated account that cannot change its configuration or who may
+log in ([ADR-0016](adr/0016-phase-1-service-account-uid-model.md)). The
+supported server posture stays the Linux deployment.

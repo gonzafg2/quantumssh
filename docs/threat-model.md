@@ -425,8 +425,9 @@ exchange is precisely the response to the harvest-now-decrypt-
 later component of this threat. Supply-chain risk is addressed by
 the project's signed-commits and signed-tags posture (see
 ADR-0006) and by dependency-discipline controls (`deny.toml`
-enforced in CI; see §5.5.2 and §6.4); reproducibility and
-bill-of-materials are on the Phase 3 roadmap.
+enforced in CI; see §5.5.2 and §6.4); the published binaries carry
+§6.4's release provenance (RFC-0017), and reproducible builds are on
+the Phase 3 roadmap.
 
 The HNDL adversary is "Very High" with respect to capability, but
 *nothing* about QuantumSSH's defence requires the adversary to be a
@@ -494,8 +495,7 @@ the only human in the loop. Commit signing (ADR-0006) and branch
 protection (ADR-0008) constrain what an attacker can publish under the
 project's name; dependency discipline (`deny.toml`, `cargo-deny` in CI)
 bounds the surface that a compromised maintainer could silently widen.
-Reproducible builds and a published software bill-of-materials (Phase 3,
-RFC-gated) will allow downstream consumers to detect divergence between
+Reproducible builds (Phase 3, RFC-gated) will allow downstream consumers to detect divergence between
 the source on `main` and the binaries they run — retaining value against
 the build-pipeline-compromise sub-case — but do not defend against a
 maintainer who merges malicious source on `main` and produces matching
@@ -1131,8 +1131,10 @@ references are Red Hat RHSB-2024-001 and the NIST NVD entry for
 CVE-2024-3094.
 
 **Test handle.** Dependency discipline is recorded in `deny.toml`; the
-`cargo deny` invocation runs in CI. Phase 3 introduces reproducible
-builds and a published software bill of materials, both RFC-gated.
+`cargo deny` invocation runs in CI. From `0.2.0` on, each release also
+publishes an attested CycloneDX SBOM of the binary's dependency graph,
+with the rest of the release controls in §6.4's "Release provenance"
+(RFC-0017). Phase 3 introduces reproducible builds, RFC-gated.
 
 ---
 
@@ -1155,8 +1157,8 @@ supply-chain and standards-influence capabilities.
 not cleanly cover the infiltration sub-cases; see §3.2.6.
 
 **Test handle.** The §6.4 controls (signed commits, branch protection,
-reproducible builds, SBOM) collectively bound but do not eliminate this
-risk; see §7 for the residual.
+release provenance, and, from Phase 3, reproducible builds) collectively
+bound but do not eliminate this risk; see §7 for the residual.
 
 #### 5.5.3 Host private key compromise
 
@@ -1361,7 +1363,43 @@ repeating it.
   requirements, or with active RustSec advisories. Does **not** defend
   §5.5.2.b: `deny.toml` is enforced *by* the maintainer, so a
   compromised maintainer can edit it.
-- **Reproducible builds and SBOM** (Phase 3, RFC-gated). When landed,
+- **Release provenance** (RFC-0017; ADR-0053, ADR-0054, ADR-0057).
+  From `0.2.0` on, a tag-triggered workflow builds each release, gates
+  it on the published bytes and attests every tarball and the SBOM; the
+  maintainer signs a recomputed `SHA256SUMS`; releases are immutable.
+  *Defends against:*
+  - substitution of a release asset after publication (immutable
+    releases);
+  - an asset built outside the project's workflow. A provenance
+    attestation binds each tarball and the SBOM to the workflow file,
+    the commit and the tag that produced it;
+  - a release tag pushed with a stolen write credential to an
+    unreviewed commit. The tag rulesets narrow who can create one and
+    forbid moving or deleting it. Before signing `SHA256SUMS`, the
+    maintainer checks the tag's PGP signature and that the attested
+    commit is on `main`;
+  - an asset swapped between CI and publication. The maintainer signs
+    `SHA256SUMS` only after checking the attestations and recomputing
+    the checksums from the verified files and from the digests the
+    gates tested. The gates run with read-only permissions, only on
+    bytes whose origin was checked.
+
+  *Does **not** defend against:*
+  - a compromise of the release workflow itself or of GitHub Actions;
+  - a maintainer who tags malicious source;
+  - a compromise of the project PGP key. ADR-0057 covers revocation,
+    rotation (ADR-0005) and what they mean for releases already signed;
+  - a user who checks only the attestation and not `SHA256SUMS.asc`.
+    That user gets no check of the maintainer's signature;
+  - a compromise of the tap repository or its formula. `brew install`
+    trusts the formula's `sha256`, not the PGP signature. The tap's
+    branch protection and its CI check (ADR-0056) narrow this, and a
+    user who wants the full chain verifies the tarball as on Linux.
+
+  It is not a substitute for reproducible builds, which would let a
+  third party rebuild an asset and compare it. The attestations give
+  SLSA Build Level 2 (ADR-0053 §5).
+- **Reproducible builds** (Phase 3, RFC-gated). When landed,
   will defend §3.2.6's build-pipeline-compromise sub-case by allowing
   third parties to detect divergence between the source on `main` and
   distributed binaries. Do **not** defend against a maintainer who
@@ -1451,7 +1489,7 @@ operators must account for. The principal items, by category, are:
   whose credentials, signing key, and development endpoint are
   simultaneously compromised retains the ability to publish under the
   project's name through the normal PR flow. The compensating controls
-  are reproducible builds (Phase 3), SBOM (Phase 3), and downstream
+  are release provenance (§6.4), reproducible builds (Phase 3), and downstream
   signed-commit verification against a locally built `allowed_signers`
   file (see `docs/operations.md` §"Signed-commit verification").
   The bound is not zero.

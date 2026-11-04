@@ -158,7 +158,19 @@ curl -fsSL https://raw.githubusercontent.com/gonzafg2/quantumssh/main/SECURITY.m
 66DB 5100 B070 0E4A E051  971F 9A8D FF06 AFD2 5B24
 ```
 
-If all three match, the key is authentic. Only then import it for use:
+**4. The DNSSEC-signed record, set through a separate credential
+([ADR-0057](./adr/0057-release-signing-with-the-project-pgp-key.md)):**
+
+```sh
+delv @1.1.1.1 TXT _release-key.quantumssh.org
+```
+
+`delv` validates the chain against the root trust anchor itself, so the
+resolver only carries the records; accept the value only when the output
+says `; fully validated`. macOS's own `delv` is built without crypto
+support; use Homebrew's `bind`.
+
+If all four match, the key is authentic. Only then import it for use:
 
 ```sh
 gpg --import /tmp/quantumssh-security.asc
@@ -225,6 +237,22 @@ Expected output (formatting irrelevant; values matter):
 
 A missing or weakened value here is a meaningful event and we would
 want to know about it.
+
+## Tag rulesets on `v*`
+
+Release tags are protected by two repository rulesets
+([ADR-0053](./adr/0053-release-workflow.md) §4):
+
+```sh
+for id in $(gh api repos/gonzafg2/quantumssh/rulesets --jq '.[] | select(.target == "tag") | .id'); do
+  gh api "repos/gonzafg2/quantumssh/rulesets/$id" \
+    --jq '{name, enforcement, include: .conditions.ref_name.include, rules: [.rules[].type], bypass: [.bypass_actors[] | "\(.actor_type) \(.actor_id)"]}'
+done
+```
+
+Expected: both `active` on `refs/tags/v*`. One holds `creation`, which
+only `RepositoryRole 5` (the admin role) bypasses. The other holds
+`update` and `deletion` with no bypass actor.
 
 ## Reporting drift
 
