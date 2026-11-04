@@ -18,6 +18,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   server started with it serves the stock client
   ([RFC-0018](docs/rfcs/0018-host-key-generation.md),
   [ADR-0058](docs/adr/0058-quantumssh-keygen-subcommand.md)).
+- `scripts/verify-download.sh vX.Y.Z` checks the signature on a
+  release's `SHA256SUMS`. It imports every key the pin set
+  `keys/release-keys.txt` lists, and passes a signature by the current
+  release key only if no revoked, bad or expired status appears. A
+  retired key passes only for a release whose immutable record GitHub
+  timestamped inside the key's window, with `SHA256SUMS` and its
+  signature being that release's recorded assets. A revoked key always
+  fails. Every line of `SHA256SUMS` must name an asset of the version
+  being checked ([ADR-0054](docs/adr/0054-release-artifact-integrity.md)
+  §6–§7).
 
 ## [0.1.0] - 2026-11-02
 

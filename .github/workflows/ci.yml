@@ -136,3 +136,11 @@ jobs:
       - name: systemd reference unit
         if: steps.members.outputs.count != '0' && runner.os == 'Linux'
         run: bash tests/systemd/run_in_docker.sh
+
+      # ADR-0054 §6–§7: the download signature check and the pinned check,
+      # with keys generated for the test. Its retired-key case reads this
+      # repository's v0.1.0 release record with gh, hence the token.
+      - name: Release signature checks
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash tests/release/run_verify_download.sh
