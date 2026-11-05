@@ -881,6 +881,22 @@ would learn which usernames exist by observing whether their
 counter advances. Failures are recorded in the audit channel
 with deduplication metadata.
 
+**Procedure exemplar.** CVE-2026-123158 ("sshole"), fixed in
+OpenSSH Portable 10.6p2 on 2026-11-05. On Linux systems with musl
+libc and PAM disabled, which includes Alpine's default `sshd`,
+password authentication accepted a password longer than 256 bytes
+for any account whose `/etc/shadow` password field is `*`, the
+marker of an account locked against password login. musl's
+`crypt()` returns `*` as its error marker for such a password, so
+the two compared equal. It is a logic bug at the seam between
+`sshd` and libc, not a memory-safety bug, and
+`PasswordAuthentication no` avoided it. QuantumSSH has no such
+seam: password authentication is not compiled in, and the server
+never calls `crypt()`, reads `/etc/shadow` or loads PAM, so its
+musl release builds never reach that code. Reference: the OpenSSH
+10.6p2 release notes
+(<https://www.openssh.org/releasenotes.html>).
+
 #### 5.3.2 Stolen private key (off-host compromise)
 
 **Mechanism.** An attacker compromises a user's endpoint and
