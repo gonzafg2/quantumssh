@@ -881,7 +881,6 @@ would learn which usernames exist by observing whether their
 counter advances. Failures are recorded in the audit channel
 with deduplication metadata.
 
-
 #### 5.3.2 Stolen private key (off-host compromise)
 
 **Mechanism.** An attacker compromises a user's endpoint and
