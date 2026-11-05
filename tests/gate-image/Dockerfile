@@ -50,15 +50,19 @@ ARG SSH_V_EXPECTED="OpenSSH_10.6p1 Debian-1, OpenSSL 3.6.5 29 Sep 2026"
 # the workspace inside this image on pull requests: ca-certificates and curl
 # are what dtolnay/rust-toolchain needs to install rustup, and gcc and
 # libc6-dev are the linker and C runtime cargo links with. The systemd test
-# needs systemd as PID 1 and procps. A client that does not
-# match the pin fails the build, so no such image is pushed. The image then
-# records, readable without running it, its `ssh -V` and the Debian source
-# package of everything installed (ADR-0059 §2).
-# hadolint ignore=DL3008
-RUN apt-get update; \
-    apt-get install -y --no-install-recommends \
-        ca-certificates curl gcc libc6-dev "openssh-client=${OPENSSH_CLIENT_VERSION}" \
-        systemd systemd-sysv procps; \
+# needs systemd as PID 1 and procps. apt-get update fails on any missing
+# index (by default it warns and goes on), and both it and the download are
+# retried (retry.sh); the install then runs from the verified cache. A
+# client that does not match the pin fails the build, so no such image is
+# pushed. The image then records, readable without running it, its `ssh -V`
+# and the Debian source package of everything installed (ADR-0059 §2).
+# hadolint ignore=DL3008,SC3054
+RUN --mount=type=bind,source=retry.sh,target=/usr/local/sbin/retry \
+    pkgs=(ca-certificates curl gcc libc6-dev "openssh-client=${OPENSSH_CLIENT_VERSION}" \
+        systemd systemd-sysv procps); \
+    retry apt-get update --error-on=any; \
+    retry apt-get install -y --no-install-recommends --download-only "${pkgs[@]}"; \
+    apt-get install -y --no-install-recommends "${pkgs[@]}"; \
     rm -rf /var/lib/apt/lists/*; \
     ssh_v="$(ssh -V 2>&1)"; \
     [ "$ssh_v" = "$SSH_V_EXPECTED" ] \
@@ -82,23 +86,19 @@ CMD ["/sbin/init"]
 # The Debian source packages the gate image's sources.txt lists, from the
 # same snapshot. The workflow passes the union of both platforms' lists as
 # the build context `list`. apt checks each file it fetches against the
-# signed Sources index. There are a few hundred files, and snapshot.debian.org
-# can fail some of them for minutes at a time; apt-get source keeps the files
-# it already verified, so each attempt fetches only what is still missing.
+# signed Sources index. There are a few hundred files; the index and the
+# files are retried as in the gate stage, and apt-get source keeps the files
+# it already verified.
 FROM snapshot AS fetch-sources
 
 WORKDIR /sources
 
 RUN --mount=type=bind,from=list,target=/list \
+    --mount=type=bind,source=retry.sh,target=/usr/local/sbin/retry \
     sed -i 's/^Types: deb$/Types: deb-src/' /etc/apt/sources.list.d/debian.sources; \
-    apt-get update; \
+    retry apt-get update --error-on=any; \
     chown _apt /sources; \
-    for attempt in 1 2 3 4 5; do \
-        if xargs apt-get source --download-only < /list/sources.txt; then break; fi; \
-        [ "$attempt" -lt 5 ] || { echo "source packages still missing after $attempt attempts" >&2; exit 1; }; \
-        echo "attempt $attempt left files missing; retrying in 120 s" >&2; \
-        sleep 120; \
-    done; \
+    retry xargs -a /list/sources.txt apt-get source --download-only; \
     cp /list/sources.txt /sources/SOURCES.txt
 
 FROM scratch AS sources
