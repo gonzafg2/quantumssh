@@ -46,7 +46,11 @@ ARG OPENSSH_CLIENT_VERSION=1:10.6p1-1
 ARG SSH_V_EXPECTED="OpenSSH_10.6p1 Debian-1, OpenSSL 3.6.5 29 Sep 2026"
 
 # The interop gate's packages, then the systemd test's; only the client is
-# named by version, the snapshot freezes the rest. A client that does not
+# named by version, the snapshot freezes the rest. The interop gate builds
+# the workspace inside this image on pull requests: ca-certificates and curl
+# are what dtolnay/rust-toolchain needs to install rustup, and gcc and
+# libc6-dev are the linker and C runtime cargo links with. The systemd test
+# needs systemd as PID 1 and procps. A client that does not
 # match the pin fails the build, so no such image is pushed. The image then
 # records, readable without running it, its `ssh -V` and the Debian source
 # package of everything installed (ADR-0059 §2).
