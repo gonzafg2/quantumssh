@@ -881,21 +881,6 @@ would learn which usernames exist by observing whether their
 counter advances. Failures are recorded in the audit channel
 with deduplication metadata.
 
-**Procedure exemplar.** CVE-2026-123158 ("sshole"), fixed in
-OpenSSH Portable 10.6p2 on 2026-11-05. On Linux systems with musl
-libc and PAM disabled, which includes Alpine's default `sshd`,
-password authentication accepted a password longer than 256 bytes
-for any account whose `/etc/shadow` password field is `*`, the
-marker of an account locked against password login. musl's
-`crypt()` returns `*` as its error marker for such a password, so
-the two compared equal. It is a logic bug at the seam between
-`sshd` and libc, not a memory-safety bug, and
-`PasswordAuthentication no` avoided it. QuantumSSH has no such
-seam: password authentication is not compiled in, and the server
-never calls `crypt()`, reads `/etc/shadow` or loads PAM, so its
-musl release builds never reach that code. Reference: the OpenSSH
-10.6p2 release notes
-(<https://www.openssh.org/releasenotes.html>).
 
 #### 5.3.2 Stolen private key (off-host compromise)
 
@@ -969,6 +954,44 @@ the privileges the defence would need to act on. The project's
 contribution is upstream: signed releases, reproducible builds
 (Phase 3), and ADRs (ADR-0006) that document the signing posture
 the operator's verification can rely on.
+
+#### 5.3.5 Password authentication bypass
+
+**Mechanism.** A defect in the path that checks a password, in the
+server's comparison, the C library's `crypt()`, PAM or
+`/etc/shadow` handling, admits a password that does not match. It
+takes a single attempt and no credential.
+
+**Assets at risk.** Command execution authority of the account
+admitted.
+
+**Actors.** Opportunistic remote attacker upward, once a procedure
+is public.
+
+**ATT&CK reference.** `T1190` (Exploit Public-Facing Application).
+
+**Test handle.** Password authentication is **not** compiled in
+([RFC-0011](rfcs/0011-zero-legacy-floor-reconciliation.md)), so
+there is no password path to break: the server never calls
+`crypt()`, reads `/etc/shadow` or loads PAM, and that holds for
+its musl release builds too.
+
+**Procedure exemplar.** CVE-2026-123158 ("sshole"), fixed in
+OpenSSH Portable 10.6p2 on 2026-11-05, on Linux systems with musl
+libc and PAM disabled, which includes Alpine's default `sshd`. For
+an account whose `/etc/shadow` password field is `*`, locked
+against password login, that field is no usable salt, so `sshd`
+hashed the submitted password with the salt of another account's
+hash (`pick_salt()` in `openbsd-compat/xcrypt.c`). With a SHA-512
+salt, musl's `crypt()` rejects a key longer than 256 bytes and
+returns `*`, its error marker, which compared equal to the stored
+`*`. `sshd` itself refuses passwords over 1024 bytes, which bounds
+the range. It is a logic bug at the seam between `sshd` and libc,
+not a memory-safety bug, and `PasswordAuthentication no` avoided
+it. References: the OpenSSH 10.6p2 release notes
+(<https://www.openssh.org/releasenotes.html>); musl
+`src/crypt/crypt_sha512.c` (`KEY_MAX`); OpenSSH 10.6p1
+`auth-passwd.c` (`sys_auth_passwd`, `MAX_PASSWORD_LEN`).
 
 ### 5.4 Session and channel layer
 
