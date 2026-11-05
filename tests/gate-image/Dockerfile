@@ -56,14 +56,15 @@ RUN apt-get update; \
         ca-certificates curl gcc libc6-dev "openssh-client=${OPENSSH_CLIENT_VERSION}" \
         systemd systemd-sysv procps; \
     rm -rf /var/lib/apt/lists/*; \
-    [ "$(ssh -V 2>&1)" = "$SSH_V_EXPECTED" ] \
-        || { echo "ssh -V is '$(ssh -V 2>&1)', expected '$SSH_V_EXPECTED'" >&2; exit 1; }; \
+    ssh_v="$(ssh -V 2>&1)"; \
+    [ "$ssh_v" = "$SSH_V_EXPECTED" ] \
+        || { echo "ssh -V is '$ssh_v', expected '$SSH_V_EXPECTED'" >&2; exit 1; }; \
     ssh -Q kex | grep -qx mlkem768x25519-sha256 \
         || { echo "mlkem768x25519-sha256 not offered by this client" >&2; exit 1; }; \
     ssh -Q key | grep -qx ssh-mldsa44-ed25519 \
         || { echo "ssh-mldsa44-ed25519 not offered by this client" >&2; exit 1; }; \
     mkdir -p /usr/share/quantumssh-gate; \
-    ssh -V > /usr/share/quantumssh-gate/ssh-version 2>&1; \
+    printf '%s\n' "$ssh_v" > /usr/share/quantumssh-gate/ssh-version; \
     dpkg-query -W -f '${source:Package}=${source:Version}\n' | LC_ALL=C sort -u \
         > /usr/share/quantumssh-gate/sources.txt
 
