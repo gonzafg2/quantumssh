@@ -100,9 +100,26 @@ jobs:
           Acquire::Check-Valid-Until "false";
           Acquire::Retries "3";
           EOF
-          apt-get update
-          apt-get install -y --no-install-recommends \
-            ca-certificates curl gcc libc6-dev "openssh-client=${OPENSSH_CLIENT_VERSION}"
+          # snapshot.debian.org can fail some files for minutes at a time
+          # (#262). apt-get update fails on any missing index, instead of
+          # warning and going on, and both it and the download are retried;
+          # apt keeps what it already verified, and the install then runs
+          # from that cache.
+          # ponytail: this loop is copied in tests/systemd/Dockerfile; both
+          # go away when the gates move to the image of ADR-0059 (§5 step 2),
+          # which retries the same way with tests/gate-image/retry.sh.
+          retry() {
+            for attempt in 1 2 3 4 5 6 7 8; do
+              "$@" && return 0
+              [ "$attempt" -lt 8 ] || { echo "::error::failed after $attempt attempts: $*"; return 1; }
+              echo "attempt $attempt failed, retrying in 120 s: $*"
+              sleep 120
+            done
+          }
+          pkgs=(ca-certificates curl gcc libc6-dev "openssh-client=${OPENSSH_CLIENT_VERSION}")
+          retry apt-get update --error-on=any
+          retry apt-get install -y --no-install-recommends --download-only "${pkgs[@]}"
+          apt-get install -y --no-install-recommends "${pkgs[@]}"
           ssh -V 2>&1
           [ "$(ssh -V 2>&1)" = "$SSH_V_EXPECTED" ] \
             || { echo "::error::ssh -V is not the pinned client; expected '$SSH_V_EXPECTED'"; exit 1; }
