@@ -1424,6 +1424,9 @@ repeating it.
 
   *Does **not** defend against:*
   - a compromise of the release workflow itself or of GitHub Actions;
+  - a compromise of `gate-image.yml`, which publishes and attests the
+    image every interop and systemd gate runs in (ADR-0059): an image it
+    attested would pass `tests/gate-image/verify.sh`;
   - a maintainer who tags malicious source;
   - a compromise of the project PGP key. ADR-0057 covers revocation,
     rotation (ADR-0005) and what they mean for releases already signed;

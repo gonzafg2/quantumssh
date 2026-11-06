@@ -147,7 +147,7 @@ authoritative reference; the operative rules a reviewer applies:
 | `contrib/systemd/`, [`docs/deployment.md`](docs/deployment.md) | The reference systemd unit and the operator guide ([ADR-0043](docs/adr/0043-systemd-notify-service-and-reference-unit.md)) |
 | `tests/release/` | `run_verify_download.sh` — `verify-download.sh` and the pinned signature check through each pin-set role, with keys generated per run |
 | `tests/systemd/` | `run_reference_unit.sh` — the reference unit under a real systemd, in a disposable container (ADR-0043) |
-| `tests/gate-image/` | The `Dockerfile` of the image the interop and systemd gates run in, and of its Debian sources image, both built and published by `gate-image.yml` ([ADR-0059](docs/adr/0059-gate-image-published-to-ghcr.md)) |
+| `tests/gate-image/` | The `Dockerfile` of the image the interop and systemd gates run in, and of its Debian sources image, both built and published by `gate-image.yml`; `verify.sh`, which every gate runs on the host to check the pinned digest's attestation before the image runs ([ADR-0059](docs/adr/0059-gate-image-published-to-ghcr.md)) |
 | `.github/workflows/` | CI: `ci`, `audit`, `deny`, `interop` (OpenSSH gate), `release` (tag-triggered, [ADR-0053](docs/adr/0053-release-workflow.md)), `gate-image` (builds the gates' image; publishes and attests it from `main` only, [ADR-0059](docs/adr/0059-gate-image-published-to-ghcr.md)), and the two workflow reviewers (`claude-code-review`, `opencode`); Codex runs as a GitHub App, not a workflow ([ADR-0037](docs/adr/0037-codex-reviews-via-chatgpt-github-app.md)) |
 | [`.github/REVIEW-FORMAT.md`](.github/REVIEW-FORMAT.md) | Report contract the two workflow reviewers follow |
 

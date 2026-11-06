@@ -1,6 +1,6 @@
 # ADR 0055: Run the interop and systemd gates on the release artifacts, on `aarch64` Linux and on macOS with a client built from a pinned tarball
 
-- **Status:** Accepted
+- **Status:** Accepted; the release gates of §1 and §2 run in [ADR-0059](0059-gate-image-published-to-ghcr.md)'s gate image, verified before it runs, whose build now holds the pin and the `ssh -V` assertion that §1 keeps
 - **Date:** 2026-11-03 (accepted with the implementing PR [#253](https://github.com/gonzafg2/quantumssh/pull/253), once the rehearsal run [41751733656](https://github.com/gonzafg2/quantumssh/actions/runs/41751733656) passed; drafted 2026-11-03)
 - **Deciders:** Project lead
 - **Related:**
