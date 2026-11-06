@@ -42,7 +42,7 @@ use tracing::{debug, info, warn};
 use zeroize::Zeroizing;
 
 use crate::auth::{self, Authenticated, AuthorizedKeys};
-use crate::cert::{self, TrustedUserCaKeys};
+use crate::cert::TrustedUserCaKeys;
 use crate::cipher::PacketCipher;
 use crate::host_key::HostKey;
 use crate::kex::{
@@ -540,17 +540,7 @@ where
         mut self,
     ) -> Result<(String, Expect<S, ServiceResponse>), TransportError> {
         let payload = self.read_sealed().await?;
-        let mut r = Reader::new(&payload);
-        let parsed: Result<String, wire::WireError> = (|| {
-            let msg = r.byte()?;
-            if msg != SSH_MSG_SERVICE_REQUEST {
-                return Err(wire::WireError::Truncated);
-            }
-            let name = r.string(SERVICE_NAME_BOUND)?;
-            r.finish()?;
-            String::from_utf8(name.to_vec()).map_err(|_| wire::WireError::Truncated)
-        })();
-        let Ok(service) = parsed else {
+        let Ok(service) = parse_service_request(&payload) else {
             return Err(self
                 .reject_sealed(protocol_error("expected-service-request"))
                 .await);
@@ -684,159 +674,50 @@ where
 
         loop {
             let payload = self.read_sealed().await?;
-            let payload_len = payload.len();
-            let mut r = Reader::new(&payload);
-
-            let msg = r.byte().unwrap_or(0);
-            if msg != auth::SSH_MSG_USERAUTH_REQUEST {
-                return Err(self
-                    .reject_sealed(protocol_error("expected-userauth-request"))
-                    .await);
-            }
-
-            let Ok(user_name) = r
-                .string(auth::USER_NAME_BOUND)
-                .and_then(|s| std::str::from_utf8(s).map_err(|_| wire::WireError::Truncated))
-            else {
-                return Err(self
-                    .reject_sealed(protocol_error("malformed-userauth-request"))
-                    .await);
-            };
-
-            let Ok(service_name) = r
-                .string(auth::SERVICE_NAME_BOUND)
-                .and_then(|s| std::str::from_utf8(s).map_err(|_| wire::WireError::Truncated))
-            else {
-                return Err(self
-                    .reject_sealed(protocol_error("malformed-userauth-request"))
-                    .await);
-            };
-            if service_name != "ssh-connection" {
-                return Err(self
-                    .reject_sealed(protocol_error("unexpected-service-name"))
-                    .await);
-            }
-
-            let Ok(method) = r
-                .string(auth::METHOD_NAME_BOUND)
-                .and_then(|s| std::str::from_utf8(s).map_err(|_| wire::WireError::Truncated))
-            else {
-                return Err(self
-                    .reject_sealed(protocol_error("malformed-userauth-request"))
-                    .await);
-            };
-
-            if method != auth::AUTH_METHOD {
-                attempts += 1;
-                failures += 1;
-                warn!(
-                    target: "audit",
-                    auth_method = method,
-                    failure_count = failures,
-                    "auth.failed"
-                );
-                if attempts >= auth::MAX_AUTH_ATTEMPTS {
-                    return Err(self
-                        .reject_sealed(Rejection {
-                            reason: "too-many-auth-attempts",
-                            disconnect_code: DISCONNECT_BY_APPLICATION,
-                        })
-                        .await);
+            let request = match auth::parse_userauth_request(&payload) {
+                Ok(request) => request,
+                Err(error) => {
+                    let reason = match error {
+                        auth::RequestError::NotUserauthRequest => "expected-userauth-request",
+                        auth::RequestError::Malformed => "malformed-userauth-request",
+                        auth::RequestError::UnexpectedService => "unexpected-service-name",
+                    };
+                    return Err(self.reject_sealed(protocol_error(reason)).await);
                 }
-                let failure = auth::build_failure_payload(false);
-                self.write_sealed(&failure).await?;
-                continue;
-            }
-
-            let Ok(sig_present) = r.boolean() else {
-                return Err(self
-                    .reject_sealed(protocol_error("malformed-userauth-request"))
-                    .await);
             };
 
-            let Ok(key_algorithm) = r
-                .string(auth::KEY_ALGO_BOUND)
-                .and_then(|s| std::str::from_utf8(s).map_err(|_| wire::WireError::Truncated))
-            else {
-                return Err(self
-                    .reject_sealed(protocol_error("malformed-userauth-request"))
-                    .await);
+            let (user_name, key_algorithm, key_blob, signature) = match request {
+                auth::UserauthRequest::Refused { method } => {
+                    attempts += 1;
+                    failures += 1;
+                    warn!(
+                        target: "audit",
+                        auth_method = method,
+                        failure_count = failures,
+                        "auth.failed"
+                    );
+                    if attempts >= auth::MAX_AUTH_ATTEMPTS {
+                        return Err(self
+                            .reject_sealed(Rejection {
+                                reason: "too-many-auth-attempts",
+                                disconnect_code: DISCONNECT_BY_APPLICATION,
+                            })
+                            .await);
+                    }
+                    let failure = auth::build_failure_payload(false);
+                    self.write_sealed(&failure).await?;
+                    continue;
+                }
+                auth::UserauthRequest::PublicKey {
+                    user,
+                    key_algorithm,
+                    key_blob,
+                    signature,
+                } => (user, key_algorithm, key_blob, signature),
             };
+            let method = auth::AUTH_METHOD;
 
-            if key_algorithm != auth::KEY_ALGORITHM && key_algorithm != cert::CERT_ALGORITHM {
-                attempts += 1;
-                failures += 1;
-                warn!(
-                    target: "audit",
-                    auth_method = method,
-                    failure_count = failures,
-                    "auth.failed"
-                );
-                if attempts >= auth::MAX_AUTH_ATTEMPTS {
-                    return Err(self
-                        .reject_sealed(Rejection {
-                            reason: "too-many-auth-attempts",
-                            disconnect_code: DISCONNECT_BY_APPLICATION,
-                        })
-                        .await);
-                }
-                let failure = auth::build_failure_payload(false);
-                self.write_sealed(&failure).await?;
-                continue;
-            }
-
-            let key_blob_bound = if key_algorithm == cert::CERT_ALGORITHM {
-                cert::CERT_BLOB_BOUND
-            } else {
-                auth::KEY_BLOB_BOUND
-            };
-            let Ok(key_blob) = r.string(key_blob_bound) else {
-                return Err(self
-                    .reject_sealed(protocol_error("malformed-userauth-request"))
-                    .await);
-            };
-
-            // Snapshot the position: bytes consumed so far (everything
-            // up to, but not including, the signature field).
-            let consumed_before_sig = payload_len - r.remaining();
-            let payload_without_sig = &payload[..consumed_before_sig];
-
-            if sig_present {
-                let Ok(signature) = r.string(auth::SIGNATURE_BOUND) else {
-                    return Err(self
-                        .reject_sealed(protocol_error("malformed-userauth-request"))
-                        .await);
-                };
-                if r.finish().is_err() {
-                    return Err(self
-                        .reject_sealed(protocol_error("malformed-userauth-request"))
-                        .await);
-                }
-
-                // Unwrap the nested signature encoding (RFC 4252 §7 / RFC 8709 §6):
-                //   string("ssh-ed25519") + string(<64-byte raw sig>)
-                let mut sig_reader = Reader::new(signature);
-                let Ok(parsed_sig_algo) = sig_reader.string(auth::KEY_ALGO_BOUND) else {
-                    return Err(self
-                        .reject_sealed(protocol_error("malformed-userauth-request"))
-                        .await);
-                };
-                if parsed_sig_algo != auth::KEY_ALGORITHM.as_bytes() {
-                    return Err(self
-                        .reject_sealed(protocol_error("malformed-userauth-request"))
-                        .await);
-                }
-                let Ok(raw_sig) = sig_reader.string(auth::SIGNATURE_BOUND) else {
-                    return Err(self
-                        .reject_sealed(protocol_error("malformed-userauth-request"))
-                        .await);
-                };
-                if sig_reader.finish().is_err() {
-                    return Err(self
-                        .reject_sealed(protocol_error("malformed-userauth-request"))
-                        .await);
-                }
-
+            if let Some(signed) = signature {
                 let Some(candidate) = auth::resolve(
                     key_algorithm,
                     key_blob,
@@ -868,8 +749,8 @@ where
                 let session_id = &*self.stage.session_id;
                 if auth::verify_auth_signature(
                     session_id,
-                    payload_without_sig,
-                    raw_sig,
+                    signed.data,
+                    signed.signature,
                     &candidate.verifying_key,
                 ) == Ok(())
                 {
@@ -925,12 +806,6 @@ where
             }
 
             // No signature present: probe whether the key is known.
-            if r.finish().is_err() {
-                return Err(self
-                    .reject_sealed(protocol_error("malformed-userauth-request"))
-                    .await);
-            }
-
             // Every probe spends an attempt — including one whose key
             // is known: PK_OK was otherwise the one pre-auth message a
             // peer could spin for the whole handshake budget (threat
@@ -1428,6 +1303,20 @@ pub(crate) enum RekeyStep {
 /// ---- shared plumbing (private: stages cannot be bypassed) ----
 ///
 /// A protocol-error rejection (code 2) with the given reason.
+/// Parses an `SSH_MSG_SERVICE_REQUEST` payload (RFC 4253 §10) into the
+/// requested service name. A pure function, so it can be fuzzed
+/// (ADR-0060 §3).
+pub(crate) fn parse_service_request(payload: &[u8]) -> Result<String, wire::WireError> {
+    let mut r = Reader::new(payload);
+    let msg = r.byte()?;
+    if msg != SSH_MSG_SERVICE_REQUEST {
+        return Err(wire::WireError::Truncated);
+    }
+    let name = r.string(SERVICE_NAME_BOUND)?;
+    r.finish()?;
+    String::from_utf8(name.to_vec()).map_err(|_| wire::WireError::Truncated)
+}
+
 const fn protocol_error(reason: &'static str) -> Rejection {
     Rejection {
         reason,

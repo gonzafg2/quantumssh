@@ -67,8 +67,14 @@ impl TrustedUserCaKeys {
     #[must_use]
     #[allow(clippy::double_must_use)]
     pub fn load(path: &Path) -> Result<Self, AuthError> {
-        auth::load_key_lines(
-            path,
+        Self::parse(&auth::read_key_file(path)?)
+    }
+
+    /// Parses `trusted_user_ca_keys` content under the rules of
+    /// [`Self::load`], without reading a file.
+    pub(crate) fn parse(content: &str) -> Result<Self, AuthError> {
+        auth::parse_key_lines(
+            content,
             composite::ALGORITHM,
             composite::PUBLIC_LEN,
             |line, key_bytes| {
