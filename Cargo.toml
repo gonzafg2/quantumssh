@@ -91,6 +91,9 @@ subtle   = { version = "2", default-features = false }  # constant-time Poly1305
 [workspace.lints.rust]
 unsafe_code  = "forbid"
 missing_docs = "warn"
+# ADR-0060 §3: cargo-fuzz sets `--cfg fuzzing`; declaring it keeps the
+# `#[cfg(fuzzing)] pub mod fuzzing` in quantumssh-core warning-free.
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(fuzzing)"] }
 unused       = { level = "warn", priority = -1 } # lint group: lower priority so individual lints can override
 
 [workspace.lints.clippy]

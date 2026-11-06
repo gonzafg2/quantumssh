@@ -20,6 +20,10 @@ mod channel;
 pub mod cipher;
 mod composite;
 mod exec;
+// ADR-0060 §3: the only `cfg(fuzzing)` in first-party code. cargo-fuzz
+// sets the flag; no other build does.
+#[cfg(fuzzing)]
+pub mod fuzzing;
 pub mod host_key;
 pub mod kex;
 pub mod pty;

@@ -170,7 +170,7 @@ pub(crate) fn serve(mut input: impl Read, output: impl Write, cwd: PathBuf) -> i
 /// Reads one framed packet into `packet`. `Ok(false)` at a clean EOF
 /// before the length; a length of 0 or over [`MAX_PACKET`], or a stream
 /// that ends inside a packet, is a violation.
-fn read_packet(input: &mut impl Read, packet: &mut Vec<u8>) -> Result<bool, Violation> {
+pub(crate) fn read_packet(input: &mut impl Read, packet: &mut Vec<u8>) -> Result<bool, Violation> {
     let mut len = [0u8; 4];
     let mut got = 0;
     while got < len.len() {
@@ -226,7 +226,7 @@ enum Handle {
 
 /// Attributes a request asks to set.
 #[derive(Default)]
-struct SetAttrs {
+pub(crate) struct SetAttrs {
     size: Option<u64>,
     owner: Option<(u32, u32)>,
     perm: Option<u32>,
@@ -589,7 +589,7 @@ impl Server {
 
 /// A path argument: raw bytes, as SFTP v3 carries them. An empty path
 /// names the working directory (draft-02 §6.2, ADR-0041 §4).
-fn path_arg(r: &mut Reader<'_>) -> Result<PathBuf, Violation> {
+pub(crate) fn path_arg(r: &mut Reader<'_>) -> Result<PathBuf, Violation> {
     let raw = raw_path_arg(r)?;
     Ok(if raw.as_os_str().is_empty() {
         PathBuf::from(".")
@@ -606,7 +606,7 @@ fn raw_path_arg(r: &mut Reader<'_>) -> Result<PathBuf, Violation> {
     )))
 }
 
-fn read_attrs(r: &mut Reader<'_>) -> Result<SetAttrs, Violation> {
+pub(crate) fn read_attrs(r: &mut Reader<'_>) -> Result<SetAttrs, Violation> {
     let flags = r.uint32()?;
     let mut attrs = SetAttrs::default();
     if flags & ATTR_SIZE != 0 {
@@ -753,7 +753,7 @@ fn write_tracked(
 /// WRITE choose the access mode, and APPEND, CREAT, TRUNC and EXCL each
 /// add their own flag, so READ|APPEND stays read-only and READ|CREAT is
 /// valid — combinations `OpenOptions` cannot express (ADR-0041 §4).
-fn open_flags(pflags: u32) -> rustix::fs::OFlags {
+pub(crate) fn open_flags(pflags: u32) -> rustix::fs::OFlags {
     use rustix::fs::OFlags;
     let mut flags = match (pflags & OPEN_READ != 0, pflags & OPEN_WRITE != 0) {
         (true, true) => OFlags::RDWR,
