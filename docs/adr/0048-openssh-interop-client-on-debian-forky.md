@@ -1,6 +1,6 @@
 # ADR 0048: Run the OpenSSH interop gate on Debian forky, with OpenSSH 10.6p1 or later
 
-- **Status:** Accepted
+- **Status:** Accepted; [ADR-0059](0059-gate-image-published-to-ghcr.md) installs its client in the gate image once, which removes the per-run dependency on snapshot.debian.org; the base, snapshot, client version and floor stand
 - **Date:** 2026-11-02 (accepted with the implementing PR [#242](https://github.com/gonzafg2/quantumssh/pull/242); drafted 2026-10-29)
 - **Deciders:** Project lead
 - **Related:** Subsidiary ADR 3 ("the interop client") of [RFC-0012](../rfcs/0012-composite-host-key-cutover.md) §Subsidiary decisions; it answers that RFC's unresolved "Interop base" question. It supersedes the trixie base and the 10.0 values of [ADR-0034](0034-openssh-interop-client-pinned-to-image-build-snapshot.md), and the "Debian trixie container providing OpenSSH 10.0p1-7" bullet of [ADR-0020](0020-phase-1-ci-openssh-interop-gate.md) §Decision. ADR-0034's pinning mechanics and bump procedure stand. It moves together with [ADR-0047](0047-host-key-algorithm-ssh-mldsa44-ed25519.md) (the host key algorithm). Implementation: `.github/workflows/interop.yml`, in the RFC-0012 implementation PR.

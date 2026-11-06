@@ -129,10 +129,19 @@ jobs:
         if: steps.members.outputs.count != '0'
         run: cargo build --workspace --release
 
+      # ADR-0059 §4: the gate image is verified on the host before it runs.
+      # This is also the required check that blocks a PR whose gate image
+      # does not verify, since interop.yml's openssh-interop is then skipped.
+      - name: Verify the gate image
+        if: steps.members.outputs.count != '0' && runner.os == 'Linux'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash tests/gate-image/verify.sh
+
       # ADR-0043 §7: the reference unit under a real systemd. The runner's
       # OpenSSH 9.6 lacks the hybrid KEX, so systemd (as PID 1) and the
-      # client run in a disposable container built from the interop gate's
-      # pinned image; the script installs the release binary built above.
+      # client run in a disposable container of the gate image (ADR-0059);
+      # the script installs the release binary built above.
       - name: systemd reference unit
         if: steps.members.outputs.count != '0' && runner.os == 'Linux'
         run: bash tests/systemd/run_in_docker.sh

@@ -1,7 +1,7 @@
 # ADR 0059: Run the OpenSSH and systemd gates from an attested image on GHCR, built once from the snapshot pin
 
-- **Status:** Proposed
-- **Date:** drafted 2026-11-04; accepted with the implementing PR
+- **Status:** Accepted
+- **Date:** 2026-11-06 (accepted with the implementing PR, [#267](https://github.com/gonzafg2/quantumssh/pull/267), which pins the index `sha256:88a4c0e6…` that [#264](https://github.com/gonzafg2/quantumssh/pull/264)'s workflow published from `c07b43e`; `gh attestation verify` accepts the attestation on that index digest, so §1's fallback is not needed; drafted 2026-11-04)
 - **Deciders:** Project lead
 - **Related:**
   - Resolves [#262](https://github.com/gonzafg2/quantumssh/issues/262).

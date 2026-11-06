@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # Reference-unit check (ADR-0043 §7): the server under a real systemd.
 #
-# Runs as root inside the disposable container tests/systemd/Dockerfile
-# builds, whose PID 1 is systemd. It installs QuantumSSH the way
-# docs/deployment.md describes — a system account, /etc/quantumssh,
-# /usr/local/bin and contrib/systemd/quantumssh.service — so never run it
-# on a real host. CI, the release workflow and a local run all drive it
-# through tests/systemd/run_in_docker.sh, from the repository root.
+# Runs as root inside a disposable container of the gate image
+# (tests/gate-image/, ADR-0059), whose PID 1 is systemd. It installs
+# QuantumSSH the way docs/deployment.md describes — a system account,
+# /etc/quantumssh, /usr/local/bin and contrib/systemd/quantumssh.service —
+# so never run it on a real host. CI, the release workflow and a local run
+# all drive it through tests/systemd/run_in_docker.sh, from the repository
+# root.
 #
 # Env overrides: SRC (the checkout, default /src), QUANTUMSSH_BIN (the
 # Linux release binary, default $SRC/target/release/quantumssh).

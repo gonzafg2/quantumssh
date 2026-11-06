@@ -336,6 +336,13 @@ jobs:
           tar -xzf "${tarballs[0]}"
           echo "EXTRACTED=$PWD/${tarballs[0]%.tar.gz}" >> "$GITHUB_ENV"
 
+      # ADR-0059 §4: the gate image is verified on the host before it runs.
+      # The attestation API is public, so contents: read is enough.
+      - name: Verify the gate image
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash tests/gate-image/verify.sh
+
       # The tarball's own binary and unit, not the checkout's.
       - name: systemd reference unit
         run: bash tests/systemd/run_in_docker.sh "$EXTRACTED"
