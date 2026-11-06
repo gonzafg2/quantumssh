@@ -1,0 +1,133 @@
+name: Fuzz
+
+# ADR-0060 §7: exploratory fuzzing on PRs that touch the code or its
+# dependencies, and continuous fuzzing every day on main. Every target is
+# also built, and its seeds and regressions replayed, in ci.yml's
+# required build (ubuntu-latest); this workflow is not a required check.
+on:
+  pull_request:
+    paths:
+      - "crates/quantumssh-core/src/**"
+      - "fuzz/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+  # Off the hour, as GitHub's scheduling notes advise.
+  schedule:
+    - cron: "17 3 * * *"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+# No secret, and no write access: the workflow behaves the same on fork
+# PRs. actions/cache authenticates with the Actions runtime token.
+permissions:
+  contents: read
+
+jobs:
+  targets:
+    name: list targets
+    runs-on: ubuntu-latest
+    outputs:
+      targets: ${{ steps.list.outputs.targets }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # The [[bin]] names of fuzz/Cargo.toml, so a new target joins the
+      # matrix without editing this file (ADR-0060 §9).
+      - name: List the fuzz targets
+        id: list
+        shell: bash
+        run: |
+          targets=$(python3 - <<'PY'
+          import json, re, tomllib
+          with open("fuzz/Cargo.toml", "rb") as f:
+              names = [b["name"] for b in tomllib.load(f)["bin"]]
+          assert all(re.fullmatch("[a-z_]+", n) for n in names), names
+          print(json.dumps(names))
+          PY
+          )
+          echo "targets=$targets" >> "$GITHUB_OUTPUT"
+
+  fuzz:
+    name: fuzz (${{ matrix.target }})
+    needs: targets
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.targets.outputs.targets) }}
+    env:
+      # 20 minutes per target on main, 60 seconds on a PR.
+      FUZZ_SECONDS: ${{ github.event_name == 'schedule' && 1200 || 60 }}
+      TARGET: ${{ matrix.target }}
+      CORPUS: fuzz/corpus/${{ matrix.target }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # ADR-0039: rust-toolchain.toml is the only place a Rust version is
+      # named, and the fuzz build uses it too (ADR-0060 §1).
+      - name: Read pinned toolchain
+        id: toolchain
+        shell: bash
+        run: |
+          channel=$(sed -n 's/^channel[[:space:]]*=[[:space:]]*"\([^"]*\)".*$/\1/p' rust-toolchain.toml)
+          if ! [[ "$channel" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error file=rust-toolchain.toml::channel must be an exact MAJOR.MINOR.PATCH release (ADR-0039), found '${channel}'"
+            exit 1
+          fi
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
+
+      - name: Cache cargo registry, index and fuzz target
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: fuzz -> target
+
+      - name: Build the target
+        run: bash scripts/fuzz-prepare.sh "$TARGET"
+
+      # ADR-0060 §6: entries cannot be overwritten, so each scheduled run
+      # saves a new one and every run restores the newest by prefix.
+      - name: Restore the corpus
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.CORPUS }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: fuzz-corpus-${{ matrix.target }}-
+
+      # ADR-0060 §8: libFuzzer's output stays off this log; a finding is
+      # encrypted to the current security key before it leaves the runner.
+      - name: Fuzz
+        run: bash scripts/fuzz-run.sh "$TARGET" "$FUZZ_SECONDS" "$CORPUS" fuzz-report
+
+      - name: Upload the encrypted report
+        if: failure() && hashFiles('fuzz-report/*.gpg') != ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzz-crash-${{ matrix.target }}-${{ github.run_id }}
+          path: fuzz-report/
+          retention-days: 90
+          if-no-files-found: error
+
+      - name: Minimize the corpus
+        if: github.event_name == 'schedule'
+        run: cargo fuzz cmin --sanitizer none "$TARGET" "$CORPUS"
+
+      - name: Save the corpus
+        if: github.event_name == 'schedule'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.CORPUS }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
