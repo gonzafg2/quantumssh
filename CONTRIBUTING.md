@@ -139,10 +139,15 @@ the issue or RFC the change is associated with.
   directory.
 - Cryptographic and protocol code should have property-based tests where
   reasonable.
-- Parsers of peer-supplied bytes have `cargo-fuzz` targets in `fuzz/`
-  ([ADR-0060](docs/adr/0060-continuous-fuzzing-cargo-fuzz-on-the-pinned-stable-toolchain.md)). A change to one on the pre-authentication
-  path adds or updates its target and seeds in the same PR. See
-  [`fuzz/README.md`](fuzz/README.md).
+- Every pre-authentication parser of peer-supplied bytes has a
+  `cargo-fuzz` target in `fuzz/`
+  ([ADR-0060](docs/adr/0060-continuous-fuzzing-cargo-fuzz-on-the-pinned-stable-toolchain.md)).
+  So do SFTP framing and field parsing, and the terminal modes. The SFTP
+  request handlers ([#270](https://github.com/gonzafg2/quantumssh/issues/270))
+  and the channel layer ([#271](https://github.com/gonzafg2/quantumssh/issues/271))
+  do not have targets yet.
+- A change to a pre-authentication parser adds or updates its target and
+  seeds in the same PR. See [`fuzz/README.md`](fuzz/README.md).
 
 ## Documentation
 
