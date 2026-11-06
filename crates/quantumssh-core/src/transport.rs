@@ -1300,9 +1300,6 @@ pub(crate) enum RekeyStep {
     PassToChannel,
 }
 
-/// ---- shared plumbing (private: stages cannot be bypassed) ----
-///
-/// A protocol-error rejection (code 2) with the given reason.
 /// Parses an `SSH_MSG_SERVICE_REQUEST` payload (RFC 4253 §10) into the
 /// requested service name. A pure function, so it can be fuzzed
 /// (ADR-0060 §3).
@@ -1317,6 +1314,9 @@ pub(crate) fn parse_service_request(payload: &[u8]) -> Result<String, wire::Wire
     String::from_utf8(name.to_vec()).map_err(|_| wire::WireError::Truncated)
 }
 
+/// ---- shared plumbing (private: stages cannot be bypassed) ----
+///
+/// A protocol-error rejection (code 2) with the given reason.
 const fn protocol_error(reason: &'static str) -> Rejection {
     Rejection {
         reason,

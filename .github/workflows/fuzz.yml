@@ -11,6 +11,12 @@ on:
       - "fuzz/**"
       - "Cargo.toml"
       - "Cargo.lock"
+      # The scripts and this workflow, so a change to how fuzzing runs
+      # is exercised on the PR that makes it.
+      - "scripts/align-fuzz-lock.py"
+      - "scripts/fuzz-prepare.sh"
+      - "scripts/fuzz-run.sh"
+      - ".github/workflows/fuzz.yml"
   # Off the hour, as GitHub's scheduling notes advise.
   schedule:
     - cron: "17 3 * * *"
