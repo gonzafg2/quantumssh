@@ -85,6 +85,11 @@ warnings.
 - Integration tests in `crates/quantumssh-core/tests/` use `tokio::test`
   with real TCP against an ephemeral-port server.
 - `cargo test --workspace` runs everything. No special setup required.
+- Fuzz targets live in `fuzz/` (ADR-0060), built with cargo-fuzz and
+  `--sanitizer none` on the pinned stable toolchain:
+  `bash scripts/fuzz-prepare.sh`, then `cargo fuzz run --sanitizer none
+  <target>`. The fuzzer reaches crate-private parsers through
+  `quantumssh_core::fuzzing`, compiled only under `--cfg fuzzing`.
 
 ## Git workflow
 
@@ -117,6 +122,7 @@ warnings.
 | `docs/rfcs/` | RFCs (shape-determining decisions) |
 | `.github/REVIEW-FORMAT.md` | Report contract the two workflow reviewers follow |
 | `deny.toml` | `cargo deny` configuration |
+| `fuzz/` | cargo-fuzz targets, seeds and fixtures (ADR-0060) |
 | `clippy.toml` | Clippy tuning |
 | `rust-toolchain.toml` | Pinned toolchain (stable, MSRV 1.92) |
 | `rustfmt.toml` | Formatting rules (100 cols, module imports) |
@@ -132,6 +138,9 @@ Read by the Codex cloud GitHub App when it reviews a pull request
   section does not restate them.
 - Report a finding only when it breaks one of those rules, and name the
   file and line and the rule it breaks.
+- A PR that adds or changes a pre-authentication parser without adding or
+  updating its fuzz target and seeds in `fuzz/` breaks the `CLAUDE.md`
+  hard security rule on the pre-authentication path (ADR-0060 §9).
 - An accepted ADR changes only by supersession, apart from its Status
   field and annotated errata (ADR-0015). Do not ask for one to be edited
   in place.

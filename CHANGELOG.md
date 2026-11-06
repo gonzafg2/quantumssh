@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Continuous fuzzing
+  ([ADR-0060](docs/adr/0060-continuous-fuzzing-cargo-fuzz-on-the-pinned-stable-toolchain.md)),
+  run by cargo-fuzz with `--sanitizer none` on the pinned stable
+  toolchain.
+  - **Targets.** `fuzz/` has a target for every pre-authentication
+    parser: the identification line, packet framing, KEXINIT, the hybrid
+    init, sealed frames, the service request, the userauth request and
+    the user certificate. A stateful `handshake` target drives the
+    transport through the peer's `NEWKEYS`. SFTP framing and field
+    parsing and terminal modes have targets too.
+  - **Findings.** Any allocation over 64 MiB is a finding.
+  - **CI.** `build (ubuntu-latest)` builds every target and replays its
+    seeds and regressions. `fuzz.yml` fuzzes on PRs that touch the code,
+    and daily on `main`. A finding is encrypted to the security key
+    before it leaves the runner.
+  - **Not covered yet.** The SFTP request handlers wait for OS-level
+    confinement (#270), and the channel layer waits for its parsers to
+    be extracted (#271).
 - Documentation: the threat model's §5.3.5 covers password
   authentication bypass, with CVE-2026-123158 ("sshole", OpenSSH 10.6p2)
   as its exemplar. QuantumSSH compiles no password authentication, so the
@@ -34,6 +52,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `tests/gate-image/verify.sh` checks the pinned digest's attestation
     on the runner host before any gate runs the image.
 - Dependencies: `ml-kem` 0.3.4 and `rustix` 1.1.6, patch updates.
+- The `SSH_MSG_SERVICE_REQUEST` and `SSH_MSG_USERAUTH_REQUEST` parsing
+  moved out of the transport's async stage methods into pure functions,
+  with no change in behaviour, so the fuzzer reaches them (ADR-0060 §3).
+  The `authorized_keys` and `trusted_user_ca_keys` loaders now read the
+  file, then parse its content.
 
 ## [0.2.0] - 2026-11-04
 

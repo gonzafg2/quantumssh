@@ -78,6 +78,9 @@ authoritative reference; the operative rules a reviewer applies:
 - **The pre-authentication path is the highest-trust surface** (§4.1). No
   `unsafe`, no allocation sized by an attacker-controlled length without an
   explicit bound, and it must be fuzzable. Parser changes get extra scrutiny.
+  A PR that adds or changes a parser of peer-supplied bytes before
+  authentication adds or updates its fuzz target and seeds in `fuzz/` in the
+  same PR ([ADR-0060](docs/adr/0060-continuous-fuzzing-cargo-fuzz-on-the-pinned-stable-toolchain.md) §9).
 - **Fail closed.** A peer that does not offer the hybrid PQ KEX, or does not
   negotiate strict-kex, is rejected (`SSH_DISCONNECT_KEY_EXCHANGE_FAILED`).
   No downgrade path may exist.
@@ -142,8 +145,9 @@ authoritative reference; the operative rules a reviewer applies:
 | `deny.toml`, `clippy.toml`, `rust-toolchain.toml`, `Cargo.toml` | Tooling and workspace config |
 | `crates/quantumssh-core/` | The library — modules `wire`, `kex`, `cipher`, `composite` (the `ssh-mldsa44-ed25519` signature), `host_key`, `transport` (type-state machine), `auth`, `cert`, `channel`, `exec`, `pty`, `server`, `sftp` |
 | `crates/quantumssh/` | The thin binary entrypoint over the library (two crates, flat — [ADR-0017](docs/adr/0017-phase-1-workspace-topology-two-crates-flat.md)) |
+| `fuzz/` | The cargo-fuzz targets, one per pre-authentication parser plus SFTP field parsing and terminal modes, with their seeds and fixtures: a package with its own workspace and lockfile, outside the root workspace ([ADR-0060](docs/adr/0060-continuous-fuzzing-cargo-fuzz-on-the-pinned-stable-toolchain.md)) |
 | `tests/interop/` | `run_openssh_client.sh` — the OpenSSH interop gate driver (ADR-0020) |
-| `scripts/` | Maintenance scripts, such as `extract-acvp-mlkem768.py`, which regenerates the ML-KEM-768 ACVP vectors in `crates/quantumssh-core/tests/vectors/`; `scripts/release/` holds the release workflow's static-link check, packaging and pinned signature check; `verify-download.sh` is the user's check of a release's `SHA256SUMS` signature, and `verify-release.sh` the maintainer's check of a draft before signing it (ADR-0054) |
+| `scripts/` | Maintenance scripts, such as `extract-acvp-mlkem768.py`, which regenerates the ML-KEM-768 ACVP vectors in `crates/quantumssh-core/tests/vectors/`; `scripts/release/` holds the release workflow's static-link check, packaging and pinned signature check; `verify-download.sh` is the user's check of a release's `SHA256SUMS` signature, and `verify-release.sh` the maintainer's check of a draft before signing it (ADR-0054); `fuzz-prepare.sh`, `fuzz-run.sh`, `align-fuzz-lock.py` and `fuzz-seeds.py` build, run, align and seed the fuzz targets (ADR-0060) |
 | `contrib/systemd/`, [`docs/deployment.md`](docs/deployment.md) | The reference systemd unit and the operator guide ([ADR-0043](docs/adr/0043-systemd-notify-service-and-reference-unit.md)) |
 | `tests/release/` | `run_verify_download.sh` — `verify-download.sh` and the pinned signature check through each pin-set role, with keys generated per run |
 | `tests/systemd/` | `run_reference_unit.sh` — the reference unit under a real systemd, in a disposable container (ADR-0043) |
@@ -167,7 +171,10 @@ cargo build --workspace --release                            # the connectable b
 The `interop` CI job additionally drives a real OpenSSH 10.x client through
 connect → auth → exec → close against the release binary
 ([ADR-0020](docs/adr/0020-phase-1-ci-openssh-interop-gate.md)); reproduce it
-locally with `tests/interop/run_openssh_client.sh`. (The CI workspace-state
+locally with `tests/interop/run_openssh_client.sh`. `build (ubuntu-latest)`
+also builds every fuzz target and replays its seeds and regressions; reproduce
+it with `bash scripts/fuzz-prepare.sh`, then `cargo fuzz run --sanitizer none
+<target> fuzz/seeds/<target> -- -runs=0` (ADR-0060). (The CI workspace-state
 guards that self-disabled during Phase 0 — [ADR-0011](docs/adr/0011-ci-guards-workspace-state.md)
 — are now active, since the workspace has members.)
 

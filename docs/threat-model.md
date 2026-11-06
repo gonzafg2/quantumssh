@@ -712,7 +712,11 @@ path — workspace-enforced by ADR-0018's `unsafe_code = "forbid"`,
 which is what an auditor should test against. Dependencies on that
 path may contain internal `unsafe`; they are admitted only through
 the RFC lane (the RFC-0003 primitive crates, the RFC-0004 runtime).
-Any first-party exception requires an RFC.
+Any first-party exception requires an RFC. [ADR-0060](/docs/adr/0060-continuous-fuzzing-cargo-fuzz-on-the-pinned-stable-toolchain.md) implements the fuzzer.
+Every pre-authentication parser has a cargo-fuzz target in `fuzz/`,
+seeded from that grammar and the OpenSSH 10.6p1 client's handshake.
+Each target allocates under a 64 MiB cap, so an unbounded allocation is
+a finding.
 
 #### 5.1.3 Connection exhaustion and slowloris
 
@@ -1107,9 +1111,12 @@ Phase 2 grants no confinement to escape.
   host key ([RFC-0013](/docs/rfcs/0013-sftp-subsystem.md)).
 - Every attacker-controlled length is bounded (a packet ≤ 256 KiB, the
   read clamp, the handle cap), and malformed input ends the session.
-  The framing and field parsers are pure functions. The request
-  handlers act on the filesystem, so §6.2's Phase-3 fuzzing harness
-  drives them in a scratch directory.
+  The framing and field parsers are pure functions, fuzzed by
+  [ADR-0060](/docs/adr/0060-continuous-fuzzing-cargo-fuzz-on-the-pinned-stable-toolchain.md)'s `sftp` target. The request handlers act on the filesystem
+  and pass paths to the OS unconfined. A scratch directory does not
+  confine absolute paths, `..` or symlinks, so the handlers are fuzzed
+  only once OS-level confinement exists
+  ([#270](https://github.com/gonzafg2/quantumssh/issues/270)).
 - The helper runs as the service account with no confinement in
   Phase 2. Any path the service account can reach is reachable, which
   is the access a `shell` session already has (§8.12). Confinement and
@@ -1339,10 +1346,20 @@ repeating it.
   auth (Phase 1), command execution (Phase 1), PTY and SFTP
   (Phase 2). Everything else is opt-in behind a feature flag.
   Defends §5.4 generally.
-- **Fuzzing as a Phase-3 deliverable.** `cargo-fuzz` and OSS-Fuzz
-  integration are committed in the roadmap; corpora derived from the
-  RFC 4253 binary packet grammar are the starting target. Defends
-  §5.1.2.
+- **Continuous fuzzing ([ADR-0060](/docs/adr/0060-continuous-fuzzing-cargo-fuzz-on-the-pinned-stable-toolchain.md)).** cargo-fuzz runs on the pinned
+  stable toolchain, with no sanitizer, over a target for every
+  pre-authentication parser, SFTP framing and field parsing, and
+  terminal modes.
+  - Every PR builds every target and replays its seeds and
+    regressions, and `main` is fuzzed every day.
+  - A finding is encrypted to the security key before it leaves the
+    runner.
+  - Without AddressSanitizer, a memory-safety bug in a dependency's
+    `unsafe` code shows only if it crashes.
+  - OSS-Fuzz integration stays on the roadmap, deferred until the
+    project meets its bar.
+
+  Defends §5.1.2.
 - **Audit log shape stable from Phase 2.** Structured records via
   `tracing`, written as JSON at schema version 1
   ([RFC-0014](/docs/rfcs/0014-audit-log-schema-v1.md)): every record
