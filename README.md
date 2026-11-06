@@ -40,6 +40,8 @@ But it carries two compounding burdens:
 
 OpenSSH is responding. Version 10.0 made the ML-KEM hybrid key exchange the default. GitHub rolled out hybrid post-quantum SSH access (`sntrup761x25519-sha512@openssh.com`) on 17 September 2025; the algorithm is selected automatically for modern clients with no opt-in required. The direction is right. But the implementations are bolted onto a 25-year-old codebase in a memory-unsafe language, retaining decades of legacy algorithms, configuration surface, and edge cases — every line of which is a potential attack surface and a maintenance burden.
 
+CVE-2026-123158 ("sshole", fixed in OpenSSH 10.6p2 on 5 November 2026) shows what that surface costs. On Alpine and other musl-based systems without PAM, `sshd`'s password authentication, which OpenSSH enables by default, accepted a password of 257 to 1024 bytes for any account whose `/etc/shadow` password field is `*`, the marker of an account locked against password login. `sshd` hashed the password with another account's salt, musl's SHA-512 `crypt()` rejects a key over 256 bytes by returning `*`, and that equals the stored `*`. It was not a memory-safety bug; two components that were each correct disagreed at their seam. QuantumSSH has no password authentication to bypass ([threat model §5.3.5](./docs/threat-model.md#535-password-authentication-bypass)).
+
 We think there is room for a different answer.
 
 ---
