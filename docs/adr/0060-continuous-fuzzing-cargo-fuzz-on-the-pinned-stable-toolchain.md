@@ -52,8 +52,13 @@ Facts that shape the design (checked on 2026-11-06):
       executions (`cov: 83`, 88 corpus entries).
     - The default build failed: "the option `Z` is only accepted on the
       nightly compiler".
-  - Linux x86_64 is not tested yet. The implementing PR's CI is the first
-    run there.
+  - On Linux the same targets built and ran in the `rust:1.99.1` image
+    (`sha256:8a4e90c7…`) under Docker on that Mac: natively on aarch64,
+    and emulated on x86_64. Both runs fuzzed with coverage feedback
+    (`cov: 83` and `cov: 86`), and §5's allocator cap fired on both.
+    GitHub's runners have not run it yet. The implementing PR adds these
+    steps to `build (ubuntu-latest)` itself, so a failure there blocks
+    only that PR, not the PRs after it.
 - **ClusterFuzzLite and OSS-Fuzz support only AddressSanitizer for Rust,
   on their own nightly.**
   - Their base image `gcr.io/oss-fuzz-base/base-builder-rust` sets
@@ -190,20 +195,20 @@ requires.
 |---|---|---|
 | `peer_id` | `wire::parse_peer_id` | the client identification line |
 | `packet` | `wire::validate_packet_length`, `wire::decode_packet_body` | plaintext binary packet framing and padding |
-| `kexinit` | `kex::parse_kexinit`, then `kex::negotiate` for the first exchange and for a rekey | `SSH_MSG_KEXINIT` and negotiation |
+| `kexinit` | `kex::parse_kexinit`, then `kex::negotiate(&peer, true)` and `kex::negotiate(&peer, false)` on the same input | `SSH_MSG_KEXINIT` and negotiation, for the first exchange and for a rekey. The `initial` flag is the only difference between the two in these functions. A rekey's encrypted delivery runs after authentication, in `Expect<S, Session>`, and is not in this table |
 | `hybrid_init` | `kex::hybrid_exchange` | the client's ML-KEM-768 encapsulation key and X25519 share; either half failing aborts |
 | `sealed_frame` | `cipher::PacketCipher::body_len` and `open`, for both AEAD ciphers with fixed keys | length decryption, the length bound, tag checks |
 | `service_request` | the parser extracted from `read_service_request` | `SSH_MSG_SERVICE_REQUEST` |
-| `userauth_request` | the parser extracted from `authenticate` | `SSH_MSG_USERAUTH_REQUEST`, its `publickey` fields, the key blob and the signature blob |
-| `user_certificate` | `cert::verify`, with a fixed trusted CA and a fixed `now` | the OpenSSH user certificate, its principals and options, and the composite CA signature |
-| `handshake` | `transport::version_exchange`, then `exchange_kexinit` and `run_hybrid`, over an in-memory stream | the identification-line reader, plaintext framing and the stage transitions up to `NEWKEYS` |
+| `userauth_request` | the parser extracted from `authenticate`. When the request carries a signature and names a key in a fixed `authorized_keys` set, it goes on to `auth::verify_auth_signature` with a fixed session id | `SSH_MSG_USERAUTH_REQUEST` with and without a signature (the probe), its `publickey` fields, the key blob, and the Ed25519 signature blob through `ed25519-dalek`'s strict verification |
+| `user_certificate` | `cert::verify`, with a fixed trusted CA and a fixed `now` | the OpenSSH user certificate, its principals and options, and the composite CA signature through the `composite` module's verification, both halves |
+| `handshake` | `transport::version_exchange`, then `exchange_kexinit`, `run_hybrid` and `exchange_newkeys`, over an in-memory stream | the identification-line reader, plaintext framing, and every stage transition through the peer's `SSH_MSG_NEWKEYS`. Input after that meets the AEAD, which `sealed_frame` covers |
 
 These post-authentication targets follow, because §5.4.5 already commits
 to the first:
 
 | Target | Entry point | What it covers |
 |---|---|---|
-| `sftp` | `sftp::serve` over the input, in a new scratch directory per run | SFTP framing and request handlers |
+| `sftp` | `sftp::serve` over the input, in a scratch directory created empty for each input and removed after it | SFTP framing and request handlers |
 | `pty_modes` | `pty::Modes::parse`, `pty::valid_term` | the `pty-req` terminal modes and `TERM` |
 
 The channel layer (`channel.rs`) gets no target in this ADR. It runs
@@ -214,7 +219,9 @@ Rules every target follows:
 
 - It reads only its input. Fixed state, such as a host key from fixed
   seeds, a CA, keys or a Tokio current-thread runtime, is built once and
-  reused.
+  reused. The target never changes that state. State the code under test
+  does change, such as the `sftp` target's scratch directory, is rebuilt
+  for every input, so a reproducer replays alone in a fresh process.
 - Control flow depends only on the input. `kex::hybrid_exchange` and
   `run_hybrid` draw the server's ephemeral secrets from the OS, but no
   branch on the peer's bytes depends on them, so a reproducer replays the
@@ -289,7 +296,12 @@ Rules every target follows:
   That key's encryption subkey (`cv25519 [E]`) is the one `SECURITY.md`
   takes private reports on.
 - The encrypted archive is uploaded as `fuzz-crash-<target>-<run_id>`,
-  kept for 90 days, the default embargo in `SECURITY.md`. The run fails.
+  with `retention-days: 90`, the most GitHub allows on a public
+  repository. The run fails. Triage starts by downloading the archive:
+  from then on, the maintainer keeps the decrypted reproducer with the
+  advisory or the fix, so the artifact's expiry loses nothing. The
+  `SECURITY.md` embargo counts from acknowledgement and can run to
+  120 days.
 - The maintainer decrypts it and triages it like an external report
   under `SECURITY.md`:
   - a vulnerability goes through a private GitHub security advisory and
