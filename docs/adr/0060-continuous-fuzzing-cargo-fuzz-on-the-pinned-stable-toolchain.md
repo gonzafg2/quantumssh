@@ -14,7 +14,7 @@
     - [ADR-0031](0031-required-status-checks-commit-lint-and-openssh-interop.md): no new required-check name (§7).
   - Encrypts findings to the key that [ADR-0054](0054-release-artifact-integrity.md) §6 and [ADR-0057](0057-release-signing-with-the-project-pgp-key.md) pin, the same key [`SECURITY.md`](../../SECURITY.md) takes private reports on (§8).
   - Implementation, planned:
-    - new files: `fuzz/` (`Cargo.toml`, `Cargo.lock`, `fuzz_targets/`, `seeds/`, `regressions/`), `.github/workflows/fuzz.yml` and `crates/quantumssh-core/src/fuzzing.rs`;
+    - new files: `fuzz/` (`Cargo.toml`, `Cargo.lock`, `fuzz_targets/`, `seeds/`, `regressions/`), `.github/workflows/fuzz.yml`, `crates/quantumssh-core/src/fuzzing.rs` and `scripts/align-fuzz-lock.py`;
     - changed files:
       - `crates/quantumssh-core/src/lib.rs` and `src/transport.rs` (§3);
       - the root `Cargo.toml` (`check-cfg`);
@@ -110,6 +110,13 @@ Facts that shape the design (checked on 2026-11-06):
       `read_service_request` and `authenticate` (`transport.rs` L539 and
       L670), behind the AEAD. A byte-level fuzzer cannot get past the
       AEAD without the session keys.
+- **A separate lockfile drifts at once.**
+  - A fuzz package resolved on 2026-11-06 against `main` had 18 of its
+    68 shared registry packages at versions other than the root
+    `Cargo.lock`'s, `aes` among them (0.9.4, while the binary ships
+    0.9.3).
+  - `cargo update --precise`, one package at a time, aligned every one
+    of them, and the target still built.
 - **`libfuzzer-sys` is `(MIT OR Apache-2.0) AND NCSA`.** It bundles
   LLVM's libFuzzer source, and `deny.toml` does not allow NCSA.
 - **On this public repository, every Actions log and artifact is
@@ -163,7 +170,20 @@ encrypted to the project's security key before it leaves the runner.
     against the same `deny.toml`;
   - `deny.toml` adds a license exception for NCSA, scoped to
     `libfuzzer-sys`, not a global allow;
-  - `.github/dependabot.yml` adds a `cargo` entry for `/fuzz`.
+  - `.github/dependabot.yml` adds a `cargo` entry for `/fuzz`, limited
+    to the fuzz-only direct dependencies, `libfuzzer-sys` and `cap`.
+- **The fuzz build uses the dependency versions the binary ships
+  with.** `fuzz/Cargo.lock` is a separate lockfile, so on its own it
+  would drift from the root `Cargo.lock`, for instance after a
+  Dependabot bump of a primitive crate in the root.
+  - Before every fuzz build, in every job of §7,
+    `scripts/align-fuzz-lock.py` aligns each package that both
+    lockfiles contain, matched by name and semver-compatible version,
+    to the root version. It runs
+    `cargo update --manifest-path fuzz/Cargo.toml -p <name>@<fuzz version> --precise <root version>`.
+  - The job fails if a shared package still differs after that.
+  - Shared versions therefore always come from the root, and the
+    committed `fuzz/Cargo.lock` decides only the fuzz-only packages.
 
 ### 3. How targets reach the parsers
 
@@ -173,7 +193,8 @@ encrypted to the project's security key before it leaves the runner.
   alternative code path.
 - That declaration is the only `cfg(fuzzing)` in first-party code. No
   function body, and nothing a normal build compiles, branches on
-  `fuzzing`, so the code under test is the code that ships. The root
+  `fuzzing`, so the first-party code under test is the code that ships.
+  §2 makes the dependency versions match too. The root
   `Cargo.toml` declares `check-cfg = ["cfg(fuzzing)"]` under
   `unexpected_cfgs`, so the workspace build stays warning-free.
 - The `SSH_MSG_SERVICE_REQUEST` and `SSH_MSG_USERAUTH_REQUEST` parsing
@@ -245,11 +266,13 @@ Rules every target follows:
 
 - `fuzz/seeds/<target>/` holds small, reviewed, valid inputs:
   - the OpenSSH 10.6p1 client's identification line, KEXINIT and hybrid
-    init, from `tests/vectors/mlkem768x25519-sha256-openssh.txt` (§5.1.2:
-    "derived from the RFC 4253 binary packet grammar");
+    init, from
+    `crates/quantumssh-core/tests/vectors/mlkem768x25519-sha256-openssh.txt`
+    (§5.1.2: "derived from the RFC 4253 binary packet grammar");
   - messages built with the encoders the integration tests already use
-    (`tests/support/mod.rs`: `client_kexinit`, `service_request_payload`,
-    `signed_auth_request`, `probe_auth_request`);
+    (`crates/quantumssh-core/tests/support/mod.rs`: `client_kexinit`,
+    `service_request_payload`, `signed_auth_request`,
+    `probe_auth_request`);
   - a certificate signed by the test CA.
 
   How each seed was produced is written next to it.
@@ -273,7 +296,8 @@ Rules every target follows:
   A PR that breaks a target, or brings back a fixed finding, cannot
   merge. No required-check name changes (ADR-0031).
 - **Exploratory, on PRs.** `fuzz.yml` runs on PRs that change
-  `crates/quantumssh-core/src/**` or `fuzz/**`, for 60 seconds per
+  `crates/quantumssh-core/src/**`, `fuzz/**`, the root `Cargo.toml` or
+  the root `Cargo.lock` (a dependency bump), for 60 seconds per
   target from the cached corpus, in a matrix. It is not a required
   check: a finding it reports is real, but its absence proves little.
 - **Continuous, on `main`.** `fuzz.yml` runs every day at 03:17 UTC, off
