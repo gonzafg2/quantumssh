@@ -179,7 +179,13 @@ impl AuthorizedKeys {
     #[must_use]
     #[allow(clippy::double_must_use)]
     pub fn load(path: &Path) -> Result<Self, AuthError> {
-        load_key_file(path).map(|keys| Self { keys })
+        Self::parse(&read_key_file(path)?)
+    }
+
+    /// Parses `authorized_keys` content under the rules of
+    /// [`Self::load`], without reading a file.
+    pub(crate) fn parse(content: &str) -> Result<Self, AuthError> {
+        parse_key_file(content).map(|keys| Self { keys })
     }
 
     /// Looks up a key blob (the exact wire-format blob the client sends
@@ -204,10 +210,10 @@ pub(crate) struct KeyLine<K> {
     pub(crate) key: K,
 }
 
-/// Loads an `authorized_keys` file of `ssh-ed25519` keys: the rules and
+/// Parses `authorized_keys` content of `ssh-ed25519` keys: the rules and
 /// errors of [`AuthorizedKeys::load`].
-fn load_key_file(path: &Path) -> Result<Vec<AuthorizedKey>, AuthError> {
-    let lines = load_key_lines(path, KEY_ALGORITHM, 64, |line_no, key_bytes| {
+fn parse_key_file(content: &str) -> Result<Vec<AuthorizedKey>, AuthError> {
+    let lines = parse_key_lines(content, KEY_ALGORITHM, 64, |line_no, key_bytes| {
         let arr: [u8; 32] = key_bytes.try_into().map_err(|_| AuthError::MalformedLine {
             line: line_no,
             reason: format!(
@@ -242,19 +248,23 @@ fn load_key_file(path: &Path) -> Result<Vec<AuthorizedKey>, AuthError> {
         .collect())
 }
 
-/// Loads an `authorized_keys`-format file whose every key is of type
+/// Reads an `authorized_keys`-format file whole; a read failure is
+/// [`AuthError::Io`].
+pub(crate) fn read_key_file(path: &Path) -> Result<String, AuthError> {
+    std::fs::read_to_string(path).map_err(|e| AuthError::Io(e.to_string()))
+}
+
+/// Parses `authorized_keys`-format content whose every key is of type
 /// `algorithm`, at most `key_bound` bytes, and accepted by `parse`. The
 /// line rules are shared by `authorized_keys` and `trusted_user_ca_keys`
 /// (ADR-0050 §3): `#` comments and empty lines are skipped, an options
 /// field fails the load (ADR-0040), and the file must hold a key.
-pub(crate) fn load_key_lines<K>(
-    path: &Path,
+pub(crate) fn parse_key_lines<K>(
+    content: &str,
     algorithm: &'static str,
     key_bound: usize,
     parse: impl Fn(usize, &[u8]) -> Result<K, AuthError>,
 ) -> Result<Vec<KeyLine<K>>, AuthError> {
-    let content = std::fs::read_to_string(path).map_err(|e| AuthError::Io(e.to_string()))?;
-
     let mut keys = Vec::new();
     for (line_no, raw_line) in content.lines().enumerate() {
         let line_no = line_no + 1; // 1-indexed for diagnostics
@@ -404,6 +414,130 @@ pub(crate) fn resolve(
             None
         }
     }
+}
+
+/// Why an `SSH_MSG_USERAUTH_REQUEST` payload ends the connection before
+/// its method is acted on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RequestError {
+    /// The payload is not a `SSH_MSG_USERAUTH_REQUEST`.
+    NotUserauthRequest,
+    /// A field is truncated, over its bound or not UTF-8, the nested
+    /// signature is not `ssh-ed25519`, or bytes trail the request.
+    Malformed,
+    /// The service is not `ssh-connection`.
+    UnexpectedService,
+}
+
+/// A well-formed `SSH_MSG_USERAUTH_REQUEST` (RFC 4252 §5, §7).
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum UserauthRequest<'a> {
+    /// A method other than `publickey`, or a `publickey` request for a
+    /// key type other than `ssh-ed25519` and its certificate. It is
+    /// refused, and the rest of the request is not read.
+    Refused {
+        /// The method name, for the `auth.failed` record.
+        method: &'a str,
+    },
+    /// A `publickey` request: a probe when `signature` is `None`.
+    PublicKey {
+        /// The user name.
+        user: &'a str,
+        /// [`KEY_ALGORITHM`] or [`cert::CERT_ALGORITHM`].
+        key_algorithm: &'a str,
+        /// The key or certificate blob.
+        key_blob: &'a [u8],
+        /// The signature part of a signed request.
+        signature: Option<Signed<'a>>,
+    },
+}
+
+/// The signature part of a signed `publickey` request.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct Signed<'a> {
+    /// The payload up to, but not including, the signature field: what
+    /// [`auth_signed_data`] covers.
+    pub(crate) data: &'a [u8],
+    /// The raw Ed25519 signature, unwrapped from
+    /// `string("ssh-ed25519") + string(signature)` (RFC 8709 §6).
+    pub(crate) signature: &'a [u8],
+}
+
+/// Parses an `SSH_MSG_USERAUTH_REQUEST` payload, checking its fields in
+/// wire order. A pure function, so it can be fuzzed (ADR-0060 §3).
+///
+/// # Errors
+///
+/// The [`RequestError`] of the first field that fails.
+pub(crate) fn parse_userauth_request(payload: &[u8]) -> Result<UserauthRequest<'_>, RequestError> {
+    let mut r = Reader::new(payload);
+    if r.byte().unwrap_or(0) != SSH_MSG_USERAUTH_REQUEST {
+        return Err(RequestError::NotUserauthRequest);
+    }
+    let user = utf8_field(&mut r, USER_NAME_BOUND)?;
+    if utf8_field(&mut r, SERVICE_NAME_BOUND)? != "ssh-connection" {
+        return Err(RequestError::UnexpectedService);
+    }
+    let method = utf8_field(&mut r, METHOD_NAME_BOUND)?;
+    if method != AUTH_METHOD {
+        return Ok(UserauthRequest::Refused { method });
+    }
+    let sig_present = r.boolean().map_err(|_| RequestError::Malformed)?;
+    let key_algorithm = utf8_field(&mut r, KEY_ALGO_BOUND)?;
+    if key_algorithm != KEY_ALGORITHM && key_algorithm != cert::CERT_ALGORITHM {
+        return Ok(UserauthRequest::Refused { method });
+    }
+    let key_blob_bound = if key_algorithm == cert::CERT_ALGORITHM {
+        cert::CERT_BLOB_BOUND
+    } else {
+        KEY_BLOB_BOUND
+    };
+    let key_blob = r
+        .string(key_blob_bound)
+        .map_err(|_| RequestError::Malformed)?;
+    // Everything up to, but not including, the signature field.
+    let data = &payload[..payload.len() - r.remaining()];
+
+    let signature = if sig_present {
+        let signature = r
+            .string(SIGNATURE_BOUND)
+            .map_err(|_| RequestError::Malformed)?;
+        r.finish().map_err(|_| RequestError::Malformed)?;
+        // The nested signature encoding (RFC 4252 §7, RFC 8709 §6):
+        //   string("ssh-ed25519") + string(<64-byte raw signature>)
+        let mut sig_reader = Reader::new(signature);
+        let algorithm = sig_reader
+            .string(KEY_ALGO_BOUND)
+            .map_err(|_| RequestError::Malformed)?;
+        if algorithm != KEY_ALGORITHM.as_bytes() {
+            return Err(RequestError::Malformed);
+        }
+        let raw = sig_reader
+            .string(SIGNATURE_BOUND)
+            .map_err(|_| RequestError::Malformed)?;
+        sig_reader.finish().map_err(|_| RequestError::Malformed)?;
+        Some(Signed {
+            data,
+            signature: raw,
+        })
+    } else {
+        r.finish().map_err(|_| RequestError::Malformed)?;
+        None
+    };
+    Ok(UserauthRequest::PublicKey {
+        user,
+        key_algorithm,
+        key_blob,
+        signature,
+    })
+}
+
+/// A UTF-8 string field of at most `bound` bytes.
+fn utf8_field<'a>(r: &mut Reader<'a>, bound: usize) -> Result<&'a str, RequestError> {
+    r.string(bound)
+        .ok()
+        .and_then(|s| std::str::from_utf8(s).ok())
+        .ok_or(RequestError::Malformed)
 }
 
 /// Builds the data over which the `publickey` signature is computed
@@ -943,5 +1077,100 @@ mod tests {
         w.put_string(b"ssh-ed25519");
         w.put_string(vk.as_bytes());
         w.into_bytes()
+    }
+
+    /// A `USERAUTH_REQUEST` up to its method name.
+    fn request_head(service: &[u8], method: &[u8]) -> Writer {
+        let mut w = Writer::new();
+        w.put_byte(SSH_MSG_USERAUTH_REQUEST);
+        w.put_string(b"alice");
+        w.put_string(service);
+        w.put_string(method);
+        w
+    }
+
+    fn publickey_request(algorithm: &[u8], blob: &[u8], signature: Option<&[u8]>) -> Vec<u8> {
+        let mut w = request_head(b"ssh-connection", AUTH_METHOD.as_bytes());
+        w.put_boolean(signature.is_some());
+        w.put_string(algorithm);
+        w.put_string(blob);
+        if let Some(signature) = signature {
+            w.put_string(signature);
+        }
+        w.into_bytes()
+    }
+
+    fn ed25519_signature(raw: &[u8]) -> Vec<u8> {
+        let mut w = Writer::new();
+        w.put_string(KEY_ALGORITHM.as_bytes());
+        w.put_string(raw);
+        w.into_bytes()
+    }
+
+    #[test]
+    fn userauth_parser_refuses_another_method_before_reading_the_rest() {
+        let mut w = request_head(b"ssh-connection", b"password");
+        w.put_bytes(b"not a well-formed remainder");
+        assert_eq!(
+            parse_userauth_request(&w.into_bytes()),
+            Ok(UserauthRequest::Refused { method: "password" })
+        );
+    }
+
+    #[test]
+    fn userauth_parser_refuses_an_unsupported_key_type() {
+        let payload = publickey_request(b"ssh-rsa", b"blob", None);
+        assert_eq!(
+            parse_userauth_request(&payload),
+            Ok(UserauthRequest::Refused {
+                method: AUTH_METHOD
+            })
+        );
+    }
+
+    #[test]
+    fn userauth_parser_errors_in_wire_order() {
+        assert_eq!(
+            parse_userauth_request(&[]),
+            Err(RequestError::NotUserauthRequest)
+        );
+        let wrong_service = request_head(b"ssh-userauth", AUTH_METHOD.as_bytes()).into_bytes();
+        assert_eq!(
+            parse_userauth_request(&wrong_service),
+            Err(RequestError::UnexpectedService)
+        );
+        let mut probe = publickey_request(KEY_ALGORITHM.as_bytes(), b"blob", None);
+        probe.push(0);
+        assert_eq!(parse_userauth_request(&probe), Err(RequestError::Malformed));
+        let wrong_nested = {
+            let mut w = Writer::new();
+            w.put_string(b"ssh-mldsa44-ed25519");
+            w.put_string(&[0; 64]);
+            w.into_bytes()
+        };
+        let signed = publickey_request(KEY_ALGORITHM.as_bytes(), b"blob", Some(&wrong_nested));
+        assert_eq!(
+            parse_userauth_request(&signed),
+            Err(RequestError::Malformed)
+        );
+    }
+
+    #[test]
+    fn userauth_parser_splits_a_signed_request_at_the_signature() {
+        let signature = ed25519_signature(&[7; 64]);
+        let payload = publickey_request(KEY_ALGORITHM.as_bytes(), b"blob", Some(&signature));
+        let unsigned_len = payload.len() - 4 - signature.len();
+        assert_eq!(
+            parse_userauth_request(&payload),
+            Ok(UserauthRequest::PublicKey {
+                user: "alice",
+                key_algorithm: KEY_ALGORITHM,
+                key_blob: b"blob",
+                signature: Some(Signed {
+                    data: &payload[..unsigned_len],
+                    signature: &[7; 64],
+                }),
+            })
+        );
     }
 }

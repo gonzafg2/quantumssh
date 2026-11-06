@@ -44,3 +44,14 @@ jobs:
         uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
         with:
           command: check
+
+      # ADR-0060 §2: the fuzz package is its own workspace, with its own
+      # lockfile, checked against the same deny.toml. Shared packages are
+      # aligned to the root versions before every fuzz build, so this
+      # check is what covers the fuzz-only ones.
+      - name: Run cargo-deny on the fuzz package
+        if: steps.members.outputs.count != '0'
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          command: check
+          manifest-path: fuzz/Cargo.toml

@@ -38,6 +38,27 @@ updates:
         update-types:
           - "version-update:semver-major"
 
+  # The fuzz package's own lockfile (ADR-0060 §2), limited to its
+  # fuzz-only direct dependencies: every package it shares with the root
+  # is aligned to the root's version before each fuzz build, so the root
+  # entry above already moves those.
+  - package-ecosystem: cargo
+    directory: "/fuzz"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Etc/UTC
+    allow:
+      - dependency-name: libfuzzer-sys
+      - dependency-name: cap
+    commit-message:
+      prefix: chore
+      include: scope
+    labels:
+      - dependencies
+      - rust
+
   # The Rust toolchain pin in rust-toolchain.toml (ADR-0039). Each new
   # release arrives as one bump PR; lints the release adds are fixed on
   # that PR before it merges.

@@ -337,7 +337,9 @@ check. `v0.1.0`, published before the setting, stays mutable.
 Five CI contexts must report success before a PR can merge
 ([ADR-0031](./adr/0031-required-status-checks-commit-lint-and-openssh-interop.md)):
 
-- `build (ubuntu-latest)` — formats, lints, tests, and builds on Linux
+- `build (ubuntu-latest)` — formats, lints, tests, and builds on Linux,
+  and builds every fuzz target and replays its seeds and regressions
+  ([ADR-0060](./adr/0060-continuous-fuzzing-cargo-fuzz-on-the-pinned-stable-toolchain.md))
 - `build (macos-latest)` — same on macOS
 - `cargo deny` — license, advisories, sources, and bans
 - `commit-lint` — every commit subject in the PR follows Conventional Commits
@@ -402,6 +404,26 @@ The OpenSSH interop gate and the systemd test run in one image, built by
   1. the first moves the pin in `tests/gate-image/Dockerfile`; on
      merge, `gate-image.yml` publishes the new image;
   2. the second moves the digest in both files.
+
+### Fuzzing
+
+The fuzz targets live in `fuzz/`, a package with its own workspace and
+lockfile, outside the root workspace ([ADR-0060](./adr/0060-continuous-fuzzing-cargo-fuzz-on-the-pinned-stable-toolchain.md)).
+
+- **Toolchain.** cargo-fuzz, pinned in `scripts/fuzz-prepare.sh`, builds
+  with `--sanitizer none` on the toolchain `rust-toolchain.toml` pins.
+- **Dependencies.** `scripts/align-fuzz-lock.py` aligns every package
+  `fuzz/Cargo.lock` shares with the root `Cargo.lock` before each build.
+  `deny.yml` checks the fuzz package against the same `deny.toml`, which
+  carries an NCSA exception for `libfuzzer-sys` only.
+- **Runs.** `fuzz.yml` fuzzes each target for 60 seconds on PRs that
+  touch the code or the root manifests, and for 20 minutes daily on
+  `main`. It is not a required check.
+- **Corpus.** The corpus is kept in the Actions cache, one new entry per
+  daily run.
+- **Findings.** A finding is encrypted to the security key by
+  `scripts/fuzz-run.sh`.
+- **Seeds and fixtures.** They are written by `scripts/fuzz-seeds.py`.
 
 ### Workspace topology
 

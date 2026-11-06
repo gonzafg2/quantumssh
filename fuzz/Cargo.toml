@@ -1,0 +1,114 @@
+# The fuzz targets (ADR-0060). Its own workspace, outside the root one,
+# whose members stay ADR-0017's two crates. Built only by cargo-fuzz,
+# with `--sanitizer none` on the toolchain rust-toolchain.toml pins
+# (ADR-0060 §1); never part of a release artifact.
+#
+# fuzz/Cargo.lock decides only the fuzz-only packages. Before every fuzz
+# build, scripts/align-fuzz-lock.py moves every package this lockfile
+# shares with the root Cargo.lock to the root's version (ADR-0060 §2).
+
+[package]
+name         = "quantumssh-fuzz"
+version      = "0.0.0"
+edition      = "2024"
+license      = "Apache-2.0"
+rust-version = "1.92"
+publish      = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+# ADR-0060 §5: a capped global allocator, so an allocation over the cap
+# aborts and libFuzzer records the input. Writing it ourselves would take
+# an `unsafe impl GlobalAlloc`, which ADR-0018 forbids.
+cap             = "=0.1.2"
+libfuzzer-sys   = "=0.4.13"
+quantumssh-core = { path = "../crates/quantumssh-core", version = "0.2.0" }
+# The stateful `handshake` target's current-thread runtime and in-memory
+# stream. Already in the graph through quantumssh-core.
+tokio           = { version = "~1.51", default-features = false, features = ["rt", "io-util"] }
+
+# The fuzz package cannot inherit [workspace.lints]; ADR-0018 applies to
+# it as written.
+[lints.rust]
+unsafe_code = "forbid"
+
+[[bin]]
+name  = "peer_id"
+path  = "fuzz_targets/peer_id.rs"
+test  = false
+doc   = false
+bench = false
+
+[[bin]]
+name  = "packet"
+path  = "fuzz_targets/packet.rs"
+test  = false
+doc   = false
+bench = false
+
+[[bin]]
+name  = "kexinit"
+path  = "fuzz_targets/kexinit.rs"
+test  = false
+doc   = false
+bench = false
+
+[[bin]]
+name  = "hybrid_init"
+path  = "fuzz_targets/hybrid_init.rs"
+test  = false
+doc   = false
+bench = false
+
+[[bin]]
+name  = "sealed_frame"
+path  = "fuzz_targets/sealed_frame.rs"
+test  = false
+doc   = false
+bench = false
+
+[[bin]]
+name  = "service_request"
+path  = "fuzz_targets/service_request.rs"
+test  = false
+doc   = false
+bench = false
+
+[[bin]]
+name  = "userauth_request"
+path  = "fuzz_targets/userauth_request.rs"
+test  = false
+doc   = false
+bench = false
+
+[[bin]]
+name  = "user_certificate"
+path  = "fuzz_targets/user_certificate.rs"
+test  = false
+doc   = false
+bench = false
+
+[[bin]]
+name  = "handshake"
+path  = "fuzz_targets/handshake.rs"
+test  = false
+doc   = false
+bench = false
+
+[[bin]]
+name  = "sftp"
+path  = "fuzz_targets/sftp.rs"
+test  = false
+doc   = false
+bench = false
+
+[[bin]]
+name  = "pty_modes"
+path  = "fuzz_targets/pty_modes.rs"
+test  = false
+doc   = false
+bench = false
+
+[workspace]

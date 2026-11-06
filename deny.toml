@@ -32,6 +32,14 @@ allow = [
     "Zlib",
     "CC0-1.0",
 ]
+# ADR-0060 §2: libfuzzer-sys bundles LLVM's libFuzzer source, which is
+# under the University of Illinois/NCSA Open Source License (permissive,
+# OSI-approved). Only the fuzz package (fuzz/) depends on it, and nothing
+# it builds ships, so the exception names that one crate, not a global
+# allow.
+exceptions = [
+    { crate = "libfuzzer-sys", allow = ["NCSA"] },
+]
 
 # License clarifications: dependencies that are correctly licensed but
 # whose metadata cargo-deny cannot infer automatically. Add entries here

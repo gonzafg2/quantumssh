@@ -129,6 +129,26 @@ jobs:
         if: steps.members.outputs.count != '0'
         run: cargo build --workspace --release
 
+      # ADR-0060 §7: every fuzz target builds, without a sanitizer on the
+      # pinned toolchain, and replays its committed seeds and regressions
+      # once. A PR that breaks a target, or brings back a fixed finding,
+      # fails this required check. The time-boxed fuzzing is fuzz.yml.
+      - name: Build the fuzz targets
+        if: steps.members.outputs.count != '0' && runner.os == 'Linux'
+        run: bash scripts/fuzz-prepare.sh
+
+      - name: Replay the fuzz seeds and regressions
+        if: steps.members.outputs.count != '0' && runner.os == 'Linux'
+        shell: bash
+        run: |
+          for target in $(cargo fuzz list); do
+            dirs=("fuzz/seeds/$target")
+            if [ -d "fuzz/regressions/$target" ]; then
+              dirs+=("fuzz/regressions/$target")
+            fi
+            cargo fuzz run --sanitizer none "$target" "${dirs[@]}" -- -runs=0
+          done
+
       # ADR-0059 §4: the gate image is verified on the host before it runs.
       # This is also the required check that blocks a PR whose gate image
       # does not verify, since interop.yml's openssh-interop is then skipped.

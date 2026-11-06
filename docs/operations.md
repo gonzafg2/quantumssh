@@ -279,6 +279,41 @@ is public.
 configuration makes the verification fail with "denied", run it with an
 empty `DOCKER_CONFIG`.
 
+## Fuzzing
+
+Every pre-authentication parser has a cargo-fuzz target in `fuzz/`
+([ADR-0060](./adr/0060-continuous-fuzzing-cargo-fuzz-on-the-pinned-stable-toolchain.md)). `fuzz.yml` fuzzes each target daily on `main`. A finding
+is uploaded as an artifact named `fuzz-crash-<target>-<run_id>` and is
+encrypted to the security key's encryption subkey. This shows the
+recipient of such an artifact:
+
+```sh
+gh run download <run_id> -R gonzafg2/quantumssh -n fuzz-crash-<target>-<run_id>
+gpg --list-packets fuzz-crash-<target>.tar.gz.gpg | grep 'pubkey enc'
+```
+
+Expected: `keyid 4CFE72E9E72FA113`, the `cv25519` subkey of
+`66DB5100B0700E4AE051971F9A8DFF06AFD25B24`
+([`keys/security.asc`](../keys/security.asc)). The job log names only the
+target that failed.
+
+**Triage, for the maintainer.** Decrypting needs the private key:
+
+```sh
+gpg --decrypt fuzz-crash-<target>.tar.gz.gpg | tar -xz
+cat <target>.output                          # libFuzzer's report
+cargo fuzz run --sanitizer none <target> <target>/crash-<sha1>
+```
+
+- **Assess it under `SECURITY.md`.** A vulnerability goes through a
+  private security advisory. Anything else is fixed in an ordinary PR.
+- **Judge an overflow or `debug_assert!` panic by the release binary.**
+  The release binary wraps or skips instead of panicking, which can be
+  worse than a closed connection (ADR-0060 §8).
+- **Commit the reproducer with the fix.** The fix commits the input,
+  minimized with `cargo fuzz tmin`, to `fuzz/regressions/<target>/`.
+  `build (ubuntu-latest)` then replays it on every PR.
+
 ## Reporting drift
 
 If any verification above produces a result that contradicts what this

@@ -1,7 +1,7 @@
 # ADR 0060: Fuzz every pre-authentication parser with cargo-fuzz on the pinned stable toolchain, in CI
 
-- **Status:** Proposed
-- **Date:** drafted 2026-11-06; accepted with the implementing PR
+- **Status:** Accepted
+- **Date:** 2026-11-06 (accepted with the implementing PR, [#272](https://github.com/gonzafg2/quantumssh/pull/272). Every target built and replayed its seeds on macOS arm64 and on Linux amd64, and each was fuzzed for 60 seconds without a finding; drafted 2026-11-06)
 - **Deciders:** Project lead
 - **Related:**
   - The continuous-fuzzing workstream of Phase 3, [#248](https://github.com/gonzafg2/quantumssh/issues/248). Its acceptance item is "a fuzz target for every pre-authentication parser, running continuously".
@@ -23,6 +23,34 @@
       - `docs/threat-model.md` §5.1.2, §5.4.5 and §6.2;
       - `docs/operations.md`;
       - the review rules in `CLAUDE.md` and `AGENTS.md` (§9).
+
+> **Post-acceptance errata** (per [ADR-0015](0015-permit-annotated-errata-in-adrs.md)):
+>
+> - **2026-11-06** ([PR #272](https://github.com/gonzafg2/quantumssh/pull/272), the implementing PR):
+>   - **§6, where the seeds come from.**
+>     - `scripts/fuzz-seeds.py` writes every seed and fixture, using only
+>       Python's standard library. It builds them from the golden vector
+>       and the wire grammar, not with the encoders in
+>       `crates/quantumssh-core/tests/support/mod.rs`.
+>     - The `user_certificate` seed is not signed by a test CA. It is a
+>       structurally valid certificate that names the golden vector's
+>       composite key as its CA, and its signature has the right length
+>       but does not verify. A valid signature would need ML-DSA signing,
+>       which the script cannot do. A mutated input breaks any signature
+>       anyway, and `cert.rs`'s `Parsed::parse` checks every field before
+>       the signature.
+>     - "How each seed was produced" is written in that script, which
+>       `fuzz/README.md` points to.
+>   - **Related, the implementation list.**
+>     - Also new: `fuzz/src/lib.rs` (the allocator cap and the fixtures),
+>       `fuzz/fixtures/`, `fuzz/README.md`, `scripts/fuzz-prepare.sh`
+>       (where cargo-fuzz is pinned) and `scripts/fuzz-run.sh` (the run,
+>       and the encryption of §8).
+>     - Also changed: `crates/quantumssh-core/src/auth.rs`, `src/cert.rs`
+>       and `src/sftp.rs` (§3), and `docs/infrastructure.md`.
+>     - `fuzz/regressions/` appears with the first fixed finding.
+>
+>   The decision is unchanged.
 
 ## Context
 
