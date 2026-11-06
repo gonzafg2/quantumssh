@@ -1,0 +1,232 @@
+name: Gate image
+
+# Builds the image the OpenSSH interop gate and the systemd reference-unit
+# test run in, and the image of its Debian sources (ADR-0059). On a pull
+# request it only builds, with contents: read. On main it also publishes
+# both to GHCR and attests them. A gate accepts only an image this workflow
+# attested on refs/heads/main (ADR-0059 §3, §4).
+
+on:
+  pull_request:
+    paths:
+      - tests/gate-image/**
+      - .github/workflows/gate-image.yml
+  push:
+    branches: [main]
+    paths:
+      - tests/gate-image/**
+      - .github/workflows/gate-image.yml
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions: {}
+
+env:
+  IMAGE: ghcr.io/gonzafg2/quantumssh-gate
+  SOURCES_IMAGE: ghcr.io/gonzafg2/quantumssh-gate-sources
+
+jobs:
+  # Each platform natively (ADR-0059 §1). The Dockerfile asserts the client,
+  # so an image that is built is one that passed.
+  build:
+    name: build (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    env:
+      ARCH: ${{ matrix.arch }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build the gate image
+        run: docker build --target gate -t quantumssh-gate tests/gate-image
+
+      # docker cp from a created container: nothing in the image runs.
+      - name: Export the image and what it records
+        run: |
+          set -euo pipefail
+          mkdir -p out/list out/image
+          id="$(docker create quantumssh-gate)"
+          docker cp "$id:/usr/share/quantumssh-gate/sources.txt" "out/list/sources-$ARCH.txt"
+          docker cp "$id:/usr/share/quantumssh-gate/ssh-version" "out/list/ssh-version-$ARCH"
+          docker rm "$id" > /dev/null
+          [ -s "out/list/sources-$ARCH.txt" ] || { echo "::error::empty source package list"; exit 1; }
+          echo "ssh -V ($ARCH): $(cat "out/list/ssh-version-$ARCH")"
+          if [ "$GITHUB_EVENT_NAME" != pull_request ]; then
+            docker save quantumssh-gate -o "out/image/gate-$ARCH.tar"
+          fi
+
+      - name: Upload the source package list
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: gate-list-${{ matrix.arch }}
+          path: out/list
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload the image
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: gate-image-${{ matrix.arch }}
+          path: out/image
+          if-no-files-found: error
+          retention-days: 7
+
+  # The source package of everything installed on either platform, from the
+  # same snapshot (ADR-0059 §2).
+  sources:
+    name: sources
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download both platforms' lists
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: gate-list-*
+          merge-multiple: true
+          path: lists
+
+      - name: Build the sources image
+        run: |
+          set -euo pipefail
+          mkdir -p union
+          LC_ALL=C sort -u lists/sources-amd64.txt lists/sources-arm64.txt > union/sources.txt
+          echo "$(wc -l < union/sources.txt) source packages"
+          docker build --target sources --build-context list=union -t quantumssh-gate-sources tests/gate-image
+
+      - name: Export the sources image
+        if: github.event_name != 'pull_request'
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          docker save quantumssh-gate-sources -o out/gate-sources.tar
+
+      - name: Upload the sources image
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: gate-sources
+          path: out
+          if-no-files-found: error
+          retention-days: 7
+
+  # The only job that can write to GHCR or attest, and only on main.
+  publish:
+    name: publish
+    needs: [build, sources]
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Download the images
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: gate-*
+          merge-multiple: true
+          path: dist
+
+      - name: Log in to GHCR
+        env:
+          TOKEN: ${{ github.token }}
+        run: echo "$TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+
+      # Each platform image is pushed under its own tag, then joined into one
+      # index; the index digest is the one that is attested and pinned.
+      # skopeo (on the runner image) pushes each saved archive as an OCI
+      # manifest and writes the digest it pushed; OCI manifests make the
+      # index an OCI index, which carries the annotations.
+      - name: Push the gate image
+        id: gate
+        run: |
+          set -euo pipefail
+          tag="main-${GITHUB_SHA::12}"
+          refs=()
+          for arch in amd64 arm64; do
+            skopeo copy -q --format oci --authfile "$HOME/.docker/config.json" --digestfile "digest-$arch" \
+              "docker-archive:dist/gate-$arch.tar" "docker://$IMAGE:$tag-$arch"
+            refs+=("$IMAGE@$(cat "digest-$arch")")
+          done
+          docker buildx imagetools create -t "$IMAGE:$tag" \
+            --annotation "index:org.opencontainers.image.source=https://github.com/gonzafg2/quantumssh" \
+            --annotation "index:org.opencontainers.image.description=The QuantumSSH OpenSSH and systemd gates' image (ADR-0059). Its Debian sources are in $SOURCES_IMAGE, tagged sha256-<hex of this index's digest>." \
+            "${refs[@]}"
+          digest="$(docker buildx imagetools inspect "$IMAGE:$tag" --format '{{json .Manifest}}' | jq -r .digest)"
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::unexpected index digest '$digest'"; exit 1; }
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Push the sources image
+        id: sources
+        env:
+          GATE_DIGEST: ${{ steps.gate.outputs.digest }}
+        run: |
+          set -euo pipefail
+          skopeo copy -q --format oci --authfile "$HOME/.docker/config.json" --digestfile digest-sources \
+            docker-archive:dist/gate-sources.tar "docker://$SOURCES_IMAGE:sha256-${GATE_DIGEST#sha256:}"
+          digest="$(cat digest-sources)"
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::unexpected sources digest '$digest'"; exit 1; }
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Attest the gate image
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.gate.outputs.digest }}
+          push-to-registry: true
+
+      - name: Attest the sources image
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.SOURCES_IMAGE }}
+          subject-digest: ${{ steps.sources.outputs.digest }}
+          push-to-registry: true
+
+      # What the PR that pins the image needs (ADR-0059 §5).
+      - name: Summary
+        env:
+          GATE_DIGEST: ${{ steps.gate.outputs.digest }}
+          SOURCES_DIGEST: ${{ steps.sources.outputs.digest }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## Gate image"
+            echo
+            echo "- Pin: \`$IMAGE@$GATE_DIGEST\`"
+            echo "- Sources: \`$SOURCES_IMAGE@$SOURCES_DIGEST\`"
+            echo "- \`ssh -V\` (amd64): \`$(cat dist/ssh-version-amd64)\`"
+            echo "- \`ssh -V\` (arm64): \`$(cat dist/ssh-version-arm64)\`"
+            echo
+            echo '```sh'
+            echo "gh attestation verify oci://$IMAGE@$GATE_DIGEST -R $GITHUB_REPOSITORY \\"
+            echo "  --signer-workflow $GITHUB_REPOSITORY/.github/workflows/gate-image.yml \\"
+            echo "  --source-ref refs/heads/main --deny-self-hosted-runners"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
