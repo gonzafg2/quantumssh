@@ -59,6 +59,9 @@ jobs:
       image: debian@sha256:04db4720574d184e24353e77e46dbbe4377edad01c9ba50a67aa1473cef9b9d4
     steps:
       - name: Install OpenSSH client + build prerequisites
+        # A run step in a container defaults to sh; the retry below uses a
+        # bash array.
+        shell: bash
         env:
           # The image's own /etc/apt/sources.list.d/debian.sources carries,
           # commented out, the snapshot.debian.org timestamp it was built
