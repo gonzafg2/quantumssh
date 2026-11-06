@@ -10,6 +10,11 @@ FROM debian@sha256:04db4720574d184e24353e77e46dbbe4377edad01c9ba50a67aa1473cef9b
 ARG SNAPSHOT=20261027T000000Z
 ARG OPENSSH_CLIENT_VERSION=1:10.6p1-1
 
+# The apt steps are retried as in the interop gate (#262): apt-get update
+# fails on any missing index, and the download is retried before the
+# install runs from the verified cache.
+# ponytail: a copy of interop.yml's retry loop; both go away when the gates
+# move to the image of ADR-0059 (§5 step 2).
 RUN set -eu; \
     grep -q "snapshot.debian.org/archive/debian/${SNAPSHOT}" /etc/apt/sources.list.d/debian.sources; \
     printf '%s\n' \
@@ -27,7 +32,18 @@ RUN set -eu; \
         > /etc/apt/sources.list.d/debian.sources; \
     printf '%s\n' 'Acquire::Check-Valid-Until "false";' 'Acquire::Retries "3";' \
         > /etc/apt/apt.conf.d/99snapshot; \
-    apt-get update; \
+    retry() { \
+        attempt=1; \
+        until "$@"; do \
+            [ "$attempt" -lt 8 ] || { echo "failed after $attempt attempts: $*" >&2; return 1; }; \
+            echo "attempt $attempt failed, retrying in 120 s: $*" >&2; \
+            attempt=$((attempt + 1)); \
+            sleep 120; \
+        done; \
+    }; \
+    retry apt-get update --error-on=any; \
+    retry apt-get install -y --no-install-recommends --download-only \
+        systemd systemd-sysv procps "openssh-client=${OPENSSH_CLIENT_VERSION}"; \
     apt-get install -y --no-install-recommends \
         systemd systemd-sysv procps "openssh-client=${OPENSSH_CLIENT_VERSION}"; \
     rm -rf /var/lib/apt/lists/*
