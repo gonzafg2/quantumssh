@@ -5,7 +5,7 @@
 - **Deciders:** Project lead
 - **Related:**
   - The continuous-fuzzing workstream of Phase 3, [#248](https://github.com/gonzafg2/quantumssh/issues/248). Its acceptance item is "a fuzz target for every pre-authentication parser, running continuously".
-  - Implements the fuzzing commitments of the [threat model](../threat-model.md): §4.1 (the pre-authentication path must be fuzzable), §5.1.2's test handle, §5.4.5's SFTP test handle and §6.2's "Fuzzing as a Phase-3 deliverable".
+  - Implements the fuzzing commitments of the [threat model](../threat-model.md): §4.1 (the pre-authentication path must be fuzzable), §5.1.2's test handle, §6.2's "Fuzzing as a Phase-3 deliverable", and the SFTP framing and field parsers of §5.4.5's test handle. Its request handlers wait for confinement (§4).
   - Ends the Phase-1 deferral in [ADR-0020](0020-phase-1-ci-openssh-interop-gate.md) ("Phase 1 deliberately does **not** add `cargo-fuzz`").
   - Keeps these decisions unchanged:
     - [ADR-0017](0017-phase-1-workspace-topology-two-crates-flat.md): the workspace keeps its two members, and the fuzz package stays outside it (§2).
@@ -103,7 +103,9 @@ Facts that shape the design (checked on 2026-11-06):
     `cipher::PacketCipher::{body_len, open}` and the `transport` stage
     methods.
   - Not reachable:
-    - `cert::verify` and `sftp::serve`, which are `pub(crate)`;
+    - `cert::verify`, which is `pub(crate)`;
+    - the SFTP framing and field parsers `read_packet`, `path_arg`,
+      `read_attrs` and `open_flags`, which are private to `sftp.rs`;
     - the `composite` module, which is private;
     - the `SSH_MSG_SERVICE_REQUEST` and `SSH_MSG_USERAUTH_REQUEST`
       parsing, which is inline in the async stage methods
@@ -190,11 +192,19 @@ encrypted to the project's security key before it leaves the runner.
 - `quantumssh-core` gets one module, `fuzzing`, declared as
   `#[cfg(fuzzing)] pub mod fuzzing;`. It holds thin entry points that
   call the crate's own functions. It holds no parsing logic and no
-  alternative code path.
+  alternative code path. A function those entry points call that is
+  private to its module becomes `pub(crate)`. Nothing becomes `pub`.
 - That declaration is the only `cfg(fuzzing)` in first-party code. No
   function body, and nothing a normal build compiles, branches on
-  `fuzzing`, so the first-party code under test is the code that ships.
-  §2 makes the dependency versions match too. The root
+  `fuzzing`, so the first-party source under test is the source that
+  ships, and §2 makes the dependency versions match too.
+- The build flags still differ. The fuzz build keeps
+  `-Cdebug-assertions`, and with it overflow checks (§1). The release
+  profile has neither, since no manifest sets a `[profile.release]`.
+  `debug_assert!` and integer overflow therefore panic under fuzzing,
+  while a release binary skips the assertion and wraps silently. §8's
+  triage takes that into account.
+- The root
   `Cargo.toml` declares `check-cfg = ["cfg(fuzzing)"]` under
   `unexpected_cfgs`, so the workspace build stays warning-free.
 - The `SSH_MSG_SERVICE_REQUEST` and `SSH_MSG_USERAUTH_REQUEST` parsing
@@ -225,24 +235,38 @@ requires.
 | `handshake` | `transport::version_exchange`, then `exchange_kexinit`, `run_hybrid` and `exchange_newkeys`, over an in-memory stream | the identification-line reader, plaintext framing, and every stage transition through the peer's `SSH_MSG_NEWKEYS`. Input after that meets the AEAD, which `sealed_frame` covers |
 
 These post-authentication targets follow, because §5.4.5 already commits
-to the first:
+to the first. Neither touches the filesystem:
 
 | Target | Entry point | What it covers |
 |---|---|---|
-| `sftp` | `sftp::serve` over the input, in a scratch directory created empty for each input and removed after it | SFTP framing and request handlers |
+| `sftp` | `read_packet`, then `path_arg`, `read_attrs` and `open_flags` on the packet's fields | SFTP framing and field parsing |
 | `pty_modes` | `pty::Modes::parse`, `pty::valid_term` | the `pty-req` terminal modes and `TERM` |
 
-The channel layer (`channel.rs`) gets no target in this ADR. It runs
-inside the async session and spawns processes. Fuzzing it needs the same
-extraction as §3, so it is a follow-up issue linked from #248.
+Two surfaces get no target in this ADR. Both are follow-up issues
+linked from #248.
+
+- **The SFTP request handlers.** In Phase 2 they pass every path to the
+  OS exactly as sent, with no confinement (§5.4.5, ADR-0041 §4). Only
+  `~` is expanded against the working directory (`sftp.rs` L570–587).
+  - A fuzzed `FXP_REMOVE`, `FXP_RENAME`, `FXP_SETSTAT` or `OPEN` would
+    act on any path the runner's user can reach.
+  - So would a crash reproducer replayed on a maintainer's machine.
+  - A scratch directory does not confine absolute paths, `..` or
+    symlinks.
+
+  Fuzzing the handlers needs OS-level confinement first: a mount
+  namespace, a throwaway container with a read-only root, or Phase 3's
+  privilege separation (#43).
+- **The channel layer** (`channel.rs`). It runs inside the async session
+  and spawns processes. Fuzzing it needs the same extraction as §3.
 
 Rules every target follows:
 
 - It reads only its input. Fixed state, such as a host key from fixed
   seeds, a CA, keys or a Tokio current-thread runtime, is built once and
-  reused. The target never changes that state. State the code under test
-  does change, such as the `sftp` target's scratch directory, is rebuilt
-  for every input, so a reproducer replays alone in a fresh process.
+  reused. The target never changes that state. No target touches the
+  filesystem or the network, so a reproducer replays alone in a fresh
+  process.
 - Control flow depends only on the input. `kex::hybrid_exchange` and
   `run_hybrid` draw the server's ephemeral secrets from the OS, but no
   branch on the peer's bytes depends on them, so a reproducer replays the
@@ -278,12 +302,15 @@ Rules every target follows:
   How each seed was produced is written next to it.
 - `fuzz/regressions/<target>/` holds the minimized input of every fixed
   finding, committed with its fix.
-- The evolved corpus lives in the Actions cache, one entry per target.
-  - Only scheduled runs on `main` save it, after `cargo fuzz cmin`. PR
-    runs restore it and never save it.
-  - A cache entry that goes unread for 7 days is evicted. If that
-    happens, fuzzing starts again from the seeds. The seeds are the
-    floor, and nothing is lost that a run cannot rebuild.
+- The evolved corpus lives in the Actions cache.
+  - Cache entries cannot be overwritten, so each scheduled run on `main`
+    saves a new entry, `fuzz-corpus-<target>-<run_id>`, after
+    `cargo fuzz cmin`.
+  - Every run restores the newest entry through the prefix
+    `fuzz-corpus-<target>-`. PR runs restore it and never save.
+  - Superseded entries stop being read, and age out after 7 days. If
+    the newest one is evicted, fuzzing starts again from the seeds. The
+    seeds are the floor, and nothing is lost that a run cannot rebuild.
 
 ### 7. CI
 
@@ -332,6 +359,11 @@ Rules every target follows:
     its temporary private fork;
   - anything else is fixed in an ordinary PR.
 
+  A panic from integer overflow or a `debug_assert!` is judged by what
+  the release binary does with the same input: wrap or skip the
+  assertion, then carry on (§3). That can be a wrong length or bound
+  rather than a closed connection, and is rated as such.
+
   Either way, the fix commits the minimized reproducer to
   `fuzz/regressions/<target>/`. `docs/operations.md` gets the
   decrypt-and-replay recipe.
@@ -364,6 +396,9 @@ Rules every target follows:
 
 ### Negative
 
+- **The SFTP request handlers stay unfuzzed** until a follow-up gives
+  them OS-level confinement (§4). §5.4.5's test handle is only half
+  met: its framing and field parsers are fuzzed, its handlers are not.
 - **No AddressSanitizer.** A memory-safety bug inside a dependency's
   `unsafe` code surfaces only if it crashes. First-party code has no
   `unsafe` (ADR-0018), so this gap is confined to the primitive layer.
