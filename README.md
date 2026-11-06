@@ -22,7 +22,7 @@ We are not forking OpenSSH. We are not adding PQ algorithms as an option. We are
 
 Phase 0 (foundation) and Phase 1 (walking skeleton) are done: the greenfield SSH-2 server in Rust accepts OpenSSH 10.x clients end-to-end (hybrid `mlkem768x25519-sha256`, Ed25519 host keys at the time, publickey auth, single-command `exec`, structured `tracing`, CI interop gate).
 
-Phase 2 (“Usable”) is done and shipped as `0.1.0`, the first public release — tracked in [#109](https://github.com/gonzafg2/quantumssh/issues/109). It brought: TOML configuration file and StrictModes checks, concurrent accept loop with admission control, graceful shutdown, interactive PTY sessions, systemd integration, SFTP, OpenSSH user certificates, the composite post-quantum host key, and the freeze of the negotiation profile, audit-log schema and configuration schema. The server is not hardened for production: per-user privilege separation, fuzzing and an audit are Phase 3.
+Phase 2 (“Usable”) is done and shipped as `0.1.0`, the first public release — tracked in [#109](https://github.com/gonzafg2/quantumssh/issues/109). It brought: TOML configuration file and StrictModes checks, concurrent accept loop with admission control, graceful shutdown, interactive PTY sessions, systemd integration, SFTP, OpenSSH user certificates, the composite post-quantum host key, and the freeze of the negotiation profile, audit-log schema and configuration schema. The server is not hardened for production: per-user privilege separation and an audit are still to come in Phase 3. Continuous fuzzing of every pre-authentication parser runs since [ADR-0060](./docs/adr/0060-continuous-fuzzing-cargo-fuzz-on-the-pinned-stable-toolchain.md).
 
 Supporting infrastructure (DNS, TLS, email, signing, repository hardening) is described in [`docs/infrastructure.md`](./docs/infrastructure.md); independent verification recipes live in [`docs/operations.md`](./docs/operations.md). Decision records live in [`docs/adr/`](./docs/adr/) and [`docs/rfcs/`](./docs/rfcs/). Running the server under systemd: [`docs/deployment.md`](./docs/deployment.md).
 
@@ -132,7 +132,10 @@ Tracked in [#109](https://github.com/gonzafg2/quantumssh/issues/109). Scoping (n
 - ✅ First public release: `0.1.0` (one-way freeze of negotiation profile + audit-log `schema_version`)
 
 ### Phase 3 — Hardening
-- Continuous fuzzing (`cargo-fuzz`, OSS-Fuzz)
+Tracked in [#248](https://github.com/gonzafg2/quantumssh/issues/248).
+
+- ✅ Continuous fuzzing with `cargo-fuzz` of every pre-authentication parser — [ADR-0060](./docs/adr/0060-continuous-fuzzing-cargo-fuzz-on-the-pinned-stable-toolchain.md), implemented in [#272](https://github.com/gonzafg2/quantumssh/pull/272). The SFTP request handlers ([#270](https://github.com/gonzafg2/quantumssh/issues/270)) and the channel layer ([#271](https://github.com/gonzafg2/quantumssh/issues/271)) follow.
+- OSS-Fuzz integration, once the project meets its bar
 - Conformance tests against OpenSSH client
 - Security audit (community-funded or grant-funded)
 - First production-candidate release: `0.5.0`

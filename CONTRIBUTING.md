@@ -138,8 +138,11 @@ the issue or RFC the change is associated with.
 - Integration and protocol tests live under each crate's `tests/`
   directory.
 - Cryptographic and protocol code should have property-based tests where
-  reasonable. We will adopt fuzzing under `cargo-fuzz` and OSS-Fuzz once
-  the surface area justifies it.
+  reasonable.
+- Parsers of peer-supplied bytes have `cargo-fuzz` targets in `fuzz/`
+  ([ADR-0060](docs/adr/0060-continuous-fuzzing-cargo-fuzz-on-the-pinned-stable-toolchain.md)). A change to one on the pre-authentication
+  path adds or updates its target and seeds in the same PR. See
+  [`fuzz/README.md`](fuzz/README.md).
 
 ## Documentation
 
