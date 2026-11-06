@@ -254,6 +254,31 @@ Expected: both `active` on `refs/tags/v*`. One holds `creation`, which
 only `RepositoryRole 5` (the admin role) bypasses. The other holds
 `update` and `deletion` with no bypass actor.
 
+## Gate image
+
+The interop and systemd gates run in an attested image
+([ADR-0059](./adr/0059-gate-image-published-to-ghcr.md)). This checks
+the digest pinned on `main`, the same way CI does:
+
+```sh
+D="$(gh api repos/gonzafg2/quantumssh/contents/.github/workflows/interop.yml --jq .content | base64 -d \
+  | grep -oE 'ghcr.io/gonzafg2/quantumssh-gate@sha256:[0-9a-f]{64}')"
+gh attestation verify "oci://$D" -R gonzafg2/quantumssh \
+  --signer-workflow gonzafg2/quantumssh/.github/workflows/gate-image.yml \
+  --source-ref refs/heads/main --deny-self-hosted-runners
+curl -s -o /dev/null -w '%{http_code}\n' \
+  "https://ghcr.io/token?scope=repository:gonzafg2/quantumssh-gate:pull&service=ghcr.io"
+```
+
+Expected: `gh attestation verify` exits `0`. Outside a terminal it
+prints nothing; add `--format json` to see the attested workflow, ref and
+commit. The anonymous token request returns `200`, because the package
+is public.
+`docker buildx imagetools inspect "$D"` lists `linux/amd64` and
+`linux/arm64`. If a stale `ghcr.io` credential in the local Docker
+configuration makes the verification fail with "denied", run it with an
+empty `DOCKER_CONFIG`.
+
 ## Reporting drift
 
 If any verification above produces a result that contradicts what this

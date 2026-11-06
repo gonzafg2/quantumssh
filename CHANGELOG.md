@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Documentation: the threat model's §5.3.5 covers password
+  authentication bypass, with CVE-2026-123158 ("sshole", OpenSSH 10.6p2)
+  as its exemplar. QuantumSSH compiles no password authentication, so the
+  class does not apply. The README's problem statement cites the same
+  case.
+
+### Changed
+
+- The OpenSSH 10.6p1 interop gate and the systemd test, on pull requests
+  and in the release workflow, run in a published gate image instead of
+  installing their client from snapshot.debian.org on every run
+  ([ADR-0059](docs/adr/0059-gate-image-published-to-ghcr.md)). Outages
+  of that service had failed unrelated runs, the `v0.2.0` gates among
+  them.
+  - `gate-image.yml` builds the image natively for `amd64` and `arm64`,
+    from the same pin
+    ([ADR-0048](docs/adr/0048-openssh-interop-client-on-debian-forky.md)),
+    and its build asserts `ssh -V`. On a pull request it only builds; on
+    `main` it also publishes and attests the image.
+  - It is public as `ghcr.io/gonzafg2/quantumssh-gate`, with the Debian
+    source package of everything in it in
+    `ghcr.io/gonzafg2/quantumssh-gate-sources`.
+  - `tests/gate-image/verify.sh` checks the pinned digest's attestation
+    on the runner host before any gate runs the image.
+- Dependencies: `ml-kem` 0.3.4 and `rustix` 1.1.6, patch updates.
+
 ## [0.2.0] - 2026-11-04
 
 The first release with prebuilt binaries. Every binary is built, tested on

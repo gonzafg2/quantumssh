@@ -64,9 +64,11 @@ flowchart LR
         Protect["Branch protection<br/>required checks<br/>signatures<br/>admin-enforced"]
         Sec["Security features<br/>Dependabot CodeQL<br/>secret scanning"]
         CI["CI workflows<br/>workspace-empty guards"]
+        Pkg["GHCR packages<br/>gate image + sources"]
         Repo --> Protect
         Repo --> Sec
         Repo --> CI
+        CI --> Pkg
     end
 
     subgraph OBS["External observers"]
@@ -91,7 +93,9 @@ Four parties, three operational dependencies:
   inbound email to the maintainer's destination address.
 - **GitHub** holds the source of record, runs the CI workflows,
   enforces branch protection, and operates the security-feature stack
-  (Dependabot, CodeQL, secret scanning, push protection).
+  (Dependabot, CodeQL, secret scanning, push protection). Its container
+  registry hosts the image the interop and systemd gates run in, and that
+  image's Debian sources (§"Gate image").
 - **External observers** verify all of the above using only public
   endpoints, with the recipes in [`operations.md`](./operations.md).
   The solid edges in the diagram are configuration; the dotted edges
@@ -343,6 +347,13 @@ Five CI contexts must report success before a PR can merge
 The full configuration is readable via `gh api` (see
 [`operations.md`](./operations.md) for the invocation).
 
+`interop.yml`'s `gate-image` job, which verifies the gate image before
+`openssh-interop` runs it, is deliberately not required. If it fails,
+`openssh-interop` is skipped, and GitHub counts a skipped job as passing.
+The same verification runs in `build (ubuntu-latest)`, which is required
+and fails instead ([ADR-0059](./adr/0059-gate-image-published-to-ghcr.md)
+§4).
+
 ### Security features
 
 Server-side, the repository runs:
@@ -361,6 +372,36 @@ and are inert now that it has members (see
 [CI guard implementation note](#ci-guard-implementation-note)).
 
 ## Build and CI scaffolding
+
+### Gate image
+
+The OpenSSH interop gate and the systemd test run in one image, built by
+`.github/workflows/gate-image.yml` and pinned by digest in
+`.github/workflows/interop.yml` and `tests/systemd/run_in_docker.sh`
+([ADR-0059](./adr/0059-gate-image-published-to-ghcr.md)).
+
+| Package | Contents | First published |
+|---|---|---|
+| `ghcr.io/gonzafg2/quantumssh-gate` | OCI index, `linux/amd64` and `linux/arm64`: Debian forky at the ADR-0048 snapshot with `openssh-client` 1:10.6p1-1 | `sha256:88a4c0e6…`, from `c07b43e`, 2026-11-06 |
+| `ghcr.io/gonzafg2/quantumssh-gate-sources` | The Debian source package of everything in the gate image, tagged `sha256-<hex of the gate index digest>` | `sha256:43444e37…`, same run |
+
+- **Visibility.** Both packages are public. GHCR created them private on
+  first publish, and the project lead made them public by hand on
+  2026-11-06. That setting lives only in GitHub, not in the repository.
+- **Access.** Each package inherits its access from this repository.
+  Only `gate-image.yml`'s `publish` job, on `main`, holds
+  `packages: write`, `id-token: write` and `attestations: write`.
+- **Retention.** No version is deleted while a commit on `main` or a
+  release tag pins it, so old commits and release tags can still be
+  rerun.
+- **Trust.** It comes from the attestation, not from the registry. Any
+  workflow in the repository that holds `packages: write` could push to
+  the package. `tests/gate-image/verify.sh` accepts only a digest that
+  `gate-image.yml` attested on `refs/heads/main`.
+- **Bump.** A bump takes two PRs (ADR-0059 §5):
+  1. the first moves the pin in `tests/gate-image/Dockerfile`; on
+     merge, `gate-image.yml` publishes the new image;
+  2. the second moves the digest in both files.
 
 ### Workspace topology
 
