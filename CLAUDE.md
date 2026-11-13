@@ -23,7 +23,9 @@ sessions, SFTP, the TOML configuration file, systemd and user certificates
 on top of the Phase-1 path below. `0.2.0` adds prebuilt binaries with
 provenance, `quantumssh keygen` and the Homebrew tap
 `gonzafg2/homebrew-quantumssh` (RFC-0017, RFC-0018; Phase 3,
-[issue #248](https://github.com/gonzafg2/quantumssh/issues/248)). Phase 0 (foundation: manifesto, governance, threat
+[issue #248](https://github.com/gonzafg2/quantumssh/issues/248)). Continuous
+fuzzing of every pre-authentication parser landed in #272
+([ADR-0060](docs/adr/0060-continuous-fuzzing-cargo-fuzz-on-the-pinned-stable-toolchain.md)). Phase 0 (foundation: manifesto, governance, threat
 model, ADR/RFC catalog, supporting infrastructure) is complete. Phase 1
 (the walking-skeleton server, [issue #9](https://github.com/gonzafg2/quantumssh/issues/9))
 has **landed**: milestones M1–M6 are merged. The `quantumssh-core` library
