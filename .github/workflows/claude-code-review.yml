@@ -65,12 +65,12 @@ jobs:
 
       - name: Run Claude Code Review
         id: claude-review
-        # Pinned to the v1.0.166 commit (not the floating @v1 tag): an
+        # Pinned to a release commit (not the floating @v1 tag): an
         # unpinned re-fetch of the action silently regressed the
         # OIDC→app-token exchange on 2026-07-06. Bump this SHA
         # deliberately, the same discipline as the pinned toolchain /
         # Debian snapshot / OpenSSH interop image.
-        uses: anthropics/claude-code-action@4fa93a88de49bbef68b10eb15aabedf28ca0e1ed # v1.0.271
+        uses: anthropics/claude-code-action@4d75e5f390ee76b2e09c1980ecc99ff3a2e088c8 # v1.0.275
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           plugin_marketplaces: ${{ runner.temp }}/claude-review-marketplace
@@ -100,7 +100,15 @@ jobs:
           # in one message still run at once (code.claude.com/docs/en/sub-agents,
           # "Run subagents in foreground or background"). ScheduleWakeup
           # would end the turn the same way, with no later turn in CI.
+          #
+          # --permission-mode default keeps the mode this workflow ran in
+          # before v1.0.273. From that release a session starts in auto mode
+          # unless claude_args names another: a safety review then decides
+          # the calls no allow rule covers, where this workflow had them
+          # denied. The action puts claude_args after its own flag, and the
+          # last --permission-mode wins.
           claude_args: |
+            --permission-mode default
             --allowedTools "mcp__github_inline_comment__create_inline_comment"
             --disallowedTools "ScheduleWakeup"
             --model claude-sonnet-4-6

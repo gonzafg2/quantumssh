@@ -32,12 +32,12 @@ jobs:
 
       - name: Run Claude Code
         id: claude
-        # Pinned to the v1.0.166 commit (not the floating @v1 tag): an
+        # Pinned to a release commit (not the floating @v1 tag): an
         # unpinned re-fetch of the action silently regressed the
         # OIDC→app-token exchange on 2026-07-06. Bump this SHA
         # deliberately, the same discipline as the pinned toolchain /
         # Debian snapshot / OpenSSH interop image.
-        uses: anthropics/claude-code-action@4fa93a88de49bbef68b10eb15aabedf28ca0e1ed # v1.0.271
+        uses: anthropics/claude-code-action@4d75e5f390ee76b2e09c1980ecc99ff3a2e088c8 # v1.0.275
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 
@@ -50,6 +50,15 @@ jobs:
 
           # System prompt that applies to every @claude invocation in this repo.
           # Includes the commit conventions so the agent formats commits correctly.
+          #
+          # --permission-mode acceptEdits keeps the mode @claude runs had
+          # before v1.0.273, which starts a session in auto mode unless
+          # claude_args names another. The last --permission-mode wins.
+          #
+          # The prompt asks for -s alone. From v1.0.273 a commit goes through
+          # a wrapper that rejects -S, and this workflow configures no signing
+          # key. A commit made here is re-signed before it merges (CLAUDE.md).
           claude_args: |
-            --append-system-prompt "When making commits, follow Conventional Commits: <type>(<optional scope>): <short summary>. Types: feat, fix, docs, chore, refactor, test, perf, ci, build, security. Always sign off and sign: git commit -s -S. Separate subject from body with a blank line; body explains why and cross-references the issue or RFC."
+            --permission-mode acceptEdits
+            --append-system-prompt "When making commits, follow Conventional Commits: <type>(<optional scope>): <short summary>. Types: feat, fix, docs, chore, refactor, test, perf, ci, build, security. Always sign off: git commit -s. Separate subject from body with a blank line; body explains why and cross-references the issue or RFC."
 
