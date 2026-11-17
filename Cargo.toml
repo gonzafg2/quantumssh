@@ -81,7 +81,8 @@ aes-gcm  = { version = "0.11", default-features = false, features = ["aes", "all
 # unification): `aes-gcm/zeroize` erases the GHASH key on drop but
 # does not forward to `aes`, whose round-key schedule is the bulk of
 # the key material (threat model §4.3). No first-party code imports
-# this crate.
+# this crate, except the stack-residue tests of `cipher.rs` when built
+# for the software backend (ADR-0061 §5).
 aes      = { version = "0.9", default-features = false, features = ["zeroize"] }
 subtle   = { version = "2", default-features = false }  # constant-time Poly1305 tag comparison
 

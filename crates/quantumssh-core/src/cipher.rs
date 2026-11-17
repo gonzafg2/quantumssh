@@ -844,71 +844,119 @@ mod tests {
         }
 
         /// The software AES backend, selected with
-        /// `--cfg aes_backend="soft"`. Its schedule is a bitsliced form
-        /// that no public API exposes, so these tests search for a
-        /// recording of it.
+        /// `--cfg aes_backend="soft"`. It never puts the key on the
+        /// stack, so these tests search for its key schedule.
         #[cfg(all(aes_backend = "soft", target_pointer_width = "64"))]
         mod software_aes {
+            use std::io::{Read, Seek, SeekFrom};
+
+            use aes::Aes256;
+            use aes::cipher::KeyInit;
+
             use super::super::super::{AES256_GCM, PacketCipher};
             use super::{deep, found, heap_bytes, scrub};
 
-            /// Recorded by `scripts/capture-aes-fixslice-schedule.sh`.
-            const VECTORS: &str = include_str!("../tests/vectors/aes256-fixslice-schedule.txt");
+            /// The SHA-256 initial hash value: 32 bytes with no
+            /// structure. A patterned key gives schedule chunks of
+            /// zeros and of bit masks, which any stack holds.
+            static KEY: [u8; 32] = [
+                0x6a, 0x09, 0xe6, 0x67, 0xbb, 0x67, 0xae, 0x85, 0x3c, 0x6e, 0xf3, 0x72, 0xa5, 0x4f,
+                0xf5, 0x3a, 0x51, 0x0e, 0x52, 0x7f, 0x9b, 0x05, 0x68, 0x8c, 0x1f, 0x83, 0xd9, 0xab,
+                0x5b, 0xe0, 0xcd, 0x19,
+            ];
 
-            fn vector(name: &str) -> Vec<u8> {
-                let prefix = format!("{name} = ");
-                let hex = VECTORS
-                    .lines()
-                    .find_map(|line| line.strip_prefix(&prefix))
-                    .unwrap_or_else(|| panic!("no {name} vector"));
-                (0..hex.len())
-                    .step_by(2)
-                    .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).expect("hex"))
-                    .collect()
+            /// One compact round-key word as the backend widens it to
+            /// 64 bits: each bit becomes a nibble.
+            const fn widen(word: u16) -> u64 {
+                let x = word as u64;
+                let x = (x | (x << 24)) & 0x0000_00ff_0000_00ff;
+                let x = (x | (x << 12)) & 0x000f_000f_000f_000f;
+                let x = (x | (x << 6)) & 0x0303_0303_0303_0303;
+                let x = (x | (x << 3)) & 0x1111_1111_1111_1111;
+                x | (x << 1) | (x << 2) | (x << 3)
             }
 
-            /// The control. A recording can go stale without anyone
-            /// noticing, and a stale one would let the test below pass
-            /// whatever the code did. So the un-wiped paths must leave
-            /// the recorded bytes where the probe looks.
+            /// The schedule the backend derives from [`KEY`], in the two
+            /// forms it holds: the compact one its cipher object stores,
+            /// and the one it widens that to for each call.
+            ///
+            /// No public API exposes either. The cipher object is the
+            /// compact schedule, so its bytes are read through
+            /// `/proc/self/mem`, which needs no `unsafe`. The work runs
+            /// on another thread, so that what it leaves behind lands on
+            /// that thread's stack and not on the one under test.
+            fn schedules() -> (Vec<u8>, Vec<u8>) {
+                std::thread::spawn(|| {
+                    assert_eq!(
+                        size_of::<Aes256>(),
+                        240,
+                        "the cipher object is no longer the 240-byte compact schedule"
+                    );
+                    let cipher = Box::new(Aes256::new_from_slice(&KEY).expect("a 32-byte key"));
+                    let address = std::ptr::from_ref::<Aes256>(&cipher).addr();
+                    let mut compact = vec![0u8; size_of::<Aes256>()];
+                    let mut mem = std::fs::File::open("/proc/self/mem").expect("/proc/self/mem");
+                    mem.seek(SeekFrom::Start(
+                        u64::try_from(address).expect("a 64-bit address"),
+                    ))
+                    .expect("seek to the cipher object");
+                    mem.read_exact(&mut compact)
+                        .expect("read the cipher object");
+                    let native = compact
+                        .as_chunks::<2>()
+                        .0
+                        .iter()
+                        .flat_map(|word| widen(u16::from_ne_bytes(*word)).to_ne_bytes())
+                        .collect();
+                    (compact, native)
+                })
+                .join()
+                .expect("the schedule thread")
+            }
+
+            /// The control. If the backend changed how it holds its
+            /// schedule, the bytes derived above would be the wrong
+            /// ones, and the test below would pass whatever the code
+            /// did. So the un-wiped paths must leave them where the
+            /// probe looks.
             #[test]
-            fn the_unwiped_paths_leave_the_recorded_schedule() {
-                let (key, iv) = (vector("key"), heap_bytes(12, 3));
-                let (compact, native) = (vector("compact"), vector("native64"));
+            fn the_unwiped_paths_leave_the_schedule() {
+                let iv = heap_bytes(12, 3);
+                let (compact, native) = schedules();
                 let payload = vec![0x5au8; 1024];
 
                 scrub();
                 assert_eq!(
                     found(&compact) + found(&native),
                     0,
-                    "the recording matches an idle stack"
+                    "the schedule matches an idle stack"
                 );
 
                 let mut tx =
-                    deep(|| PacketCipher::new_unwiped(AES256_GCM, &key, &iv).expect("cipher"));
+                    deep(|| PacketCipher::new_unwiped(AES256_GCM, &KEY, &iv).expect("cipher"));
                 assert!(
                     found(&compact) > 0,
-                    "new left none of the recorded compact schedule: re-record it, or the backend changed"
+                    "new left none of the compact schedule: the backend changed"
                 );
 
                 scrub();
                 deep(|| tx.seal_unwiped(0, &payload).expect("seal"));
                 assert!(
                     found(&native) > 0,
-                    "seal left none of the recorded expanded schedule: re-record it, or the backend changed"
+                    "seal left none of the widened schedule: the backend changed"
                 );
             }
 
             #[test]
             fn the_public_operations_leave_no_schedule() {
-                let (key, iv) = (vector("key"), heap_bytes(12, 3));
-                let (compact, native) = (vector("compact"), vector("native64"));
+                let iv = heap_bytes(12, 3);
+                let (compact, native) = schedules();
                 let payload = vec![0x5au8; 1024];
                 let left = || found(&compact) + found(&native);
 
                 scrub();
-                let mut tx = deep(|| PacketCipher::new(AES256_GCM, &key, &iv).expect("tx cipher"));
-                let mut rx = deep(|| PacketCipher::new(AES256_GCM, &key, &iv).expect("rx cipher"));
+                let mut tx = deep(|| PacketCipher::new(AES256_GCM, &KEY, &iv).expect("tx cipher"));
+                let mut rx = deep(|| PacketCipher::new(AES256_GCM, &KEY, &iv).expect("rx cipher"));
                 assert_eq!(left(), 0, "new left the schedule on the stack");
 
                 scrub();

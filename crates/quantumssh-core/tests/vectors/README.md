@@ -92,35 +92,3 @@ agreeing with itself.
   `.github/workflows/interop.yml`, so it moves with an OpenSSH version
   bump. A new capture replaces the whole file, since every session draws
   fresh client keys. Like any vector update, it is a reviewed change.
-
-## `aes256-fixslice-schedule.txt`
-
-The AES-256 key schedules of the `aes` crate's software backend for one
-fixed key, in the two forms that backend holds them: the 240 bytes its
-cipher object stores, and the 960 bytes it widens them to for each call
-on a 64-bit target. The stack-residue tests in `src/cipher.rs` search the
-stack for these bytes when the crate is built with
-`--cfg aes_backend="soft"` (ADR-0061 §5).
-
-- **Why a recording.** The schedule is a bitsliced form that no public
-  API exposes, and the key itself never reaches the stack on that
-  backend. A test in safe Rust has no other way to name what to look
-  for.
-- **The key.** The SHA-256 initial hash value, 32 bytes with no
-  structure. A patterned key gives schedule chunks of zeros and of bit
-  masks, which any stack holds.
-- **It can go stale.** The recording follows the internal representation
-  of `aes`, and the file header names the version it was taken from. The
-  control test, `the_unwiped_paths_leave_the_recorded_schedule`, fails
-  when the recording no longer matches what the backend leaves behind.
-- **Regenerating.** On a 64-bit target, from the repository root:
-
-  ```sh
-  bash scripts/capture-aes-fixslice-schedule.sh \
-      > crates/quantumssh-core/tests/vectors/aes256-fixslice-schedule.txt
-  ```
-
-  The script builds a throwaway program outside the workspace, because
-  reading the cipher object needs `unsafe`, which the workspace forbids
-  (ADR-0018). It pins the `aes` version of the root `Cargo.lock`. Like
-  any vector update, a new recording is a reviewed change.
