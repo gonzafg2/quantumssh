@@ -590,7 +590,19 @@ filesystem cannot protect.
 **Trusted on the memory side.** That key material is kept in
 memory only for as long as it is needed, and is zeroised on a
 best-effort basis via the `zeroize` crate after use (the guarantee
-is bounded by what the compiler does not reorder). Operators who
+is bounded by what the compiler does not reorder). The erasure
+reaches the values that hold a key for as long as it is in use,
+which are erased when dropped. It does not reach the short-lived
+copies a primitive crate or the compiler leaves behind while it
+works. Two cases are recorded in
+[#277](https://github.com/gonzafg2/quantumssh/issues/277). On the
+default cipher, `chacha20-poly1305@openssh.com`, each packet builds
+several `chacha20` cipher states that hold the key words, and they
+are dropped without erasure, because the workspace does not enable
+that crate's `zeroize` feature. On `aes256-gcm@openssh.com`, the
+`aes` crate leaves round-key material on the stack, which its
+`zeroize` feature does not cover.
+Operators who
 require memory-confidentiality against an attacker with paging-
 file access must additionally configure `mlockall`/equivalent or
 disable swap at the host; the server itself cannot unilaterally
@@ -599,8 +611,9 @@ through error messages or panic output.
 
 **What the boundary enforces.** That host private keys never leave
 the process by any path other than the cryptographic operations
-that legitimately use them; that session keys never persist beyond
-the session.
+that legitimately use them; that the values holding session keys
+are erased when the keys are replaced or the session ends. The
+short-lived copies described above are outside this guarantee.
 
 ### 4.4 Configuration boundary — operator ↔ runtime
 
