@@ -32,7 +32,7 @@ jobs:
 
       - name: Run Claude Code
         id: claude
-        # Pinned to the v1.0.166 commit (not the floating @v1 tag): an
+        # Pinned to a release commit (not the floating @v1 tag): an
         # unpinned re-fetch of the action silently regressed the
         # OIDC→app-token exchange on 2026-07-06. Bump this SHA
         # deliberately, the same discipline as the pinned toolchain /
