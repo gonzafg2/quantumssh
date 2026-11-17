@@ -46,18 +46,23 @@ left.
   selected with `--cfg aes_backend="soft"`.
 - **Control:** a secret planted on the stack is found, 4 chunks of 4.
 
-| Secret (chunks) | after `new` | after `seal` | after `body_len` and `open` | after drop |
-|---|---|---|---|---|
-| ChaCha20: both keys (4) | 4 | 2 | 2 | 0 |
-| ChaCha20: Poly1305 key (2) | 0 | 0 | 0 | 0 |
-| AES, hardware: key (2) | 2 | 0 | 0 | 0 |
-| AES, hardware: round keys (30) | 30 | 0 | 0 | 0 |
-| AES, software: key (2) | 0 | 0 | 0 | 0 |
-| AES, software: expanded schedule (60) | 0 | 60 | 60 | 0 |
-| AES, software: compact schedule (15) | 15 | 0 | 0 | 0 |
+| Secret (chunks) | after `new` | after `seal` | after `body_len` | after `open` | after drop |
+|---|---|---|---|---|---|
+| ChaCha20: both keys (4) | 4 | 2 | 1 | 2 | 0 |
+| ChaCha20: Poly1305 key (2) | 0 | 0 | 0 | 0 | 0 |
+| AES, hardware: key (2) | 2 | 0 | 0 | 0 | 0 |
+| AES, hardware: round keys (30) | 30 | 0 | 0 | 0 | 0 |
+| AES, software: key (2) | 0 | 0 | 0 | 0 | 0 |
+| AES, software: expanded schedule (60) | 0 | 60 | 0 | 60 | 0 |
+| AES, software: compact schedule (15) | 15 | 0 | 0 | 0 | 0 |
 
 Payloads of 64 bytes and of 32 KiB gave the same picture, with one or
-two ChaCha20 key chunks after `seal` and after `open`.
+two ChaCha20 key chunks after `seal`, and after `body_len` and `open`
+taken together.
+
+AES-GCM's `body_len` leaves nothing because it reads no key: it only
+validates the length it is given. ChaCha20's decrypts the length with
+the header key.
 
 So every path leaves key material behind:
 
@@ -126,9 +131,11 @@ the key-bearing state of both ciphers on the heap.
 
 ### 2. Each public operation wipes after its work
 
-`PacketCipher::new`, `seal`, `body_len` and `open` each become a thin
-wrapper. The wrapper calls an inner function that does the work, then
-calls `zeroize::zeroize_stack`, then returns the result.
+`PacketCipher::new`, `seal` and `open` each become a thin wrapper. The
+wrapper calls an inner function that does the work, then calls
+`zeroize::zeroize_stack`, then returns the result. `body_len` does the
+same on its ChaCha20 arm only: the AES-GCM arm reads no key and gets no
+wipe.
 
 - The inner function is `#[inline(never)]`, as the documentation of
   `zeroize_stack` requires: if it were inlined, the wipe would cover the
@@ -136,11 +143,13 @@ calls `zeroize::zeroize_stack`, then returns the result.
 - The wipe is inside `PacketCipher`, not at its call sites. The
   transport calls these four functions in five places, and a caller
   cannot forget what it never had to do.
+- An AES-GCM packet sent and received therefore takes two wipes, not the
+  three the cost table measured.
 - Dropping a `PacketCipher` gets no wipe. It left nothing in any run.
 
 ### 3. The wipe is 16 KiB
 
-One constant, `16 * 1024`, for the four operations.
+One constant, `16 * 1024`, for every wipe.
 
 - 4 KiB was the smallest size that cleared every case on aarch64.
 - 16 KiB leaves a margin of four, for x86_64, which was not measured,
@@ -165,23 +174,40 @@ package is added.
 binds the behaviour. It runs on Linux, in safe Rust, and reads the
 stack of the thread it runs on through `/proc/self/maps` and
 `/proc/self/mem`. The harness confirmed that this works on a spawned
-thread, which is where `cargo test` runs a test. For each operation it
-checks two things:
+thread, which is where `cargo test` runs a test.
 
-- **The control.** The inner function, called without the wipe, leaves
-  key material where the probe looks. Without this, a probe that had
+The test is built like the measurement. Each operation runs under a
+padding frame and one caller frame, so the probe's own calls do not
+overwrite what it looks for, and a copy left in the caller's frame stays
+visible. It checks three things:
+
+- **The probe sees.** A value planted at the depth the operations run
+  at is found, and is gone after a wipe. Without this, a probe that had
   stopped seeing anything would pass every time.
-- **The wipe.** The public function leaves none of it.
+- **The public operations leave no key.** After `new`, `seal`,
+  `body_len` and `open`, none of the 16-byte chunks of the keys the test
+  supplied is on the stack: the two ChaCha20 keys and the AES key. This
+  is asserted for every operation, including those the table shows
+  leaving nothing today.
+- **The software AES backend leaves no schedule.** See below.
 
-The test searches for what safe code can name: the ChaCha20 keys and the
-AES key. On the hardware AES backends the key is the first two round
-keys, and in every run it appeared and disappeared together with the
-rest of the schedule.
+On the hardware AES backends the key is the first two round keys, and
+in every run it appeared and disappeared together with the rest of the
+schedule.
 
 The software backend's schedule is a bitsliced form that no public API
-exposes. For it the test uses a schedule recorded for a fixed key, and
-CI runs the cipher tests once more with `--cfg aes_backend="soft"`. The
-control makes a stale recording fail instead of pass.
+exposes, and its key never appears on the stack. For it the test uses
+the compact and the expanded schedule recorded for a fixed key. A
+recording can go stale without anyone noticing, so this case has a
+control of its own: the inner functions of `new` and of `seal`, called
+without the wipe, must leave the recorded bytes on the stack, as they
+did in the measurement (15 chunks of 15, and 60 of 60). The public
+functions must then leave none. CI runs the cipher tests once more with
+`--cfg aes_backend="soft"` for this.
+
+No other operation has a control of that kind. Hardware AES leaves
+nothing after a packet, so there is nothing an un-wiped call could be
+required to show.
 
 The test runs in `build (ubuntu-latest)`, which is x86_64. That run is
 the x86_64 measurement this ADR lacks.
@@ -216,9 +242,8 @@ that widens the trust base to an RFC. This is none of them:
   the code does.
 - The mechanism costs no dependency and no `unsafe`, and it sits in one
   file.
-- The control in the test turns a silent regression into a failing
-  check: a toolchain or crate bump that changes the frames either still
-  passes or says so.
+- A toolchain or crate bump that makes an operation leave a key fails a
+  check instead of passing unnoticed.
 
 ### Negative
 
@@ -229,12 +254,14 @@ that widens the trust base to an RFC. This is none of them:
 - **A cost on every packet.** About 90 to 120 ns per wipe on small
   packets at 16 KiB, three wipes for a packet sent and received. For a
   64-byte packet that takes AES-GCM with hardware support from 312 ns
-  to 669 ns, and ChaCha20-Poly1305 from 1537 ns to 1806 ns. On a 32 KiB
-  packet it is not measurable. The figures come from a container on one
-  machine.
-- **The control can fail for a harmless reason.** If a compiler stops
-  leaving residue on the un-wiped path, the control fails and someone
-  has to look. That is the price of not passing blindly.
+  to 669 ns, and ChaCha20-Poly1305 from 1537 ns to 1806 ns. Under §2
+  AES-GCM takes two wipes, so its figure will be lower; that was not
+  measured. On a 32 KiB packet the cost is not measurable. The figures
+  come from a container on one machine.
+- **The software-backend control can fail for a harmless reason.** If a
+  compiler or an `aes` release stops leaving the schedule on the
+  un-wiped path, or changes its form, that control fails and someone has
+  to look. That is the price of not passing blindly.
 - **One more CI build.** The software-backend run compiles the
   dependency tree again with a different configuration.
 - **aarch64 on Linux has no automated check.** CI runs the test on
