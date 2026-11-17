@@ -125,6 +125,21 @@ jobs:
         if: steps.members.outputs.count != '0'
         run: cargo test --workspace
 
+      # ADR-0061 §5: the transport ciphers leave no key on the stack. The
+      # step above already ran these tests in the dev profile. This one
+      # runs them in the profile that ships, and then with the software
+      # AES backend, whose schedule the default build never exercises on
+      # a runner with AES instructions. The probe reads /proc, so the
+      # tests exist on Linux only. The second build has its own target
+      # directory: other RUSTFLAGS would otherwise rebuild everything
+      # the later steps reuse.
+      - name: Stack-residue tests (release, and the software AES backend)
+        if: steps.members.outputs.count != '0' && runner.os == 'Linux'
+        run: |
+          cargo test --release -p quantumssh-core --lib cipher::tests::stack_residue
+          RUSTFLAGS='--cfg aes_backend="soft"' CARGO_TARGET_DIR=target/aes-soft \
+            cargo test --release -p quantumssh-core --lib cipher::tests::stack_residue
+
       - name: Build (release)
         if: steps.members.outputs.count != '0'
         run: cargo build --workspace --release
