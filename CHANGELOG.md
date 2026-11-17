@@ -59,9 +59,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   file, then parse its content.
 - Documentation: the threat model's §4.3 states where key erasure
   stops. It reaches the values that hold a key, and not the short-lived
-  copies a primitive crate or the compiler leaves behind: the per-packet
-  `chacha20` cipher states, and the round-key material `aes` leaves on
-  the stack (#277).
+  copies a primitive crate or the compiler leaves on the stack, such as
+  the round-key material `aes` leaves there (#277).
+
+### Security
+
+- The ChaCha20 cipher objects built for each packet are erased when
+  dropped. Their state holds the session key words and their buffer
+  holds keystream, and both were dropped as they were: the workspace
+  had not enabled the `zeroize` feature of `chacha20` or of `cipher`
+  (#277).
 
 ## [0.2.0] - 2026-11-04
 

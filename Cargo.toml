@@ -63,15 +63,18 @@ zeroize       = { version = "1", default-features = false, features = ["alloc", 
 # separately — it is assembled from the loose primitives instead
 # (same RustCrypto org). `aes256-gcm@openssh.com` is RFC 5647 over
 # the standard AEAD.
-chacha20 = { version = "0.10", default-features = false, features = ["legacy"] }  # ChaCha20Legacy (64-bit-nonce djb variant OpenSSH uses) lives behind the `legacy` feature in 0.10, which pulls in `cipher`
-# ponytail: chacha20 0.10 dropped its `zeroize` feature upstream, so the
-# transient expanded ChaCha20 state is no longer erased on drop. The ceiling:
-# a fresh `ChaCha20Legacy::new` per packet (seal, open, body_len, poly_key)
-# copies the key words k_main/k_header into that state matrix, so short-lived
-# copies of key material — not just keystream — go unerased per operation. The
-# long-lived keys stay in Zeroizing (threat model §4.3); only these
-# per-operation copies leak. Upgrade path: a chacha20 release that restores
-# zeroize, or a first-party Drop wrapper.
+chacha20 = { version = "0.10", default-features = false, features = ["legacy", "zeroize"] }  # ChaCha20Legacy (64-bit-nonce djb variant OpenSSH uses) lives behind the `legacy` feature in 0.10, which pulls in `cipher`
+# A fresh `ChaCha20Legacy::new` per packet (seal, open, body_len, poly_key)
+# copies the key words k_main/k_header into its state matrix. `zeroize`
+# erases that state on drop; in 0.10 it is the implicit feature of the
+# crate's optional `zeroize` dependency. The long-lived keys stay in
+# Zeroizing (threat model §4.3).
+# `cipher` is declared ONLY to switch on its `zeroize` feature (Cargo
+# feature unification): `chacha20/zeroize` does not forward to it, and its
+# stream wrapper holds a keystream buffer that would otherwise be dropped
+# unerased. No first-party code imports this crate; `chacha20` re-exports
+# the traits used.
+cipher   = { version = "0.5", default-features = false, features = ["zeroize"] }
 poly1305 = { version = "0.9", default-features = false, features = ["zeroize"] }
 aes-gcm  = { version = "0.11", default-features = false, features = ["aes", "alloc", "zeroize"] }
 # Declared ONLY to switch on its `zeroize` feature (Cargo feature

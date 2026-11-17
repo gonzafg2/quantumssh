@@ -593,15 +593,11 @@ best-effort basis via the `zeroize` crate after use (the guarantee
 is bounded by what the compiler does not reorder). The erasure
 reaches the values that hold a key for as long as it is in use,
 which are erased when dropped. It does not reach the short-lived
-copies a primitive crate or the compiler leaves behind while it
-works. Two cases are recorded in
-[#277](https://github.com/gonzafg2/quantumssh/issues/277). On the
-default cipher, `chacha20-poly1305@openssh.com`, each packet builds
-several `chacha20` cipher states that hold the key words, and they
-are dropped without erasure, because the workspace does not enable
-that crate's `zeroize` feature. On `aes256-gcm@openssh.com`, the
-`aes` crate leaves round-key material on the stack, which its
-`zeroize` feature does not cover.
+copies a primitive crate or the compiler leaves on the stack while
+it works. One case is recorded in
+[#277](https://github.com/gonzafg2/quantumssh/issues/277): on
+`aes256-gcm@openssh.com`, the `aes` crate leaves round-key material
+there, which its `zeroize` feature does not cover.
 Operators who
 require memory-confidentiality against an attacker with paging-
 file access must additionally configure `mlockall`/equivalent or

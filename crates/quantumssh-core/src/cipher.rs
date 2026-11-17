@@ -487,6 +487,17 @@ mod tests {
     }
 
     #[test]
+    fn chacha20_cipher_is_erased_on_drop() {
+        // Every packet builds several of these. The state holds the
+        // key words and the buffer holds keystream, so both must be
+        // erased on drop (threat model §4.3). This stops compiling if
+        // the workspace manifest drops `chacha20/zeroize` or
+        // `cipher/zeroize`.
+        fn assert_zeroize_on_drop<T: zeroize::ZeroizeOnDrop>() {}
+        assert_zeroize_on_drop::<ChaCha20Legacy>();
+    }
+
+    #[test]
     fn poly1305_rfc8439_known_answer() {
         // RFC 8439 §2.5.2 test vector, computed through the same
         // one-shot path `finalize_openssh_poly` uses.
