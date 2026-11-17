@@ -91,6 +91,7 @@ dependencies = [
  "cfg-if",
  "cipher",
  "cpufeatures",
+ "zeroize",
 ]
 
 [[package]]
@@ -102,6 +103,7 @@ dependencies = [
  "block-buffer",
  "crypto-common",
  "inout",
+ "zeroize",
 ]
 
 [[package]]
@@ -487,6 +489,7 @@ dependencies = [
  "aes",
  "aes-gcm",
  "chacha20",
+ "cipher",
  "ed25519-dalek",
  "getrandom",
  "ml-dsa",
