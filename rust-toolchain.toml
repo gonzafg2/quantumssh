@@ -6,6 +6,6 @@
 # the new release flags. The MSRV is separate: `rust-version` in
 # Cargo.toml (ADR-0010).
 [toolchain]
-channel    = "1.99.1"
+channel    = "1.100.0"
 components = ["rustfmt", "clippy", "rust-src"]
 profile    = "minimal"
