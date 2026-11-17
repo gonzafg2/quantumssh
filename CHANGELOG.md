@@ -57,6 +57,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with no change in behaviour, so the fuzzer reaches them (ADR-0060 §3).
   The `authorized_keys` and `trusted_user_ca_keys` loaders now read the
   file, then parse its content.
+- Documentation: the threat model's §4.3 states where key erasure
+  stops. It reaches the values that hold a key, and not the short-lived
+  copies a primitive crate or the compiler leaves on the stack, such as
+  the round-key material `aes` leaves there (#277).
 
 ## [0.2.0] - 2026-11-04
 
