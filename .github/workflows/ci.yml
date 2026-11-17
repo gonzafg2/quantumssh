@@ -136,9 +136,17 @@ jobs:
       - name: Stack-residue tests (release, and the software AES backend)
         if: steps.members.outputs.count != '0' && runner.os == 'Linux'
         run: |
-          cargo test --release -p quantumssh-core --lib cipher::tests::stack_residue
+          set -euo pipefail
+          # A test filter that matches nothing passes. Each run must
+          # therefore show the tests it exists for, by name.
+          filter=cipher::tests::stack_residue
+          cargo test --release -p quantumssh-core --lib "$filter" | tee "$RUNNER_TEMP/residue.log"
+          grep -q "stack_residue::chacha20_operations_leave_no_key_on_the_stack ... ok" "$RUNNER_TEMP/residue.log"
+          grep -q "stack_residue::aes_gcm_operations_leave_no_key_on_the_stack ... ok" "$RUNNER_TEMP/residue.log"
           RUSTFLAGS='--cfg aes_backend="soft"' CARGO_TARGET_DIR=target/aes-soft \
-            cargo test --release -p quantumssh-core --lib cipher::tests::stack_residue
+            cargo test --release -p quantumssh-core --lib "$filter" | tee "$RUNNER_TEMP/residue-soft.log"
+          grep -q "software_aes::the_unwiped_paths_leave_the_schedule ... ok" "$RUNNER_TEMP/residue-soft.log"
+          grep -q "software_aes::the_public_operations_leave_no_schedule ... ok" "$RUNNER_TEMP/residue-soft.log"
 
       - name: Build (release)
         if: steps.members.outputs.count != '0'

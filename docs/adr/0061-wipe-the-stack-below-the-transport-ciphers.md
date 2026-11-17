@@ -1,7 +1,7 @@
 # ADR 0061: Wipe the stack below the transport ciphers, and keep their keys behind a box
 
-- **Status:** Proposed
-- **Date:** drafted 2026-11-17; accepted with the implementing PR
+- **Status:** Accepted
+- **Date:** 2026-11-17 (accepted with the implementing PR, [#285](https://github.com/gonzafg2/quantumssh/pull/285). Its CI gave the x86_64 result this ADR lacked as a draft: the tests of §5 pass there with 16 KiB, in the dev and the release profile and with both AES backends; drafted 2026-11-17)
 - **Deciders:** Project lead
 - **Related:**
   - [#277](https://github.com/gonzafg2/quantumssh/issues/277), which records the key material the transport ciphers leave on the stack and holds this mitigation as its second open question.
@@ -108,11 +108,27 @@ On small packets a 16 KiB wipe costs about 90 to 120 ns each. On 32 KiB
 packets the differences are inside the run-to-run noise: the figures do
 not even rise with `N`.
 
+The implementation costs more than this estimate. Measured the same
+way against `main`, in one session and two rounds, a packet sealed and
+opened took:
+
+| Cipher, payload | `main` | with the wipes of §2 |
+|---|---|---|
+| ChaCha20-Poly1305, 64 B | 1582 to 1590 ns | 1937 to 2043 ns |
+| ChaCha20-Poly1305, 32 KiB | 65.8 µs | 66.2 to 67.0 µs |
+| AES-256-GCM, hardware, 64 B | 316 to 318 ns | 542 to 570 ns |
+| AES-256-GCM, hardware, 32 KiB | 16.7 µs | 17.1 µs |
+
+That is about 110 to 150 ns per wipe on small packets, with three wipes
+for ChaCha20 and two for AES-GCM, and one to two percent on 32 KiB
+packets.
+
 ### What was not measured
 
-- **x86_64.** The upstream report covers `aes` there and found the key
-  on the stack with AES-NI. Nothing here ran on x86_64, which is the
-  main server target.
+- **x86_64, in the draft.** The upstream report covers `aes` there and
+  found the key on the stack with AES-NI. Nothing in the draft's
+  measurement ran on x86_64, which is the main server target. The
+  implementing PR's CI did: §3 records the result.
 - **The other primitives.** The key exchange, the host-key signature
   and the key derivation were not examined.
 - **Other threads.** The harness ran on the main thread. The server runs
@@ -158,9 +174,14 @@ One constant, `16 * 1024`, for every wipe.
 - The margin costs about 40 to 60 ns more per wipe on small packets and
   nothing measurable on large ones.
 
-If the test of §5 shows that 16 KiB does not hold on x86_64, the
-implementing PR raises the constant and records the measurement here
-before this ADR is accepted.
+The draft said that if the test of §5 showed that 16 KiB did not hold
+on x86_64, the implementing PR would raise the constant before this ADR
+was accepted. It holds. On `x86_64-unknown-linux-gnu`, with
+`rustc 1.100.0`, run
+[44138618905](https://github.com/gonzafg2/quantumssh/actions/runs/44138618905)
+of #285 passed every test of §5 with 16 KiB: in the dev profile, in the
+release profile, and in the release profile with the software AES
+backend, whose control also passed.
 
 ### 4. `zeroize` 1.9 becomes the floor
 
@@ -196,21 +217,31 @@ in every run it appeared and disappeared together with the rest of the
 schedule.
 
 The software backend's schedule is a bitsliced form that no public API
-exposes, and its key never appears on the stack. For it the test uses
-the compact and the expanded schedule recorded for a fixed key. A
-recording can go stale without anyone noticing, so this case has a
-control of its own: the inner functions of `new` and of `seal`, called
-without the wipe, must leave the recorded bytes on the stack, as they
-did in the measurement (15 chunks of 15, and 60 of 60). The public
-functions must then leave none. CI runs the cipher tests once more with
-`--cfg aes_backend="soft"` for this.
+exposes, and its key never appears on the stack. With
+`--cfg aes_backend="soft"` the `aes::Aes256` object is the compact
+schedule, so the test reads that object's bytes through
+`/proc/self/mem`, in safe Rust, and computes the expanded form from
+them. The backend could change how it holds its schedule without anyone
+noticing, so this case has a control of its own: the inner functions of
+`new` and of `seal`, called without the wipe, must leave those bytes on
+the stack, as they did in the measurement (15 chunks of 15, and 60 of
+60). The public functions must then leave none. CI runs the tests once
+more with `--cfg aes_backend="soft"` for this.
+
+The draft had the test use a schedule recorded by a script. The
+implementing PR dropped that: the script read the cipher object through
+`unsafe`, and code in this repository is first-party wherever it is
+built (ADR-0018).
 
 No other operation has a control of that kind. Hardware AES leaves
 nothing after a packet, so there is nothing an un-wiped call could be
 required to show.
 
-The test runs in `build (ubuntu-latest)`, which is x86_64. That run is
-the x86_64 measurement this ADR lacks.
+The tests run in `build (ubuntu-latest)`, which is x86_64: in the dev
+profile with the rest of the suite, then in the release profile, then
+in the release profile with the software backend. That step fails if
+the tests it names did not run, because a filter that matches nothing
+passes.
 
 ### 6. Scope
 
@@ -251,17 +282,17 @@ that widens the trust base to an RFC. This is none of them:
   not clear registers, and it cannot reach a copy the compiler places
   above the wrapper's frame. The test covers the cases it can name on
   the targets CI runs.
-- **A cost on every packet.** About 90 to 120 ns per wipe on small
-  packets at 16 KiB, three wipes for a packet sent and received. For a
-  64-byte packet that takes AES-GCM with hardware support from 312 ns
-  to 669 ns, and ChaCha20-Poly1305 from 1537 ns to 1806 ns. Under §2
-  AES-GCM takes two wipes, so its figure will be lower; that was not
-  measured. On a 32 KiB packet the cost is not measurable. The figures
-  come from a container on one machine.
+- **A cost on every packet.** About 110 to 150 ns per wipe on small
+  packets. For a 64-byte packet sent and received that takes
+  ChaCha20-Poly1305 from about 1.6 µs to about 2.0 µs, and AES-GCM with
+  hardware support from about 0.32 µs to about 0.55 µs. On a 32 KiB
+  packet it is one to two percent. The figures come from a container on
+  one machine.
 - **The software-backend control can fail for a harmless reason.** If a
   compiler or an `aes` release stops leaving the schedule on the
-  un-wiped path, or changes its form, that control fails and someone has
-  to look. That is the price of not passing blindly.
+  un-wiped path, or changes how the cipher object holds it, that control
+  fails and someone has to look. That is the price of not passing
+  blindly.
 - **One more CI build.** The software-backend run compiles the
   dependency tree again with a different configuration.
 - **aarch64 on Linux has no automated check.** CI runs the test on
@@ -324,9 +355,10 @@ kind is in stable Rust, and ADR-0039 keeps one pinned stable toolchain.
 
 ## Links
 
-- Planned implementation: `crates/quantumssh-core/src/cipher.rs`, the
-  `zeroize` requirement in `Cargo.toml`, the software-backend run in
-  `.github/workflows/ci.yml`, and threat model §4.3.
+- Implementation, in #285: `crates/quantumssh-core/src/cipher.rs` with
+  its `stack_residue` tests, the `zeroize` requirement in `Cargo.toml`,
+  the stack-residue step of `.github/workflows/ci.yml`, and threat
+  model §4.3.
 - #277 for the upstream report, its measurements and the upstream
   position; #280 and #281 for the two changes this follows.
 - `zeroize::zeroize_stack`, `zeroize` 1.9.1, `src/stack.rs`.

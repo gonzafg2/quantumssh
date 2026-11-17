@@ -750,11 +750,11 @@ mod tests {
 
         /// Bytes that exist on the heap alone: built one at a time,
         /// never as a 16-byte chunk on this stack.
-        fn heap_bytes(len: usize, salt: u8) -> Vec<u8> {
+        fn heap_bytes(len: usize, offset: u8) -> Vec<u8> {
             (0..len)
                 .map(|i| {
                     let i = u8::try_from(i % 251).expect("below 251");
-                    black_box(i.wrapping_mul(37).wrapping_add(salt))
+                    black_box(i.wrapping_mul(37).wrapping_add(offset))
                 })
                 .collect()
         }
