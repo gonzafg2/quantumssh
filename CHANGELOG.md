@@ -59,8 +59,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   file, then parse its content.
 - Documentation: the threat model's §4.3 states where key erasure
   stops. It reaches the values that hold a key, and not the short-lived
-  copies a primitive crate or the compiler leaves on the stack, such as
-  the round-key material `aes` leaves there (#277).
+  copies a primitive crate or the compiler leaves behind: the per-packet
+  `chacha20` cipher states, and the round-key material `aes` leaves on
+  the stack (#277).
 
 ## [0.2.0] - 2026-11-04
 
