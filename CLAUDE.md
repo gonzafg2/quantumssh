@@ -92,7 +92,8 @@ authoritative reference; the operative rules a reviewer applies:
 - **Public-key authentication only.** The server **reads** `authorized_keys`;
   it never writes it.
 - **Key material is zeroized after use, never logged, never in error or panic
-  output** (§4.3).
+  output** (§4.3). The rule binds first-party code; §4.3 states what erasure
+  cannot reach inside primitive crates.
 - **The transport is a type-state machine** ([RFC-0003](docs/rfcs/0003-phase-1-ssh-stack-greenfield-vs-russh.md)):
   an `Expect<Stage>` exposes only the messages valid in that stage. Do not
   loosen this to "accept and branch" — that is the Terrapin bug class.
