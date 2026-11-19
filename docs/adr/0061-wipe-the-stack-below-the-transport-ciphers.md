@@ -1,7 +1,7 @@
 # ADR 0061: Wipe the stack below the transport ciphers, and keep their keys behind a box
 
 - **Status:** Accepted
-- **Date:** 2026-11-17 (accepted with the implementing PR, [#285](https://github.com/gonzafg2/quantumssh/pull/285). Its CI gave the x86_64 result this ADR lacked as a draft: the tests of §5 pass there with 16 KiB, in the dev and the release profile and with both AES backends; drafted 2026-11-17)
+- **Date:** 2026-11-19 (accepted with the implementing PR, [#285](https://github.com/gonzafg2/quantumssh/pull/285). Its CI gave the x86_64 result this ADR lacked as a draft: the tests of §5 pass there with 16 KiB, in the dev and the release profile and with both AES backends; drafted 2026-11-17)
 - **Deciders:** Project lead
 - **Related:**
   - [#277](https://github.com/gonzafg2/quantumssh/issues/277), which records the key material the transport ciphers leave on the stack and holds this mitigation as its second open question.
