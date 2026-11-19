@@ -17,6 +17,10 @@
 //! Both directions of a connection hold one [`PacketCipher`] each,
 //! constructed from the RFC 4253 §7.2 key material after NEWKEYS.
 //!
+//! Each operation that touches a key wipes the stack below it before it
+//! returns (ADR-0061): the primitives leave key material there that
+//! their `zeroize` features do not reach.
+//!
 //! Fail-closed: a packet whose tag does not verify is **never**
 //! partially processed — the length check happens before the body is
 //! read, and the tag check happens before decryption is attempted
@@ -32,6 +36,16 @@ use subtle::ConstantTimeEq;
 use zeroize::Zeroizing;
 
 use crate::wire::{self, WireError};
+
+/// Bytes of stack wiped below each cipher operation (ADR-0061 §3).
+/// 4 KiB was the smallest size that cleared every measured case; the
+/// rest is margin for other targets and for frames that move with the
+/// toolchain or a primitive crate.
+///
+/// The wipe is `zeroize::zeroize_stack`, called from the frame that
+/// called the work. That work must run in an `#[inline(never)]`
+/// function, or the wipe covers the wrong region (ADR-0061 §2).
+const STACK_WIPE_BYTES: usize = 16 * 1024;
 
 /// `chacha20-poly1305@openssh.com` (ADR-0021 §3–4, client's first
 /// preference in stock OpenSSH).
@@ -71,10 +85,13 @@ impl std::error::Error for CipherError {}
 
 /// One direction's packet cipher, selected by negotiation.
 pub enum PacketCipher {
-    /// `chacha20-poly1305@openssh.com`.
-    ChaCha(ChaCha20Poly1305Openssh),
-    /// `aes256-gcm@openssh.com` (boxed: the AES round keys make
-    /// it an order of magnitude larger than the `ChaCha20` state).
+    /// `chacha20-poly1305@openssh.com`. Boxed so that moving a
+    /// `PacketCipher` copies a pointer and not the two keys
+    /// (ADR-0061 §1).
+    ChaCha(Box<ChaCha20Poly1305Openssh>),
+    /// `aes256-gcm@openssh.com`. Boxed for the same reason, and because
+    /// the AES round keys make it an order of magnitude larger than the
+    /// `ChaCha20` state.
     Gcm(Box<Aes256GcmOpenssh>),
 }
 
@@ -122,11 +139,19 @@ impl PacketCipher {
     /// ciphers, or when `key`/`iv` are not exactly the lengths
     /// [`PacketCipher::key_len`] / [`PacketCipher::iv_len`] mandate.
     pub fn new(name: &str, key: &[u8], iv: &[u8]) -> Result<Self, CipherError> {
+        let cipher = Self::new_unwiped(name, key, iv);
+        zeroize::zeroize_stack::<STACK_WIPE_BYTES>();
+        cipher
+    }
+
+    /// [`PacketCipher::new`] without the stack wipe.
+    #[inline(never)]
+    fn new_unwiped(name: &str, key: &[u8], iv: &[u8]) -> Result<Self, CipherError> {
         if key.len() != Self::key_len(name) || iv.len() != Self::iv_len(name) {
             return Err(CipherError::Wire(WireError::Truncated));
         }
         match name {
-            CHACHA20_POLY1305 => Ok(Self::ChaCha(ChaCha20Poly1305Openssh::new(key))),
+            CHACHA20_POLY1305 => Ok(Self::ChaCha(Box::new(ChaCha20Poly1305Openssh::new(key)))),
             AES256_GCM => Ok(Self::Gcm(Box::new(Aes256GcmOpenssh::new(key, iv)))),
             _ => Err(CipherError::Wire(WireError::Truncated)),
         }
@@ -141,6 +166,14 @@ impl PacketCipher {
     /// packet, or if the system random source fails to produce the
     /// padding.
     pub fn seal(&mut self, seqnr: u32, payload: &[u8]) -> Result<Vec<u8>, CipherError> {
+        let packet = self.seal_unwiped(seqnr, payload);
+        zeroize::zeroize_stack::<STACK_WIPE_BYTES>();
+        packet
+    }
+
+    /// [`PacketCipher::seal`] without the stack wipe.
+    #[inline(never)]
+    fn seal_unwiped(&mut self, seqnr: u32, payload: &[u8]) -> Result<Vec<u8>, CipherError> {
         match self {
             Self::ChaCha(c) => c.seal(seqnr, payload),
             Self::Gcm(c) => c.seal(seqnr, payload),
@@ -157,7 +190,12 @@ impl PacketCipher {
     /// length is outside the legal range or misaligned.
     pub fn body_len(&self, seqnr: u32, length_bytes: [u8; 4]) -> Result<usize, CipherError> {
         match self {
-            Self::ChaCha(c) => c.body_len(seqnr, length_bytes),
+            Self::ChaCha(c) => {
+                let len = c.body_len(seqnr, length_bytes);
+                zeroize::zeroize_stack::<STACK_WIPE_BYTES>();
+                len
+            }
+            // No wipe: this arm reads no key (ADR-0061 §2).
             Self::Gcm(_) => {
                 let packet_length = u32::from_be_bytes(length_bytes);
                 Ok(validate_aead_length(packet_length, Aes256GcmOpenssh::BLOCK)? + TAG_LEN)
@@ -175,6 +213,19 @@ impl PacketCipher {
     /// closed, nothing decrypted; [`CipherError::Wire`] when the
     /// authenticated plaintext violates RFC 4253 §6 padding rules.
     pub fn open(
+        &mut self,
+        seqnr: u32,
+        length_bytes: [u8; 4],
+        body: &mut [u8],
+    ) -> Result<Vec<u8>, CipherError> {
+        let payload = self.open_unwiped(seqnr, length_bytes, body);
+        zeroize::zeroize_stack::<STACK_WIPE_BYTES>();
+        payload
+    }
+
+    /// [`PacketCipher::open`] without the stack wipe.
+    #[inline(never)]
+    fn open_unwiped(
         &mut self,
         seqnr: u32,
         length_bytes: [u8; 4],
@@ -289,6 +340,9 @@ impl ChaCha20Poly1305Openssh {
         Ok(out)
     }
 
+    // Not inlined: `PacketCipher::body_len` wipes the stack below its
+    // own frame after this returns (ADR-0061 §2).
+    #[inline(never)]
     fn body_len(&self, seqnr: u32, length_bytes: [u8; 4]) -> Result<usize, CipherError> {
         let nonce = u64::from(seqnr).to_be_bytes();
         let mut decrypted = length_bytes;
@@ -608,5 +662,316 @@ mod tests {
         assert_eq!(PacketCipher::iv_len(CHACHA20_POLY1305), 0);
         assert_eq!(PacketCipher::key_len(AES256_GCM), 32);
         assert_eq!(PacketCipher::iv_len(AES256_GCM), 12);
+    }
+
+    /// ADR-0061 §5: no cipher operation leaves a key on the stack.
+    ///
+    /// Linux only: the probe reads this thread's stack through `/proc`.
+    /// Each operation runs under a padding frame and one caller frame,
+    /// as in the ADR's measurement. The probe's own calls then do not
+    /// overwrite what it looks for, and a copy left in the caller's
+    /// frame stays visible.
+    #[cfg(target_os = "linux")]
+    mod stack_residue {
+        use std::hint::black_box;
+        use std::io::{Read, Seek, SeekFrom};
+
+        use super::super::{AES256_GCM, CHACHA20_POLY1305, PacketCipher};
+
+        /// Padding between the probe and the operations it watches.
+        const PAD: usize = 128 * 1024;
+        /// Bytes of stack the probe reads below itself.
+        const WINDOW: usize = 512 * 1024;
+        /// Bytes cleared before each step, so that a count is what
+        /// that one step left.
+        const SCRUB: usize = 64 * 1024;
+
+        /// The `WINDOW` bytes of this thread's stack below the caller,
+        /// cut short where the mapping ends.
+        fn stack_below() -> Vec<u8> {
+            let local = 0u8;
+            let top = std::ptr::from_ref(&local).addr();
+            let maps = std::fs::read_to_string("/proc/self/maps").expect("/proc/self/maps");
+            let floor = maps
+                .lines()
+                .find_map(|line| {
+                    let (lo, hi) = line.split_whitespace().next()?.split_once('-')?;
+                    let lo = usize::from_str_radix(lo, 16).ok()?;
+                    let hi = usize::from_str_radix(hi, 16).ok()?;
+                    (lo..hi).contains(&top).then_some(lo)
+                })
+                .expect("the mapping that holds this stack");
+            let start = top.saturating_sub(WINDOW).max(floor);
+            let mut bytes = vec![0u8; top - start];
+            let mut mem = std::fs::File::open("/proc/self/mem").expect("/proc/self/mem");
+            mem.seek(SeekFrom::Start(
+                u64::try_from(start).expect("a 64-bit address"),
+            ))
+            .expect("seek to the stack");
+            mem.read_exact(&mut bytes).expect("read the stack");
+            bytes
+        }
+
+        /// How many of the 16-byte chunks of `secret` are on the stack
+        /// below the caller.
+        fn found(secret: &[u8]) -> usize {
+            let stack = stack_below();
+            secret
+                .as_chunks::<16>()
+                .0
+                .iter()
+                .filter(|chunk| stack.windows(16).any(|window| window == chunk.as_slice()))
+                .count()
+        }
+
+        /// One caller frame of its own, below the padding.
+        #[inline(never)]
+        fn stage<R>(f: impl FnOnce() -> R) -> R {
+            f()
+        }
+
+        /// Runs `f` under `PAD` bytes of padding and one caller frame.
+        // The padding is the point: it keeps the probe's own calls
+        // away from the frames under test.
+        #[allow(clippy::large_stack_arrays)]
+        #[inline(never)]
+        fn deep<R>(f: impl FnOnce() -> R) -> R {
+            let pad = [0u8; PAD];
+            black_box(&pad);
+            let result = stage(f);
+            black_box(&pad);
+            result
+        }
+
+        /// Clears the region the operations run in.
+        fn scrub() {
+            deep(zeroize::zeroize_stack::<SCRUB>);
+        }
+
+        /// Bytes that exist on the heap alone: built one at a time,
+        /// never as a 16-byte chunk on this stack.
+        fn heap_bytes(len: usize, offset: u8) -> Vec<u8> {
+            (0..len)
+                .map(|i| {
+                    let i = u8::try_from(i % 251).expect("below 251");
+                    black_box(i.wrapping_mul(37).wrapping_add(offset))
+                })
+                .collect()
+        }
+
+        #[inline(never)]
+        fn plant(secret: &[u8]) {
+            let mut copy = [0u8; 64];
+            copy.copy_from_slice(secret);
+            black_box(&mut copy);
+        }
+
+        /// The control: without it, a probe that had stopped seeing
+        /// anything would pass every other test here.
+        #[test]
+        fn the_probe_sees_a_planted_secret() {
+            let secret = heap_bytes(64, 91);
+            scrub();
+            assert_eq!(
+                found(&secret),
+                0,
+                "the secret is on the stack before it is planted"
+            );
+            deep(|| plant(&secret));
+            assert_eq!(
+                found(&secret),
+                4,
+                "the probe does not see the stack below it"
+            );
+            scrub();
+            assert_eq!(found(&secret), 0, "the scrub left the planted secret");
+        }
+
+        /// Runs every operation of the cipher `name` and requires that
+        /// none leaves a chunk of `key` on the stack.
+        fn assert_no_key_left(name: &str, key: &[u8], iv: &[u8]) {
+            // The first packet of a direction: AES-GCM counts its
+            // invocations from the first sequence number it sees.
+            const SEQNR: u32 = 0;
+            let payload = vec![0x5au8; 1024];
+
+            scrub();
+            assert_eq!(
+                found(key),
+                0,
+                "{name}: the key is on the stack before any operation"
+            );
+
+            let mut tx = deep(|| PacketCipher::new(name, key, iv).expect("tx cipher"));
+            let mut rx = deep(|| PacketCipher::new(name, key, iv).expect("rx cipher"));
+            assert_eq!(found(key), 0, "{name}: new left the key on the stack");
+
+            scrub();
+            let packet = deep(|| tx.seal(SEQNR, &payload).expect("seal"));
+            assert_eq!(found(key), 0, "{name}: seal left the key on the stack");
+
+            scrub();
+            let mut length = [0u8; 4];
+            length.copy_from_slice(&packet[..4]);
+            let body_len = deep(|| rx.body_len(SEQNR, length).expect("body_len"));
+            assert_eq!(found(key), 0, "{name}: body_len left the key on the stack");
+
+            scrub();
+            let mut body = packet[4..4 + body_len].to_vec();
+            let opened = deep(|| rx.open(SEQNR, length, &mut body).expect("open"));
+            assert_eq!(opened, payload);
+            assert_eq!(found(key), 0, "{name}: open left the key on the stack");
+
+            scrub();
+            deep(|| {
+                drop(tx);
+                drop(rx);
+            });
+            assert_eq!(found(key), 0, "{name}: drop left the key on the stack");
+        }
+
+        #[test]
+        fn chacha20_operations_leave_no_key_on_the_stack() {
+            assert_no_key_left(CHACHA20_POLY1305, &heap_bytes(64, 11), &[]);
+        }
+
+        // On the hardware AES backends the key is the first two round
+        // keys. The software backend never puts the key on the stack;
+        // `software_aes` below covers its schedule.
+        #[test]
+        fn aes_gcm_operations_leave_no_key_on_the_stack() {
+            assert_no_key_left(AES256_GCM, &heap_bytes(32, 201), &heap_bytes(12, 3));
+        }
+
+        /// The software AES backend, selected with
+        /// `--cfg aes_backend="soft"`. It never puts the key on the
+        /// stack, so these tests search for its key schedule.
+        #[cfg(all(aes_backend = "soft", target_pointer_width = "64"))]
+        mod software_aes {
+            use std::io::{Read, Seek, SeekFrom};
+
+            use aes::Aes256;
+            use aes::cipher::KeyInit;
+
+            use super::super::super::{AES256_GCM, PacketCipher};
+            use super::{deep, found, heap_bytes, scrub};
+
+            /// The SHA-256 initial hash value: 32 bytes with no
+            /// structure. A patterned key gives schedule chunks of
+            /// zeros and of bit masks, which any stack holds.
+            static KEY: [u8; 32] = [
+                0x6a, 0x09, 0xe6, 0x67, 0xbb, 0x67, 0xae, 0x85, 0x3c, 0x6e, 0xf3, 0x72, 0xa5, 0x4f,
+                0xf5, 0x3a, 0x51, 0x0e, 0x52, 0x7f, 0x9b, 0x05, 0x68, 0x8c, 0x1f, 0x83, 0xd9, 0xab,
+                0x5b, 0xe0, 0xcd, 0x19,
+            ];
+
+            /// One compact round-key word as the backend widens it to
+            /// 64 bits: each bit becomes a nibble.
+            const fn widen(word: u16) -> u64 {
+                let x = word as u64;
+                let x = (x | (x << 24)) & 0x0000_00ff_0000_00ff;
+                let x = (x | (x << 12)) & 0x000f_000f_000f_000f;
+                let x = (x | (x << 6)) & 0x0303_0303_0303_0303;
+                let x = (x | (x << 3)) & 0x1111_1111_1111_1111;
+                x | (x << 1) | (x << 2) | (x << 3)
+            }
+
+            /// The schedule the backend derives from [`KEY`], in the two
+            /// forms it holds: the compact one its cipher object stores,
+            /// and the one it widens that to for each call.
+            ///
+            /// No public API exposes either. The cipher object is the
+            /// compact schedule, so its bytes are read through
+            /// `/proc/self/mem`, which needs no `unsafe`. The work runs
+            /// on another thread, so that what it leaves behind lands on
+            /// that thread's stack and not on the one under test.
+            fn schedules() -> (Vec<u8>, Vec<u8>) {
+                std::thread::spawn(|| {
+                    assert_eq!(
+                        size_of::<Aes256>(),
+                        240,
+                        "the cipher object is no longer the 240-byte compact schedule"
+                    );
+                    let cipher = Box::new(Aes256::new_from_slice(&KEY).expect("a 32-byte key"));
+                    let address = std::ptr::from_ref::<Aes256>(&cipher).addr();
+                    let mut compact = vec![0u8; size_of::<Aes256>()];
+                    let mut mem = std::fs::File::open("/proc/self/mem").expect("/proc/self/mem");
+                    mem.seek(SeekFrom::Start(
+                        u64::try_from(address).expect("a 64-bit address"),
+                    ))
+                    .expect("seek to the cipher object");
+                    mem.read_exact(&mut compact)
+                        .expect("read the cipher object");
+                    let native = compact
+                        .as_chunks::<2>()
+                        .0
+                        .iter()
+                        .flat_map(|word| widen(u16::from_ne_bytes(*word)).to_ne_bytes())
+                        .collect();
+                    (compact, native)
+                })
+                .join()
+                .expect("the schedule thread")
+            }
+
+            /// The control. If the backend changed how it holds its
+            /// schedule, the bytes derived above would be the wrong
+            /// ones, and the test below would pass whatever the code
+            /// did. So the un-wiped paths must leave them where the
+            /// probe looks.
+            #[test]
+            fn the_unwiped_paths_leave_the_schedule() {
+                let iv = heap_bytes(12, 3);
+                let (compact, native) = schedules();
+                let payload = vec![0x5au8; 1024];
+
+                scrub();
+                assert_eq!(
+                    found(&compact) + found(&native),
+                    0,
+                    "the schedule matches an idle stack"
+                );
+
+                let mut tx =
+                    deep(|| PacketCipher::new_unwiped(AES256_GCM, &KEY, &iv).expect("cipher"));
+                assert!(
+                    found(&compact) > 0,
+                    "new left none of the compact schedule: the backend changed"
+                );
+
+                scrub();
+                deep(|| tx.seal_unwiped(0, &payload).expect("seal"));
+                assert!(
+                    found(&native) > 0,
+                    "seal left none of the widened schedule: the backend changed"
+                );
+            }
+
+            #[test]
+            fn the_public_operations_leave_no_schedule() {
+                let iv = heap_bytes(12, 3);
+                let (compact, native) = schedules();
+                let payload = vec![0x5au8; 1024];
+                let left = || found(&compact) + found(&native);
+
+                scrub();
+                let mut tx = deep(|| PacketCipher::new(AES256_GCM, &KEY, &iv).expect("tx cipher"));
+                let mut rx = deep(|| PacketCipher::new(AES256_GCM, &KEY, &iv).expect("rx cipher"));
+                assert_eq!(left(), 0, "new left the schedule on the stack");
+
+                scrub();
+                let packet = deep(|| tx.seal(0, &payload).expect("seal"));
+                assert_eq!(left(), 0, "seal left the schedule on the stack");
+
+                scrub();
+                let mut length = [0u8; 4];
+                length.copy_from_slice(&packet[..4]);
+                let body_len = rx.body_len(0, length).expect("body_len");
+                let mut body = packet[4..4 + body_len].to_vec();
+                let opened = deep(|| rx.open(0, length, &mut body).expect("open"));
+                assert_eq!(opened, payload);
+                assert_eq!(left(), 0, "open left the schedule on the stack");
+            }
+        }
     }
 }

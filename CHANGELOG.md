@@ -59,8 +59,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   file, then parse its content.
 - Documentation: the threat model's §4.3 states where key erasure
   stops. It reaches the values that hold a key, and not the short-lived
-  copies a primitive crate or the compiler leaves on the stack, such as
-  the round-key material `aes` leaves there (#277).
+  copies a primitive crate or the compiler leaves on the stack. The
+  transport ciphers wipe theirs, as listed under Security; the key
+  exchange, the host-key signature and the key derivation are not
+  covered (#277).
 
 ### Security
 
@@ -69,6 +71,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   holds keystream, and both were dropped as they were: the workspace
   had not enabled the `zeroize` feature of `chacha20` or of `cipher`
   (#277).
+- The transport ciphers wipe the stack below each operation
+  ([ADR-0061](docs/adr/0061-wipe-the-stack-below-the-transport-ciphers.md)).
+  Before, every path left key material there: the default cipher left
+  both session keys after a key exchange and part of them after each
+  packet, and AES-GCM left its key schedule.
+  - `zeroize::zeroize_stack` clears 16 KiB after `new`, `seal`, `open`
+    and ChaCha20's `body_len`.
+  - Both cipher states live behind a `Box`, so moving a cipher copies no
+    key.
+  - A Linux test reads the stack after each operation and fails if a key
+    is left there. CI also runs it with the software AES backend (#277).
 
 ## [0.2.0] - 2026-11-04
 

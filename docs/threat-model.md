@@ -594,10 +594,14 @@ is bounded by what the compiler does not reorder). The erasure
 reaches the values that hold a key for as long as it is in use,
 which are erased when dropped. It does not reach the short-lived
 copies a primitive crate or the compiler leaves on the stack while
-it works. One case is recorded in
-[#277](https://github.com/gonzafg2/quantumssh/issues/277): on
-`aes256-gcm@openssh.com`, the `aes` crate leaves round-key material
-there, which its `zeroize` feature does not cover.
+it works. Both transport ciphers left session keys or the AES key
+schedule there, so each of their operations now wipes the stack
+below it
+([ADR-0061](adr/0061-wipe-the-stack-below-the-transport-ciphers.md)).
+That wipe is best effort too: it clears a region of the stack, not
+registers. Nothing wipes after the key exchange, the host-key
+signature or the key derivation, which have not been measured
+([#277](https://github.com/gonzafg2/quantumssh/issues/277)).
 Operators who
 require memory-confidentiality against an attacker with paging-
 file access must additionally configure `mlockall`/equivalent or
@@ -608,8 +612,9 @@ through error messages or panic output.
 **What the boundary enforces.** That host private keys never leave
 the process by any path other than the cryptographic operations
 that legitimately use them; that the values holding session keys
-are erased when the keys are replaced or the session ends. The
-short-lived copies described above are outside this guarantee.
+are erased when the keys are replaced or the session ends. Of the
+short-lived copies described above, only those of the transport
+ciphers are wiped; the rest are outside this guarantee.
 
 ### 4.4 Configuration boundary — operator ↔ runtime
 

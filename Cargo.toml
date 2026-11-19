@@ -54,7 +54,7 @@ ml-dsa        = { version = "=0.1.2", default-features = false, features = ["zer
 x25519-dalek  = { version = "3.0.0", default-features = false, features = ["static_secrets", "zeroize"] }  # ADR-0036
 ed25519-dalek = { version = "3.0.0", default-features = false, features = ["zeroize"] }                    # ADR-0036
 sha2          = { version = "0.11", default-features = false }
-zeroize       = { version = "1", default-features = false, features = ["alloc", "zeroize_derive"] }  # alloc: Zeroizing<Vec<u8>>/<String>, declared rather than inherited from ed25519-dalek/std
+zeroize       = { version = "1.9", default-features = false, features = ["alloc", "zeroize_derive"] }  # alloc: Zeroizing<Vec<u8>>/<String>, declared rather than inherited from ed25519-dalek/std
 
 # AEAD transport layer (M3). `chacha20-poly1305@openssh.com` cannot be
 # expressed through the IETF `chacha20poly1305` AEAD crate (96-bit
@@ -81,7 +81,8 @@ aes-gcm  = { version = "0.11", default-features = false, features = ["aes", "all
 # unification): `aes-gcm/zeroize` erases the GHASH key on drop but
 # does not forward to `aes`, whose round-key schedule is the bulk of
 # the key material (threat model §4.3). No first-party code imports
-# this crate.
+# this crate, except the stack-residue tests of `cipher.rs` when built
+# for the software backend (ADR-0061 §5).
 aes      = { version = "0.9", default-features = false, features = ["zeroize"] }
 subtle   = { version = "2", default-features = false }  # constant-time Poly1305 tag comparison
 
@@ -96,7 +97,9 @@ unsafe_code  = "forbid"
 missing_docs = "warn"
 # ADR-0060 §3: cargo-fuzz sets `--cfg fuzzing`; declaring it keeps the
 # `#[cfg(fuzzing)] pub mod fuzzing` in quantumssh-core warning-free.
-unexpected_cfgs = { level = "warn", check-cfg = ["cfg(fuzzing)"] }
+# ADR-0061 §5: `aes_backend` is the `aes` crate's own cfg. The
+# stack-residue tests of the software backend are compiled under it.
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(fuzzing)", 'cfg(aes_backend, values("soft"))'] }
 unused       = { level = "warn", priority = -1 } # lint group: lower priority so individual lints can override
 
 [workspace.lints.clippy]

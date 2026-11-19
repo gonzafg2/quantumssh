@@ -41,7 +41,8 @@ cipher = { workspace = true }
 poly1305 = { workspace = true }
 aes-gcm = { workspace = true }
 # Feature switch only — turns on round-key zeroization inside aes-gcm
-# (threat model section 4.3); never imported by first-party code.
+# (threat model section 4.3). The one import is in the stack-residue
+# tests of `cipher.rs`, under `--cfg aes_backend="soft"` (ADR-0061).
 aes = { workspace = true }
 subtle = { workspace = true }
 # M5 (ADR-0016): process UID for the `executing_uid` audit field and a
