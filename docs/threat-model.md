@@ -601,7 +601,7 @@ below it
 That wipe is best effort too: it clears a region of the stack, not
 registers. Nothing wipes after the key exchange, the host-key
 signature or the key derivation, which have not been measured
-([#277](https://github.com/gonzafg2/quantumssh/issues/277)).
+([#286](https://github.com/gonzafg2/quantumssh/issues/286)).
 Operators who
 require memory-confidentiality against an attacker with paging-
 file access must additionally configure `mlockall`/equivalent or
