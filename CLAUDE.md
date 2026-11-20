@@ -177,9 +177,15 @@ connect → auth → exec → close against the release binary
 locally with `tests/interop/run_openssh_client.sh`. `build (ubuntu-latest)`
 also builds every fuzz target and replays its seeds and regressions; reproduce
 it with `bash scripts/fuzz-prepare.sh`, then `cargo fuzz run --sanitizer none
-<target> fuzz/seeds/<target> -- -runs=0` (ADR-0060). (The CI workspace-state
-guards that self-disabled during Phase 0 — [ADR-0011](docs/adr/0011-ci-guards-workspace-state.md)
-— are now active, since the workspace has members.)
+<target> fuzz/seeds/<target> -- -runs=0` (ADR-0060). It also runs the
+stack-residue tests of `cipher.rs` in the release profile, and again with the
+software AES backend. Those tests exist only on Linux; reproduce them with
+`cargo test --release -p quantumssh-core --lib cipher::tests::stack_residue`,
+and with `RUSTFLAGS='--cfg aes_backend="soft"'` set for the second run
+([ADR-0061](docs/adr/0061-wipe-the-stack-below-the-transport-ciphers.md)).
+(The CI workspace-state guards that self-disabled during Phase 0 —
+[ADR-0011](docs/adr/0011-ci-guards-workspace-state.md) — are now active,
+since the workspace has members.)
 
 ## What not to do
 

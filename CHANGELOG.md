@@ -51,7 +51,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `ghcr.io/gonzafg2/quantumssh-gate-sources`.
   - `tests/gate-image/verify.sh` checks the pinned digest's attestation
     on the runner host before any gate runs the image.
-- Dependencies: `ml-kem` 0.3.4 and `rustix` 1.1.6, patch updates.
+- Dependencies: `ml-kem` 0.3.4, `rustix` 1.1.6 and `aes` 0.9.4, patch
+  updates, and `toml` 1.2.1, a minor update.
 - The `SSH_MSG_SERVICE_REQUEST` and `SSH_MSG_USERAUTH_REQUEST` parsing
   moved out of the transport's async stage methods into pure functions,
   with no change in behaviour, so the fuzzer reaches them (ADR-0060 §3).
