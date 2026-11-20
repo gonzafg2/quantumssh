@@ -1,16 +1,25 @@
 <!--
-  Governance status (2026-11-03):
+  Governance status (2026-11-20):
   Non-authoritative design note (ADR-0027). It sequences the work that
   RFC-0017 (Accepted 2026-11-03) decides and records the evidence
   gathered before the RFC was written. It decides nothing: the decisions
-  are RFC-0017 and its subsidiary ADRs 0053–0057 (planned). Host-key
-  generation is RFC-0018's (Accepted 2026-11-03).
+  are RFC-0017 and its subsidiary ADRs 0053–0057 (all Accepted). Host-key
+  generation is RFC-0018's (Accepted 2026-11-03), with ADR-0058
+  (Accepted). The work shipped in 0.2.0 on 2026-11-04; what is still
+  open is tracked in #248. ADR-0059 later moved the gates of M5 into a
+  published image.
 -->
 # Alpha distribution — milestones and evidence (non-normative)
 
 **Status:** plan for [RFC-0017](../rfcs/0017-alpha-distribution.md),
 accepted on 2026-11-03. The RFC holds the decisions; this note orders the
 work and gives each milestone a check that says when it is done.
+
+The work shipped in [`0.2.0`](https://github.com/gonzafg2/quantumssh/releases/tag/v0.2.0)
+on 2026-11-04. One check is still open, and
+[#248](https://github.com/gonzafg2/quantumssh/issues/248) tracks it: the
+WSL2 section of `docs/deployment.md` has not been run by hand on
+Windows 11.
 
 ## Milestones
 
