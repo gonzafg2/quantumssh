@@ -1,7 +1,7 @@
 # ADR 0037: Run the Codex reviewer through the Codex cloud GitHub App, not an API key
 
-- **Status:** Proposed
-- **Date:** — (set on acceptance; drafted 2026-10-11)
+- **Status:** Accepted
+- **Date:** 2026-10-11 (accepted on merge of [#178](https://github.com/gonzafg2/quantumssh/pull/178), which also implemented it)
 - **Deciders:** Project lead
 - **Related:** Supersedes [ADR-0030](0030-codex-third-automated-reviewer.md) (Codex through `openai/codex-action` with an API key) and the Codex bullet of [ADR-0033](0033-proof-of-review-for-every-automated-reviewer.md) §Decision. Keeps [ADR-0008](0008-branch-protection-zero-required-reviews.md) (automated reviews are advisory, never a merge gate). Implementation: deletes `.github/workflows/codex.yml` and adds a `## Code Review Rules` section to `AGENTS.md`, in the same PR.
 
