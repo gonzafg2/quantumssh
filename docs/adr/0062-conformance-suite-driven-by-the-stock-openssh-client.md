@@ -73,7 +73,7 @@ macOS arm64, which is not the pinned client.
 | Remote forwarding (`-R`) | "remote port forwarding failed"; with `ExitOnForwardFailure`, exit 255 | ADR-0023 |
 | A second session (`ControlMaster`) | "Session open refused by peer" | ADR-0023 |
 | An unknown subsystem | "subsystem request failed on channel 0", exit 255 | ADR-0041 |
-| Password and keyboard-interactive | "Permission denied (publickey)." | `README.md`, zero legacy |
+| Password and keyboard-interactive | "Permission denied (publickey)." | Threat model §5.3.1, RFC-0011 |
 | A legacy cipher; a classical or `sntrup761` key exchange | "no matching cipher found" or "no matching key exchange method found", each with the server's offer | ADR-0021 |
 | `Compression=yes` | `none` is negotiated and the command runs | ADR-0021 |
 | RSA and ECDSA user keys | Permission denied, while the Ed25519 key still works | ADR-0050 |
@@ -84,8 +84,9 @@ macOS arm64, which is not the pinned client.
 | `sftp`: `chmod`, `ln -s`, `reget`; then `df`, `ln`, `cp` | The first three work. The last three get "Server does not support" for `statvfs`, `hardlink` and `copy-data` | ADR-0041 |
 | `ssh-keyscan` | Refused: disconnect 3, `no-strict-kex` | Nowhere |
 
-Nineteen behaved as their documents say. Three are stated in no
-document, or not in full:
+Nineteen behaved as their documents say. Three did not match a document.
+Two are stated in no document, or not in full, and ADR-0023 states the
+third differently:
 
 1. **`ssh-keyscan` cannot read the host key.** Its KEXINIT carries no
    `kex-strict-c-v00@openssh.com`, so the server disconnects it, as the
@@ -96,11 +97,14 @@ document, or not in full:
    names the budget. The limit of 12 attempts, and the disconnect that
    ends the connection when it is spent, are in `auth.rs` and
    `transport.rs`.
-3. **ADR-0023 does not say which failure a forwarding channel gets while a
-   session is open.** It gives a non-`session` type "unknown channel
-   type", and a second `session` "administratively prohibited". A
-   `direct-tcpip` open that arrives while a session is open is both, and
-   the server answers "administratively prohibited".
+3. **A forwarding channel opened while a session is open gets another
+   failure than ADR-0023 gives it.** ADR-0023 gives a non-`session` type
+   "unknown channel type" (3), and a second `session` "administratively
+   prohibited" (1). The server checks for an open channel first, so a
+   `direct-tcpip` open that arrives while a session is open gets code 1.
+   The code has done so since M5
+   ([#84](https://github.com/gonzafg2/quantumssh/pull/84)), which merged
+   before ADR-0023 was accepted. Both answers refuse the channel.
 
 One of the nineteen shows how a case can mislead:
 
@@ -164,9 +168,12 @@ of conformance with RFC 4253 at large.
 - Each case cites the document and section it checks.
 - **When no document states the behaviour, the document gets its sentence
   first, in the same PR.** The suite is never the only record of what the
-  server does. The probe found three such behaviours.
-- **An accepted ADR is not edited for it** (ADR-0015). The sentence goes
-  into a document that can take it.
+  server does. The probe found two such behaviours.
+- **An accepted ADR takes no new sentence.** A behaviour it never stated
+  goes into a document that can take one.
+- **An accepted ADR whose text was wrong when it was accepted takes an
+  erratum** ([ADR-0015](0015-permit-annotated-errata-in-adrs.md)). The
+  probe found one: ADR-0023, on the forwarding channel.
 
 ### 3. The catalogue is a file, and the run enforces it
 
@@ -246,9 +253,12 @@ The implementing PR's catalogue holds at least:
 - **The 15 checks of today's gate.** What they assert does not change,
   except `negative_no_hybrid` (§4).
 - **A case for each behaviour in the probe's table.**
-- **The three behaviours that no document states in full, each with its
-  sentence** (§2). The refusal of `ssh-keyscan` goes into
-  `docs/deployment.md`. The implementing PR places the other two.
+- **The three behaviours that did not match a document, each put right
+  first** (§2):
+  - the refusal of `ssh-keyscan`, as a sentence in `docs/deployment.md`;
+  - the size of the authentication budget, as a sentence where the
+    implementing PR finds it belongs;
+  - the forwarding channel, as an erratum to ADR-0023.
 
 Three behaviours are left out, each for a stated reason:
 
@@ -283,7 +293,7 @@ dependency changes. The decision extends a CI gate that ADR-0020 decided.
 - The catalogue says what is covered. What is missing is a missing line.
 - A client bump becomes a full run with a diff a reviewer can read.
 - The documents get completed. The probe already found three behaviours
-  that no document states in full.
+  that did not match a document.
 
 ### Negative
 
@@ -315,7 +325,7 @@ dependency changes. The decision extends a CI gate that ADR-0020 decided.
 ### Alternative 1: keep adding checks feature by feature
 
 The gate as it is. Rejected: there is no rule and no list. The first probe
-found three behaviours that no document states in full, and a check that
+found three behaviours that did not match a document, and a check that
 passes for any failure.
 
 ### Alternative 2: a Rust harness that spawns `ssh`
