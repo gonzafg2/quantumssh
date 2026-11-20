@@ -62,7 +62,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   copies a primitive crate or the compiler leaves on the stack. The
   transport ciphers wipe theirs, as listed under Security; the key
   exchange, the host-key signature and the key derivation are not
-  covered (#277).
+  covered (#286).
 
 ### Security
 
