@@ -338,8 +338,11 @@ Five CI contexts must report success before a PR can merge
 ([ADR-0031](./adr/0031-required-status-checks-commit-lint-and-openssh-interop.md)):
 
 - `build (ubuntu-latest)` — formats, lints, tests, and builds on Linux,
-  and builds every fuzz target and replays its seeds and regressions
-  ([ADR-0060](./adr/0060-continuous-fuzzing-cargo-fuzz-on-the-pinned-stable-toolchain.md))
+  builds every fuzz target and replays its seeds and regressions
+  ([ADR-0060](./adr/0060-continuous-fuzzing-cargo-fuzz-on-the-pinned-stable-toolchain.md)),
+  and runs the stack-residue tests of the transport ciphers in the
+  release profile and again with the software AES backend
+  ([ADR-0061](./adr/0061-wipe-the-stack-below-the-transport-ciphers.md))
 - `build (macos-latest)` — same on macOS
 - `cargo deny` — license, advisories, sources, and bans
 - `commit-lint` — every commit subject in the PR follows Conventional Commits

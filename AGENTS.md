@@ -90,6 +90,11 @@ warnings.
   `bash scripts/fuzz-prepare.sh`, then `cargo fuzz run --sanitizer none
   <target>`. The fuzzer reaches crate-private parsers through
   `quantumssh_core::fuzzing`, compiled only under `--cfg fuzzing`.
+- The stack-residue tests in `cipher.rs` (ADR-0061) exist only on Linux.
+  CI also runs them in the release profile, and again with the software
+  AES backend: `cargo test --release -p quantumssh-core --lib
+  cipher::tests::stack_residue`, then the same with
+  `RUSTFLAGS='--cfg aes_backend="soft"'`.
 
 ## Git workflow
 
