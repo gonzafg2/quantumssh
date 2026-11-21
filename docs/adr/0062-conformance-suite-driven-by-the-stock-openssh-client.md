@@ -235,9 +235,11 @@ of conformance with RFC 4253 at large.
 - **Time.** A script that tried the 22 behaviours took 21 seconds on the
   development machine, most of it fixed waits and a transfer of 1.2 GB.
   The suite took 7 to 9 seconds on macOS arm64 and 11 to 14 seconds in the
-  gate image on aarch64, with no failure in eight runs. The implementing PR reports the step's time on the PR
-  runner. If the suite outgrows a required check, splitting it is a new
-  decision.
+  gate image on aarch64, with no failure in eight runs. On the PR runner,
+  x86_64, the step took 17 seconds, up from 3, and passed all 43 cases
+  with none skipped (run
+  [44864009111](https://github.com/gonzafg2/quantumssh/actions/runs/44864009111)).
+  If the suite outgrows a required check, splitting it is a new decision.
 
 ### 7. One client: the pin
 
