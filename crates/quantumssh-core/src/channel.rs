@@ -49,17 +49,17 @@ const SSH_MSG_DEBUG: u8 = 4;
 const SSH_MSG_KEXINIT: u8 = 20;
 
 // ---- connection-protocol messages (RFC 4254 §4, §5) ----
-const SSH_MSG_GLOBAL_REQUEST: u8 = 80;
+pub(crate) const SSH_MSG_GLOBAL_REQUEST: u8 = 80;
 const SSH_MSG_REQUEST_FAILURE: u8 = 82;
-const SSH_MSG_CHANNEL_OPEN: u8 = 90;
+pub(crate) const SSH_MSG_CHANNEL_OPEN: u8 = 90;
 const SSH_MSG_CHANNEL_OPEN_CONFIRMATION: u8 = 91;
 const SSH_MSG_CHANNEL_OPEN_FAILURE: u8 = 92;
-const SSH_MSG_CHANNEL_WINDOW_ADJUST: u8 = 93;
-const SSH_MSG_CHANNEL_DATA: u8 = 94;
+pub(crate) const SSH_MSG_CHANNEL_WINDOW_ADJUST: u8 = 93;
+pub(crate) const SSH_MSG_CHANNEL_DATA: u8 = 94;
 const SSH_MSG_CHANNEL_EXTENDED_DATA: u8 = 95;
-const SSH_MSG_CHANNEL_EOF: u8 = 96;
-const SSH_MSG_CHANNEL_CLOSE: u8 = 97;
-const SSH_MSG_CHANNEL_REQUEST: u8 = 98;
+pub(crate) const SSH_MSG_CHANNEL_EOF: u8 = 96;
+pub(crate) const SSH_MSG_CHANNEL_CLOSE: u8 = 97;
+pub(crate) const SSH_MSG_CHANNEL_REQUEST: u8 = 98;
 const SSH_MSG_CHANNEL_SUCCESS: u8 = 99;
 const SSH_MSG_CHANNEL_FAILURE: u8 = 100;
 
@@ -73,9 +73,9 @@ const SSH_EXTENDED_DATA_STDERR: u32 = 1;
 
 /// Phase 1 inbound window (ADR-0023): un-consumed inbound bytes are
 /// bounded by this.
-const INITIAL_WINDOW: u32 = 2 * 1024 * 1024;
+pub(crate) const INITIAL_WINDOW: u32 = 2 * 1024 * 1024;
 /// Phase 1 max packet payload (ADR-0023).
-const MAX_PACKET: u32 = 32 * 1024;
+pub(crate) const MAX_PACKET: u32 = 32 * 1024;
 /// Batch inbound credit before sending `WINDOW_ADJUST`, so we do not emit
 /// one per data packet.
 const CREDIT_BATCH: u32 = 1024 * 1024;
@@ -498,14 +498,7 @@ impl Driver<'_> {
             if self.out_window == 0 {
                 break;
             }
-            let cap = self
-                .out_window
-                .min(u64::from(self.out_max_pkt))
-                .min(u64::from(MAX_PACKET));
-            // cap ≤ MAX_PACKET, so it always fits a usize.
-            let n = p
-                .remaining()
-                .min(usize::try_from(cap).unwrap_or(usize::MAX));
+            let n = send_size(self.out_window, self.out_max_pkt, p.remaining());
             if n == 0 {
                 break;
             }
@@ -688,11 +681,9 @@ impl Driver<'_> {
                 // `no-more-sessions@openssh.com`) desynchronises the
                 // client's request/reply pairing. No global request
                 // is recognised in Phase 1.
-                let (Ok(_name), Ok(want_reply)) = (r.string(REQUEST_TYPE_BOUND), r.boolean())
-                else {
-                    return Err(session
-                        .protocol_disconnect("malformed-global-request")
-                        .await);
+                let want_reply = match parse_global_request(&mut r) {
+                    Ok(want_reply) => want_reply,
+                    Err(reason) => return Err(session.protocol_disconnect(reason).await),
                 };
                 if want_reply {
                     session.write_packet(&[SSH_MSG_REQUEST_FAILURE]).await?;
@@ -725,13 +716,14 @@ impl Driver<'_> {
     where
         S: AsyncRead + AsyncWrite + Unpin + Send,
     {
-        let (Ok(ctype), Ok(sender), Ok(window), Ok(max_pkt)) = (
-            r.string(CHANNEL_TYPE_BOUND),
-            r.uint32(),
-            r.uint32(),
-            r.uint32(),
-        ) else {
-            return Err(session.protocol_disconnect("malformed-channel-open").await);
+        let ChannelOpen {
+            channel_type: ctype,
+            sender,
+            window,
+            max_packet: max_pkt,
+        } = match parse_channel_open(r) {
+            Ok(open) => open,
+            Err(reason) => return Err(session.protocol_disconnect(reason).await),
         };
         if self.state != ChannelState::BeforeOpen {
             // A second channel — refuse by policy, keep the first.
@@ -779,23 +771,22 @@ impl Driver<'_> {
     where
         S: AsyncRead + AsyncWrite + Unpin + Send,
     {
-        let (Ok(recipient), Ok(rtype), Ok(want_reply)) =
-            (r.uint32(), r.string(REQUEST_TYPE_BOUND), r.boolean())
-        else {
-            return Err(session
-                .protocol_disconnect("malformed-channel-request")
-                .await);
+        let RequestHead {
+            recipient,
+            request_type: rtype,
+            want_reply,
+        } = match parse_request_head(r) {
+            Ok(head) => head,
+            Err(reason) => return Err(session.protocol_disconnect(reason).await),
         };
         if recipient != LOCAL_CHANNEL {
             return Err(session.protocol_disconnect("unknown-channel").await);
         }
         match rtype {
             b"exec" if self.state == ChannelState::Idle => {
-                let Ok(cmd_bytes) = r.string(COMMAND_BOUND) else {
-                    return Err(session.protocol_disconnect("malformed-exec-request").await);
-                };
-                let Ok(command) = std::str::from_utf8(cmd_bytes) else {
-                    return Err(session.protocol_disconnect("non-utf8-command").await);
+                let command = match parse_exec(r) {
+                    Ok(command) => command,
+                    Err(reason) => return Err(session.protocol_disconnect(reason).await),
                 };
                 self.start(session, Start::Program(Program::Exec(command)), want_reply)
                     .await
@@ -851,24 +842,9 @@ impl Driver<'_> {
     where
         S: AsyncRead + AsyncWrite + Unpin + Send,
     {
-        let (Ok(term), Ok(cols), Ok(rows), Ok(width_px), Ok(height_px), Ok(blob)) = (
-            r.string(pty::TERM_BOUND),
-            r.uint32(),
-            r.uint32(),
-            r.uint32(),
-            r.uint32(),
-            r.string(pty::MODES_BOUND),
-        ) else {
-            return Err(session.protocol_disconnect("malformed-pty-req").await);
-        };
-        let Ok(modes) = pty::Modes::parse(blob) else {
-            return Err(session.protocol_disconnect("truncated-terminal-mode").await);
-        };
-        let size = Size {
-            cols,
-            rows,
-            width_px,
-            height_px,
+        let PtyRequest { term, size, modes } = match parse_pty_req(r) {
+            Ok(request) => request,
+            Err(reason) => return Err(session.protocol_disconnect(reason).await),
         };
         let allowed = self.authenticated.pty_permitted
             && self.state == ChannelState::Idle
@@ -903,8 +879,9 @@ impl Driver<'_> {
     where
         S: AsyncRead + AsyncWrite + Unpin + Send,
     {
-        let Ok(name) = r.string(SUBSYSTEM_BOUND) else {
-            return Err(session.protocol_disconnect("malformed-subsystem").await);
+        let name = match parse_subsystem(r) {
+            Ok(name) => name,
+            Err(reason) => return Err(session.protocol_disconnect(reason).await),
         };
         if name == b"sftp"
             && self.state == ChannelState::Idle
@@ -928,16 +905,9 @@ impl Driver<'_> {
     where
         S: AsyncRead + AsyncWrite + Unpin + Send,
     {
-        let (Ok(cols), Ok(rows), Ok(width_px), Ok(height_px)) =
-            (r.uint32(), r.uint32(), r.uint32(), r.uint32())
-        else {
-            return Err(session.protocol_disconnect("malformed-window-change").await);
-        };
-        let size = Size {
-            cols,
-            rows,
-            width_px,
-            height_px,
+        let size = match parse_window_change(r) {
+            Ok(size) => size,
+            Err(reason) => return Err(session.protocol_disconnect(reason).await),
         };
         let applied = match (&self.pty, &self.child) {
             (Some(pending), _) => pty::resize(&pending.pair.master, size).is_ok(),
@@ -1017,8 +987,9 @@ impl Driver<'_> {
     where
         S: AsyncRead + AsyncWrite + Unpin + Send,
     {
-        let (Ok(recipient), Ok(data)) = (r.uint32(), r.string(MAX_PACKET as usize)) else {
-            return Err(session.protocol_disconnect("malformed-channel-data").await);
+        let (recipient, data) = match parse_channel_data(r) {
+            Ok(fields) => fields,
+            Err(reason) => return Err(session.protocol_disconnect(reason).await),
         };
         if recipient != LOCAL_CHANNEL {
             return Err(session.protocol_disconnect("unknown-channel").await);
@@ -1031,12 +1002,10 @@ impl Driver<'_> {
         if self.client_eof {
             return Err(session.protocol_disconnect("data-after-eof").await);
         }
-        // `data` is bounded to MAX_PACKET by the reader, so this fits a u32.
-        let len = u32::try_from(data.len()).unwrap_or(u32::MAX);
-        if len > self.in_window {
+        let Some(in_window) = take_inbound(self.in_window, data.len()) else {
             return Err(session.protocol_disconnect("inbound-window-exceeded").await);
-        }
-        self.in_window -= len;
+        };
+        self.in_window = in_window;
         if self.state == ChannelState::Idle {
             self.pre_exec_stdin.push_back(data.to_vec());
         } else if self.child.is_some() {
@@ -1058,16 +1027,17 @@ impl Driver<'_> {
     where
         S: AsyncRead + AsyncWrite + Unpin + Send,
     {
-        let (Ok(recipient), Ok(add)) = (r.uint32(), r.uint32()) else {
-            return Err(session.protocol_disconnect("malformed-window-adjust").await);
+        let (recipient, add) = match parse_window_adjust(r) {
+            Ok(fields) => fields,
+            Err(reason) => return Err(session.protocol_disconnect(reason).await),
         };
         if recipient != LOCAL_CHANNEL {
             return Err(session.protocol_disconnect("unknown-channel").await);
         }
-        self.out_window += u64::from(add);
-        if self.out_window > u64::from(u32::MAX) {
+        let Some(out_window) = add_out_window(self.out_window, add) else {
             return Err(session.protocol_disconnect("window-overflow").await);
-        }
+        };
+        self.out_window = out_window;
         Ok(())
     }
 
@@ -1079,8 +1049,9 @@ impl Driver<'_> {
     where
         S: AsyncRead + AsyncWrite + Unpin + Send,
     {
-        let Ok(recipient) = r.uint32() else {
-            return Err(session.protocol_disconnect("malformed-channel-eof").await);
+        let recipient = match parse_recipient(r, "malformed-channel-eof") {
+            Ok(recipient) => recipient,
+            Err(reason) => return Err(session.protocol_disconnect(reason).await),
         };
         if recipient != LOCAL_CHANNEL {
             return Err(session.protocol_disconnect("unknown-channel").await);
@@ -1100,8 +1071,9 @@ impl Driver<'_> {
     where
         S: AsyncRead + AsyncWrite + Unpin + Send,
     {
-        let Ok(recipient) = r.uint32() else {
-            return Err(session.protocol_disconnect("malformed-channel-close").await);
+        let recipient = match parse_recipient(r, "malformed-channel-close") {
+            Ok(recipient) => recipient,
+            Err(reason) => return Err(session.protocol_disconnect(reason).await),
         };
         if recipient != LOCAL_CHANNEL {
             return Err(session.protocol_disconnect("unknown-channel").await);
@@ -1235,6 +1207,192 @@ fn build_channel_msg(msg: u8, peer_chan: u32) -> Vec<u8> {
     w.into_bytes()
 }
 
+// ---- inbound message parsers (ADR-0060 §3, #271) ----
+//
+// Each reads one message's fields from a reader positioned where its
+// handler reads them, after the message type byte, and returns them, or
+// the reason the handler disconnects with. They hold no state and do no
+// I/O, so the `channel` fuzz target reaches them. Which of them an inbound
+// packet reaches still depends on the driver's state, as before.
+
+/// The fields of `SSH_MSG_CHANNEL_OPEN` (RFC 4254 §5.1) the server reads.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct ChannelOpen<'a> {
+    pub(crate) channel_type: &'a [u8],
+    pub(crate) sender: u32,
+    pub(crate) window: u32,
+    pub(crate) max_packet: u32,
+}
+
+/// Parses an `SSH_MSG_CHANNEL_OPEN` body.
+pub(crate) fn parse_channel_open<'a>(r: &mut Reader<'a>) -> Result<ChannelOpen<'a>, &'static str> {
+    let (Ok(channel_type), Ok(sender), Ok(window), Ok(max_packet)) = (
+        r.string(CHANNEL_TYPE_BOUND),
+        r.uint32(),
+        r.uint32(),
+        r.uint32(),
+    ) else {
+        return Err("malformed-channel-open");
+    };
+    Ok(ChannelOpen {
+        channel_type,
+        sender,
+        window,
+        max_packet,
+    })
+}
+
+/// The fields every `SSH_MSG_CHANNEL_REQUEST` (RFC 4254 §5.4) starts with.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct RequestHead<'a> {
+    pub(crate) recipient: u32,
+    pub(crate) request_type: &'a [u8],
+    pub(crate) want_reply: bool,
+}
+
+/// Parses the head of an `SSH_MSG_CHANNEL_REQUEST` body. The fields of
+/// the request type follow, for the type's own parser.
+pub(crate) fn parse_request_head<'a>(r: &mut Reader<'a>) -> Result<RequestHead<'a>, &'static str> {
+    let (Ok(recipient), Ok(request_type), Ok(want_reply)) =
+        (r.uint32(), r.string(REQUEST_TYPE_BOUND), r.boolean())
+    else {
+        return Err("malformed-channel-request");
+    };
+    Ok(RequestHead {
+        recipient,
+        request_type,
+        want_reply,
+    })
+}
+
+/// Parses the command of an `exec` request (RFC 4254 §6.5).
+pub(crate) fn parse_exec<'a>(r: &mut Reader<'a>) -> Result<&'a str, &'static str> {
+    let Ok(bytes) = r.string(COMMAND_BOUND) else {
+        return Err("malformed-exec-request");
+    };
+    std::str::from_utf8(bytes).map_err(|_| "non-utf8-command")
+}
+
+/// The fields of a `pty-req` request (RFC 4254 §6.2, ADR-0038 §2).
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct PtyRequest<'a> {
+    pub(crate) term: &'a [u8],
+    pub(crate) size: Size,
+    pub(crate) modes: pty::Modes,
+}
+
+/// Parses a `pty-req` request. Every field is bounded.
+pub(crate) fn parse_pty_req<'a>(r: &mut Reader<'a>) -> Result<PtyRequest<'a>, &'static str> {
+    let (Ok(term), Ok(cols), Ok(rows), Ok(width_px), Ok(height_px), Ok(blob)) = (
+        r.string(pty::TERM_BOUND),
+        r.uint32(),
+        r.uint32(),
+        r.uint32(),
+        r.uint32(),
+        r.string(pty::MODES_BOUND),
+    ) else {
+        return Err("malformed-pty-req");
+    };
+    let Ok(modes) = pty::Modes::parse(blob) else {
+        return Err("truncated-terminal-mode");
+    };
+    Ok(PtyRequest {
+        term,
+        size: Size {
+            cols,
+            rows,
+            width_px,
+            height_px,
+        },
+        modes,
+    })
+}
+
+/// Parses the name of a `subsystem` request (RFC 4254 §6.5, ADR-0041 §1).
+pub(crate) fn parse_subsystem<'a>(r: &mut Reader<'a>) -> Result<&'a [u8], &'static str> {
+    r.string(SUBSYSTEM_BOUND).map_err(|_| "malformed-subsystem")
+}
+
+/// Parses a `window-change` request (RFC 4254 §6.7).
+pub(crate) fn parse_window_change(r: &mut Reader<'_>) -> Result<Size, &'static str> {
+    let (Ok(cols), Ok(rows), Ok(width_px), Ok(height_px)) =
+        (r.uint32(), r.uint32(), r.uint32(), r.uint32())
+    else {
+        return Err("malformed-window-change");
+    };
+    Ok(Size {
+        cols,
+        rows,
+        width_px,
+        height_px,
+    })
+}
+
+/// Parses an `SSH_MSG_CHANNEL_DATA` body: the recipient and the data,
+/// bounded to [`MAX_PACKET`].
+pub(crate) fn parse_channel_data<'a>(r: &mut Reader<'a>) -> Result<(u32, &'a [u8]), &'static str> {
+    let (Ok(recipient), Ok(data)) = (r.uint32(), r.string(MAX_PACKET as usize)) else {
+        return Err("malformed-channel-data");
+    };
+    Ok((recipient, data))
+}
+
+/// Parses an `SSH_MSG_CHANNEL_WINDOW_ADJUST` body: the recipient and the
+/// bytes to add.
+pub(crate) fn parse_window_adjust(r: &mut Reader<'_>) -> Result<(u32, u32), &'static str> {
+    let (Ok(recipient), Ok(add)) = (r.uint32(), r.uint32()) else {
+        return Err("malformed-window-adjust");
+    };
+    Ok((recipient, add))
+}
+
+/// Parses the recipient of a one-field message, `SSH_MSG_CHANNEL_EOF` or
+/// `SSH_MSG_CHANNEL_CLOSE`, which fails with that message's `reason`.
+pub(crate) fn parse_recipient(
+    r: &mut Reader<'_>,
+    reason: &'static str,
+) -> Result<u32, &'static str> {
+    r.uint32().map_err(|_| reason)
+}
+
+/// Parses an `SSH_MSG_GLOBAL_REQUEST` body (RFC 4254 §4) as far as the
+/// server reads it: the request name, then `want_reply`.
+pub(crate) fn parse_global_request(r: &mut Reader<'_>) -> Result<bool, &'static str> {
+    let (Ok(_name), Ok(want_reply)) = (r.string(REQUEST_TYPE_BOUND), r.boolean()) else {
+        return Err("malformed-global-request");
+    };
+    Ok(want_reply)
+}
+
+// ---- window arithmetic (RFC 4254 §5.2) ----
+
+/// What is left of the inbound window after an `SSH_MSG_CHANNEL_DATA` of
+/// `len` bytes, or `None` when the peer sent past it.
+pub(crate) fn take_inbound(in_window: u32, len: usize) -> Option<u32> {
+    // `len` is bounded to MAX_PACKET by the reader, so this fits a u32.
+    let len = u32::try_from(len).unwrap_or(u32::MAX);
+    in_window.checked_sub(len)
+}
+
+/// The outbound window after an `SSH_MSG_CHANNEL_WINDOW_ADJUST` of `add`
+/// bytes, or `None` past 2³² − 1 bytes, which RFC 4254 §5.2 forbids a
+/// window to exceed.
+pub(crate) fn add_out_window(out_window: u64, add: u32) -> Option<u64> {
+    let window = out_window.checked_add(u64::from(add))?;
+    u32::try_from(window).is_ok().then_some(window)
+}
+
+/// How many of `remaining` pending output bytes the next
+/// `SSH_MSG_CHANNEL_DATA` carries: no more than the peer's window, its
+/// maximum packet size, or ours.
+pub(crate) fn send_size(out_window: u64, out_max_packet: u32, remaining: usize) -> usize {
+    let cap = out_window
+        .min(u64::from(out_max_packet))
+        .min(u64::from(MAX_PACKET));
+    // cap ≤ MAX_PACKET, so it always fits a usize.
+    remaining.min(usize::try_from(cap).unwrap_or(usize::MAX))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1349,6 +1507,260 @@ mod tests {
         assert_eq!(msg, SSH_MSG_CHANNEL_OPEN_FAILURE);
         assert_eq!(r.uint32().unwrap(), 2);
         assert_eq!(r.uint32().unwrap(), SSH_OPEN_UNKNOWN_CHANNEL_TYPE);
+    }
+
+    // ---- the inbound parsers and the window arithmetic (#271) ----
+
+    fn body(build: impl FnOnce(&mut Writer)) -> Vec<u8> {
+        let mut w = Writer::new();
+        build(&mut w);
+        w.into_bytes()
+    }
+
+    /// Every prefix shorter than `bytes` fails with `reason`. `parse`
+    /// returns the parser's error, if any.
+    fn truncations_fail(
+        bytes: &[u8],
+        reason: &str,
+        parse: impl Fn(&mut Reader<'_>) -> Option<&'static str>,
+    ) {
+        for cut in 0..bytes.len() {
+            let got = parse(&mut Reader::new(&bytes[..cut]));
+            assert_eq!(got, Some(reason), "prefix of {cut} bytes");
+        }
+    }
+
+    #[test]
+    fn channel_open_parses_its_four_fields() {
+        let bytes = body(|w| {
+            w.put_string(b"session");
+            w.put_uint32(7);
+            w.put_uint32(INITIAL_WINDOW);
+            w.put_uint32(MAX_PACKET);
+        });
+        let open = parse_channel_open(&mut Reader::new(&bytes)).unwrap();
+        assert_eq!(
+            open,
+            ChannelOpen {
+                channel_type: b"session",
+                sender: 7,
+                window: INITIAL_WINDOW,
+                max_packet: MAX_PACKET,
+            }
+        );
+        truncations_fail(&bytes, "malformed-channel-open", |r| {
+            parse_channel_open(r).err()
+        });
+    }
+
+    #[test]
+    fn channel_open_bounds_the_channel_type() {
+        let long = vec![b'x'; CHANNEL_TYPE_BOUND + 1];
+        let bytes = body(|w| {
+            w.put_string(&long);
+            w.put_uint32(0);
+            w.put_uint32(0);
+            w.put_uint32(1);
+        });
+        assert_eq!(
+            parse_channel_open(&mut Reader::new(&bytes)),
+            Err("malformed-channel-open")
+        );
+    }
+
+    #[test]
+    fn request_head_then_exec_command() {
+        let bytes = body(|w| {
+            w.put_uint32(LOCAL_CHANNEL);
+            w.put_string(b"exec");
+            w.put_boolean(true);
+            w.put_string(b"echo hello");
+        });
+        let mut r = Reader::new(&bytes);
+        let head = parse_request_head(&mut r).unwrap();
+        assert_eq!(
+            head,
+            RequestHead {
+                recipient: LOCAL_CHANNEL,
+                request_type: b"exec",
+                want_reply: true,
+            }
+        );
+        assert_eq!(parse_exec(&mut r), Ok("echo hello"));
+        assert_eq!(r.remaining(), 0);
+        // The head is the first 13 bytes: recipient, "exec", want_reply.
+        truncations_fail(&bytes[..13], "malformed-channel-request", |r| {
+            parse_request_head(r).err()
+        });
+    }
+
+    #[test]
+    fn exec_names_a_missing_and_a_non_utf8_command() {
+        assert_eq!(
+            parse_exec(&mut Reader::new(&[0, 0])),
+            Err("malformed-exec-request")
+        );
+        let bytes = body(|w| w.put_string(&[0xff, 0xfe]));
+        assert_eq!(
+            parse_exec(&mut Reader::new(&bytes)),
+            Err("non-utf8-command")
+        );
+        let long = body(|w| w.put_string(&vec![b'a'; COMMAND_BOUND + 1]));
+        assert_eq!(
+            parse_exec(&mut Reader::new(&long)),
+            Err("malformed-exec-request")
+        );
+    }
+
+    #[test]
+    fn pty_req_parses_term_size_and_modes() {
+        // VINTR 3, ECHO 1, TTY_OP_END (RFC 4254 §8).
+        let modes = [0x01, 0, 0, 0, 3, 0x35, 0, 0, 0, 1, 0x00];
+        let bytes = body(|w| {
+            w.put_string(b"xterm-256color");
+            w.put_uint32(80);
+            w.put_uint32(24);
+            w.put_uint32(640);
+            w.put_uint32(480);
+            w.put_string(&modes);
+        });
+        let request = parse_pty_req(&mut Reader::new(&bytes)).unwrap();
+        assert_eq!(request.term, b"xterm-256color");
+        assert_eq!(
+            request.size,
+            Size {
+                cols: 80,
+                rows: 24,
+                width_px: 640,
+                height_px: 480,
+            }
+        );
+        assert_eq!(request.modes, pty::Modes::parse(&modes).unwrap());
+        truncations_fail(&bytes, "malformed-pty-req", |r| parse_pty_req(r).err());
+    }
+
+    #[test]
+    fn pty_req_names_truncated_modes() {
+        let bytes = body(|w| {
+            w.put_string(b"xterm");
+            for v in [80, 24, 0, 0] {
+                w.put_uint32(v);
+            }
+            w.put_string(&[0x35, 0, 0]);
+        });
+        assert_eq!(
+            parse_pty_req(&mut Reader::new(&bytes)).unwrap_err(),
+            "truncated-terminal-mode"
+        );
+    }
+
+    #[test]
+    fn subsystem_window_change_data_and_adjust() {
+        let name = body(|w| w.put_string(b"sftp"));
+        assert_eq!(parse_subsystem(&mut Reader::new(&name)), Ok(&b"sftp"[..]));
+        truncations_fail(&name, "malformed-subsystem", |r| parse_subsystem(r).err());
+
+        let change = body(|w| {
+            for v in [132, 43, 0, 0] {
+                w.put_uint32(v);
+            }
+        });
+        assert_eq!(
+            parse_window_change(&mut Reader::new(&change)),
+            Ok(Size {
+                cols: 132,
+                rows: 43,
+                width_px: 0,
+                height_px: 0,
+            })
+        );
+        truncations_fail(&change, "malformed-window-change", |r| {
+            parse_window_change(r).err()
+        });
+
+        let data = body(|w| {
+            w.put_uint32(LOCAL_CHANNEL);
+            w.put_string(b"stdin");
+        });
+        assert_eq!(
+            parse_channel_data(&mut Reader::new(&data)),
+            Ok((LOCAL_CHANNEL, &b"stdin"[..]))
+        );
+        truncations_fail(&data, "malformed-channel-data", |r| {
+            parse_channel_data(r).err()
+        });
+        let too_long = body(|w| {
+            w.put_uint32(LOCAL_CHANNEL);
+            w.put_string(&vec![0; MAX_PACKET as usize + 1]);
+        });
+        assert_eq!(
+            parse_channel_data(&mut Reader::new(&too_long)),
+            Err("malformed-channel-data")
+        );
+
+        let adjust = body(|w| {
+            w.put_uint32(LOCAL_CHANNEL);
+            w.put_uint32(CREDIT_BATCH);
+        });
+        assert_eq!(
+            parse_window_adjust(&mut Reader::new(&adjust)),
+            Ok((LOCAL_CHANNEL, CREDIT_BATCH))
+        );
+        truncations_fail(&adjust, "malformed-window-adjust", |r| {
+            parse_window_adjust(r).err()
+        });
+    }
+
+    #[test]
+    fn recipient_and_global_request() {
+        let recipient = body(|w| w.put_uint32(LOCAL_CHANNEL));
+        assert_eq!(
+            parse_recipient(&mut Reader::new(&recipient), "malformed-channel-eof"),
+            Ok(LOCAL_CHANNEL)
+        );
+        assert_eq!(
+            parse_recipient(&mut Reader::new(&recipient[..3]), "malformed-channel-close"),
+            Err("malformed-channel-close")
+        );
+
+        let global = body(|w| {
+            w.put_string(b"keepalive@openssh.com");
+            w.put_boolean(true);
+        });
+        assert_eq!(parse_global_request(&mut Reader::new(&global)), Ok(true));
+        truncations_fail(&global, "malformed-global-request", |r| {
+            parse_global_request(r).err()
+        });
+    }
+
+    #[test]
+    fn inbound_window_is_spent_and_never_overdrawn() {
+        assert_eq!(take_inbound(INITIAL_WINDOW, 5), Some(INITIAL_WINDOW - 5));
+        assert_eq!(take_inbound(5, 5), Some(0));
+        assert_eq!(take_inbound(4, 5), None);
+        assert_eq!(take_inbound(u32::MAX, usize::MAX), Some(0));
+    }
+
+    #[test]
+    fn outbound_window_never_exceeds_two_to_the_thirty_two_minus_one() {
+        let max = u64::from(u32::MAX);
+        assert_eq!(add_out_window(0, u32::MAX), Some(max));
+        assert_eq!(add_out_window(1, u32::MAX), None);
+        assert_eq!(add_out_window(max, 0), Some(max));
+        assert_eq!(add_out_window(u64::MAX, 1), None);
+    }
+
+    #[test]
+    fn send_size_is_capped_by_both_windows_and_both_packet_sizes() {
+        let ours = MAX_PACKET as usize;
+        assert_eq!(send_size(0, MAX_PACKET, ours), 0);
+        assert_eq!(send_size(10, MAX_PACKET, ours), 10);
+        assert_eq!(send_size(u64::from(INITIAL_WINDOW), 512, ours), 512);
+        assert_eq!(
+            send_size(u64::from(INITIAL_WINDOW), u32::MAX, ours * 4),
+            ours
+        );
+        assert_eq!(send_size(u64::from(INITIAL_WINDOW), u32::MAX, 3), 3);
     }
 
     /// Scoped subscriber that records each event's message text, so the

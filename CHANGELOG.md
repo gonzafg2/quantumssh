@@ -18,15 +18,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     init, sealed frames, the service request, the userauth request and
     the user certificate. A stateful `handshake` target drives the
     transport through the peer's `NEWKEYS`. SFTP framing and field
-    parsing and terminal modes have targets too.
+    parsing, terminal modes, and the channel layer's inbound messages
+    and window arithmetic (#271) have targets too.
   - **Findings.** Any allocation over 64 MiB is a finding.
   - **CI.** `build (ubuntu-latest)` builds every target and replays its
     seeds and regressions. `fuzz.yml` fuzzes on PRs that touch the code,
     and daily on `main`. A finding is encrypted to the security key
     before it leaves the runner.
   - **Not covered yet.** The SFTP request handlers wait for OS-level
-    confinement (#270), and the channel layer waits for its parsers to
-    be extracted (#271).
+    confinement (#270).
 - The OpenSSH interop gate is now a conformance suite
   ([ADR-0062](docs/adr/0062-conformance-suite-driven-by-the-stock-openssh-client.md)).
   It has 43 cases, up from 15 checks: one for every behaviour that a
@@ -72,7 +72,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   moved out of the transport's async stage methods into pure functions,
   with no change in behaviour, so the fuzzer reaches them (ADR-0060 §3).
   The `authorized_keys` and `trusted_user_ca_keys` loaders now read the
-  file, then parse its content.
+  file, then parse its content. The channel layer's inbound messages,
+  and its window arithmetic, moved out of its handlers the same way
+  (#271).
 - Documentation: the threat model's §4.3 states where key erasure
   stops. It reaches the values that hold a key, and not the short-lived
   copies a primitive crate or the compiler leaves on the stack. The

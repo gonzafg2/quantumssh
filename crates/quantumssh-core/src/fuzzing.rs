@@ -8,8 +8,8 @@
 
 use crate::auth::{self, AuthorizedKeys, UserauthRequest};
 use crate::cert::{self, TrustedUserCaKeys};
-use crate::wire::Reader;
-use crate::{pty, sftp, transport};
+use crate::wire::{self, Reader};
+use crate::{channel, pty, sftp, transport};
 
 /// Parses an `SSH_MSG_SERVICE_REQUEST` payload.
 pub fn service_request(payload: &[u8]) {
@@ -121,6 +121,76 @@ pub fn sftp(mut input: &[u8]) {
         if sftp::path_arg(&mut setstat).is_ok() {
             let _ = sftp::read_attrs(&mut setstat);
         }
+    }
+}
+
+/// Reads channel-layer payloads from `input`, each as an SSH `string`, as
+/// the session loop receives them after authentication (#271). Each one
+/// goes through the parsers its message type reaches in `channel.rs`, and
+/// for a request, the parser of its request type. The parsed windows then
+/// go through the window arithmetic, with one outbound packet as large as
+/// the windows allow after each message. No handler runs: they spawn
+/// processes (ADR-0060 §4). A peer that overdraws or overflows a window
+/// ends the input, as it ends the connection.
+pub fn channel(input: &[u8]) {
+    let mut payloads = Reader::new(input);
+    let mut in_window = channel::INITIAL_WINDOW;
+    let mut out_window = 0_u64;
+    let mut out_max_packet = 0_u32;
+    while let Ok(payload) = payloads.string(wire::MAX_PACKET as usize) {
+        let mut r = Reader::new(payload);
+        let Ok(message) = r.byte() else {
+            continue;
+        };
+        match message {
+            channel::SSH_MSG_CHANNEL_OPEN => {
+                if let Ok(open) = channel::parse_channel_open(&mut r)
+                    && open.max_packet != 0
+                {
+                    out_window = u64::from(open.window);
+                    out_max_packet = open.max_packet;
+                }
+            }
+            channel::SSH_MSG_CHANNEL_REQUEST => {
+                if let Ok(head) = channel::parse_request_head(&mut r) {
+                    match head.request_type {
+                        b"exec" => drop(channel::parse_exec(&mut r)),
+                        b"pty-req" => drop(channel::parse_pty_req(&mut r)),
+                        b"subsystem" => drop(channel::parse_subsystem(&mut r)),
+                        b"window-change" => drop(channel::parse_window_change(&mut r)),
+                        _ => {}
+                    }
+                }
+            }
+            channel::SSH_MSG_CHANNEL_DATA => {
+                if let Ok((_, data)) = channel::parse_channel_data(&mut r) {
+                    let Some(left) = channel::take_inbound(in_window, data.len()) else {
+                        return;
+                    };
+                    in_window = left;
+                }
+            }
+            channel::SSH_MSG_CHANNEL_WINDOW_ADJUST => {
+                if let Ok((_, add)) = channel::parse_window_adjust(&mut r) {
+                    let Some(window) = channel::add_out_window(out_window, add) else {
+                        return;
+                    };
+                    out_window = window;
+                }
+            }
+            channel::SSH_MSG_CHANNEL_EOF => {
+                let _ = channel::parse_recipient(&mut r, "malformed-channel-eof");
+            }
+            channel::SSH_MSG_CHANNEL_CLOSE => {
+                let _ = channel::parse_recipient(&mut r, "malformed-channel-close");
+            }
+            channel::SSH_MSG_GLOBAL_REQUEST => {
+                let _ = channel::parse_global_request(&mut r);
+            }
+            _ => {}
+        }
+        let sent = channel::send_size(out_window, out_max_packet, channel::MAX_PACKET as usize);
+        out_window -= sent as u64;
     }
 }
 

@@ -1,6 +1,6 @@
 # ADR 0060: Fuzz every pre-authentication parser with cargo-fuzz on the pinned stable toolchain, in CI
 
-- **Status:** Accepted
+- **Status:** Accepted; the channel layer, which §4 left without a target, has the `channel` target since [#292](https://github.com/gonzafg2/quantumssh/pull/292) ([#271](https://github.com/gonzafg2/quantumssh/issues/271)), its parsers extracted as §3 extracted the pre-authentication ones
 - **Date:** 2026-11-06 (accepted with the implementing PR, [#272](https://github.com/gonzafg2/quantumssh/pull/272). Every target built and replayed its seeds on macOS arm64 and on Linux amd64, and each was fuzzed for 60 seconds without a finding; drafted 2026-11-06)
 - **Deciders:** Project lead
 - **Related:**
