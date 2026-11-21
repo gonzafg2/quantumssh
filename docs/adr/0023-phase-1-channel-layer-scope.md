@@ -15,6 +15,16 @@
 >   sentence that said the code did not exist yet now reads as of
 >   drafting time, and the Decision's "ADR-0024 (TBD — in review as
 >   PR #50)" links to the accepted ADR-0024.
+> - **2026-11-21** ([PR #290](https://github.com/gonzafg2/quantumssh/pull/290)):
+>   The `SSH_MSG_CHANNEL_OPEN_FAILURE` row gave every non-`session` type
+>   code 3. That was already false when the ADR was accepted: since M5
+>   ([#84](https://github.com/gonzafg2/quantumssh/pull/84), `a96cdb7`),
+>   the server checks for an open channel first, so once a session channel
+>   is open, an open of any type, `direct-tcpip` included, gets code 1.
+>   Found by the conformance suite
+>   ([ADR-0062](0062-conformance-suite-driven-by-the-stock-openssh-client.md)).
+>   The row now says which check answers first. Both codes refuse the
+>   channel, and the one-channel decision is unchanged.
 
 ## Context
 
@@ -32,7 +42,7 @@ Phase 1 implements exactly **one `session` channel per connection, carrying exac
 |---|---|---|
 | `SSH_MSG_CHANNEL_OPEN` | 90 | Accept iff `channel type == "session"` and no session channel is already open. |
 | `SSH_MSG_CHANNEL_OPEN_CONFIRMATION` | 91 | Sent in reply to an accepted `session` open. |
-| `SSH_MSG_CHANNEL_OPEN_FAILURE` | 92 | Sent with the RFC 4254 §5.1 code matching the case: a non-`session` type (no handler in Phase 1) gets `SSH_OPEN_UNKNOWN_CHANNEL_TYPE` (3); a second `session` open — a type the server understands but refuses by policy — gets `SSH_OPEN_ADMINISTRATIVELY_PROHIBITED` (1). |
+| `SSH_MSG_CHANNEL_OPEN_FAILURE` | 92 | Sent with the RFC 4254 §5.1 code matching the case. Once a session channel is open, any further open, whatever its type, is refused by policy with `SSH_OPEN_ADMINISTRATIVELY_PROHIBITED` (1); this check comes first. Before that, a non-`session` type (no handler in Phase 1) gets `SSH_OPEN_UNKNOWN_CHANNEL_TYPE` (3). |
 | `SSH_MSG_CHANNEL_WINDOW_ADJUST` | 93 | Honoured both directions — required for RFC 4254 flow-control compliance. |
 | `SSH_MSG_CHANNEL_DATA` | 94 | Child stdout streamed to the client; inbound data accepted (stdin to the child). Inbound data arriving **before** an `exec` is honoured is buffered within the window (legitimate stdin pipelining) and delivered when the child starts; discarded if the channel closes without an `exec`. |
 | `SSH_MSG_CHANNEL_EXTENDED_DATA` | 95 | Child stderr streamed to the client with `data_type_code == SSH_EXTENDED_DATA_STDERR` (1). **Inbound** extended data is rejected: RFC 4254 defines no client→server extended-data type, so receiving message 95 terminates the connection (`SSH_DISCONNECT_PROTOCOL_ERROR`). |
