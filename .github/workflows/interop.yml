@@ -1,9 +1,10 @@
 name: Interop
 
-# OpenSSH interop hard gate (ADR-0020): every PR must drive a real
-# OpenSSH 10.x client through connect → publickey auth → exec → clean
-# close against the quantumssh release binary. The default Ubuntu runner
-# ships OpenSSH 9.6p1 (no mlkem768x25519-sha256, no
+# OpenSSH interop hard gate (ADR-0020), grown into the conformance suite
+# (ADR-0062): every PR drives a real OpenSSH 10.x client through every case
+# of tests/interop/CASES.md against the quantumssh release binary. This
+# job sets no INTEROP_ALLOW_SKIP, so no case may skip here. The default
+# Ubuntu runner ships OpenSSH 9.6p1 (no mlkem768x25519-sha256, no
 # ssh-mldsa44-ed25519), so the job runs in the gate image (ADR-0059): Debian
 # forky with openssh-client pinned to 1:10.6p1-1 (OpenSSH 10.6p1; ADR-0048
 # on ADR-0034's mechanics), built once by gate-image.yml and verified here

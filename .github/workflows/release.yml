@@ -275,7 +275,7 @@ jobs:
       - name: No fallback to the system client
         run: |
           set -euo pipefail
-          for tool in ssh ssh-keygen sftp scp; do
+          for tool in ssh ssh-keygen ssh-keyscan ssh-agent sftp scp; do
             [ "$(command -v "$tool")" = "$RUNNER_TEMP/openssh/bin/$tool" ] \
               || { echo "::error::$tool resolves to $(command -v "$tool"), not the pinned build"; exit 1; }
           done
@@ -295,7 +295,13 @@ jobs:
           tar -xzf "${tarballs[0]}"
           echo "QUANTUMSSH_BIN=$PWD/${tarballs[0]%.tar.gz}/quantumssh" >> "$GITHUB_ENV"
 
+      # The client is built without OpenSSL and without zlib (above), so it
+      # has no AES-GCM, no RSA or ECDSA keys and no compression. These are
+      # the cases that need one of them; any other skip fails the run
+      # (ADR-0062 §6).
       - name: OpenSSH interop gate
+        env:
+          INTEROP_ALLOW_SKIP: openssh_aes_gcm compression_none rekey_server_initiated legacy_user_keys_refused
         run: bash tests/interop/run_openssh_client.sh
 
       - name: Record the gated tarball's digest

@@ -1,23 +1,45 @@
 #!/usr/bin/env bash
-# OpenSSH interop hard gate (ADR-0020).
+# The OpenSSH conformance suite (ADR-0062), grown from the interop hard
+# gate of ADR-0020.
 #
-# Drives a *real* OpenSSH client through connect → publickey auth → exec
-# → clean close against the quantumssh release binary. Reproducible both
-# locally (OpenSSH 10.6 or later, which speaks mlkem768x25519-sha256 and
-# ssh-mldsa44-ed25519) and in the pinned CI container. Asserts the three
-# hard subset checks ADR-0020 names — openssh_smoke, openssh_verbose_kex,
-# negative_no_hybrid — the two ADR-0047 adds for the composite host key —
-# openssh_hostkey_composite, negative_ed25519_hostkey — plus exit-status
-# propagation (ADR-0023), the server's second cipher, aes256-gcm, wherever
-# the client offers it (ADR-0055 §5), and that `quantumssh keygen` writes
-# a key ssh-keygen 10.6 reads and a server serves (RFC-0018 §6, ADR-0058 §4).
+# Drives a *real* OpenSSH client against the quantumssh release binary,
+# one case per behaviour. The catalogue, CASES.md, lists every case and
+# the document it checks; the cases themselves are in cases.sh. This
+# driver enforces the catalogue (ADR-0062 §3):
 #
-# Env overrides: QUANTUMSSH_BIN (default ./target/release/quantumssh),
-# QUANTUMSSH_PORT (default 2222).
+#   - before the first case, it fails if a case has no catalogue line or a
+#     line has no case;
+#   - it runs the cases in catalogue order;
+#   - after the last, it fails unless every line reported `ok`, or a skip
+#     that both its line and this leg allow.
+#
+# It needs bash (3.2 or later), coreutils, script(1), pgrep and the
+# OpenSSH client set, 10.6 or later: ssh, ssh-keygen, ssh-keyscan,
+# ssh-agent, sftp and scp. Nothing else, and no toolchain: the release
+# gates run it on the artifacts (ADR-0055).
+#
+# Env overrides:
+#   QUANTUMSSH_BIN       the binary under test (default
+#                        ./target/release/quantumssh)
+#   QUANTUMSSH_PORT      the first of four consecutive ports (default 2222)
+#   INTEROP_ALLOW_SKIP   the cases this leg may skip, space-separated. A
+#                        skip that is not named here fails the run. The PR
+#                        gate and the Linux release legs set none.
 set -euo pipefail
 
+HERE="$(cd "$(dirname "$0")" && pwd)"
+CATALOGUE="$HERE/CASES.md"
 BIN="${QUANTUMSSH_BIN:-./target/release/quantumssh}"
 PORT="${QUANTUMSSH_PORT:-2222}"
+ALLOW_SKIP=" ${INTEROP_ALLOW_SKIP:-} "
+HOST=tester@127.0.0.1
+
+# The client sees nothing of the account it runs under: no ssh_config
+# (every client run passes -F /dev/null) and no agent. An agent would
+# reorder the keys a client offers, and a user's AddKeysToAgent would
+# leave each run's throwaway keys in it.
+unset SSH_AUTH_SOCK SSH_AGENT_PID
+
 # The StrictModes walk (ADR-0029) checks every ancestor directory, so a
 # workdir under the world-writable /tmp would refuse to start; the
 # workdir lives under the repo's target/ instead (mktemp makes it 0700).
@@ -26,228 +48,203 @@ mkdir -p target
 # ancestor walk; mktemp already makes WORK itself 0700.
 chmod go-w target
 WORK="$(mktemp -d "$PWD/target/interop.XXXXXX")"
+LOG="$WORK/server.log"
 SRV=0
+CASE=setup
+REPORTED=0
+FINISHED=0
+
 cleanup() {
-    [ "$SRV" -ne 0 ] && kill "$SRV" 2>/dev/null || true
+    local status=$?
+    # A command that failed under `set -e` did not go through fail():
+    # say which case it was in, and show the server's side.
+    if [ "$status" -ne 0 ] && [ "$REPORTED" -eq 0 ]; then
+        echo "INTEROP FAIL: $CASE: a command failed (exit $status)" >&2
+        [ -f "$LOG" ] && cat "$LOG" >&2
+    fi
+    # shellcheck disable=SC2046 # one PID per word is the point
+    kill $(jobs -p) 2>/dev/null || true
     rm -rf "$WORK"
+    # A run that stopped early without an error, such as a case that
+    # called exit 0, did not run every case: that is a failure too.
+    if [ "$status" -eq 0 ] && [ "$FINISHED" -eq 0 ]; then
+        echo "INTEROP FAIL: $CASE: the run ended before every case reported" >&2
+        exit 1
+    fi
 }
 trap cleanup EXIT
 
-# Fresh composite host key (ADR-0047) and Ed25519 client key; authorize
-# the client key.
+fail() {
+    REPORTED=1
+    echo "INTEROP FAIL: $CASE: $1" >&2
+    [ -f "$LOG" ] && cat "$LOG" >&2
+    exit 1
+}
+
+# A case that cannot run on this client calls skip and returns.
+skip() { CASE_SKIP="$1"; }
+
+# wait_for <seconds> <command…>: poll until the command succeeds.
+wait_for() {
+    local tries=$(($1 * 10))
+    shift
+    while [ "$tries" -gt 0 ]; do
+        if "$@" >/dev/null 2>&1; then return 0; fi
+        sleep 0.1
+        tries=$((tries - 1))
+    done
+    return 1
+}
+
+# A listener on 127.0.0.1:<port> (bash /dev/tcp; no nc dependency).
+port_open() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
+
+# start_server <port> <host key> <log> [--config <file>]: start the binary
+# under test and wait for it to listen.
+start_server() {
+    local port=$1 key=$2 log=$3
+    shift 3
+    "$BIN" "$@" \
+        --listen "127.0.0.1:$port" \
+        --host-key "$key" \
+        --authorized-keys "$WORK/authorized_keys" \
+        --log-format json \
+        >"$log" 2>&1 &
+    SRV=$!
+    LOG=$log
+    wait_for 10 port_open "$port" || fail "server never listened on port $port"
+}
+
+stop_server() {
+    [ "$SRV" -ne 0 ] || return 0
+    kill "$SRV" 2>/dev/null || true
+    wait "$SRV" 2>/dev/null || true
+    SRV=0
+}
+
+# log_has <event> [<"field":value>…]: the server's audit log (RFC-0014)
+# has a record of that event carrying every given field.
+log_has() {
+    local lines
+    lines="$(grep -F "\"event\":\"$1\"" "$LOG" || true)"
+    shift
+    while [ "$#" -gt 0 ]; do
+        lines="$(grep -F "$1" <<<"$lines" || true)"
+        shift
+    done
+    [ -n "$lines" ]
+}
+
+# with_tty <shell command line>: run it on a terminal of its own, with no
+# input. script(1) has two syntaxes, util-linux's and BSD's.
+with_tty() {
+    case "$(uname -s)" in
+        Linux) script -qec "$1" /dev/null </dev/null ;;
+        *) script -q /dev/null /bin/sh -c "$1" </dev/null ;;
+    esac
+}
+
+# ---------------------------------------------------------------------
+# Fixtures: a composite host key (ADR-0047), an Ed25519 client key that
+# authorized_keys lists, and a user CA the server trusts (ADR-0050 §3),
+# composite only (§4), with a key that only its certificates authorize.
 ssh-keygen -t mldsa44-ed25519 -N "" -f "$WORK/hostkey" -q
 ssh-keygen -t ed25519 -N "" -f "$WORK/clientkey" -q
-cat "$WORK/clientkey.pub" > "$WORK/authorized_keys"
-
-# A user CA the server trusts (ADR-0050 §3), composite only (§4), and a
-# key that only its certificates authorize: it is not in authorized_keys.
+cat "$WORK/clientkey.pub" >"$WORK/authorized_keys"
 ssh-keygen -t mldsa44-ed25519 -N "" -f "$WORK/ca" -q
 cp "$WORK/ca.pub" "$WORK/trusted_user_ca_keys"
 ssh-keygen -t ed25519 -N "" -f "$WORK/certkey" -q
-# The gate opens its connections back to back, more than ADR-0028's
+# The suite opens its connections back to back, far more than ADR-0028's
 # default burst of 10 admits from one source.
-printf 'schema_version = 1\n\n[auth]\ntrusted_user_ca_keys = "%s"\n\n[limits]\naccept_burst = 32\n' \
-    "$WORK/trusted_user_ca_keys" > "$WORK/config.toml"
+printf 'schema_version = 1\n\n[auth]\ntrusted_user_ca_keys = "%s"\n\n[limits]\naccept_burst = 256\n' \
+    "$WORK/trusted_user_ca_keys" >"$WORK/config.toml"
 
-"$BIN" --config "$WORK/config.toml" \
-       --listen "127.0.0.1:$PORT" \
-       --host-key "$WORK/hostkey" \
-       --authorized-keys "$WORK/authorized_keys" \
-       --log-format human \
-       > "$WORK/server.log" 2>&1 &
-SRV=$!
-
-LOG="$WORK/server.log"
-fail() { echo "INTEROP FAIL: $1" >&2; cat "$LOG" >&2; exit 1; }
-
-# Wait for a listener on port $1 (bash /dev/tcp; no nc dependency).
-wait_listening() {
-    for _ in $(seq 1 100); do
-        if (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; then
-            exec 3>&- 3<&-
-            return 0
-        fi
-        sleep 0.1
-    done
-    fail "server never listened on port $1"
-}
-wait_listening "$PORT"
-
-SSH_OPTS=(-i "$WORK/clientkey" -p "$PORT"
+# Options every client run shares. COMMON has no identity and no port;
+# SSH_OPTS is the authorized key for ssh, COPY_OPTS the same for sftp and
+# scp, which spell the port -P.
+COMMON=(-F /dev/null
     -o StrictHostKeyChecking=no
     -o UserKnownHostsFile=/dev/null
     -o PasswordAuthentication=no
     -o IdentitiesOnly=yes
     -o ConnectTimeout=10)
+SSH_OPTS=(-i "$WORK/clientkey" -p "$PORT" "${COMMON[@]}")
+COPY_OPTS=(-i "$WORK/clientkey" -P "$PORT" "${COMMON[@]}")
 
-# 1. openssh_smoke: `ssh … echo hello` → hello, exit 0.
-out="$(ssh "${SSH_OPTS[@]}" tester@127.0.0.1 'echo hello')" || fail "smoke: ssh exited $?"
-[ "$out" = "hello" ] || fail "smoke: output '$out' != 'hello'"
-echo "ok: openssh_smoke"
+# shellcheck source=tests/interop/cases.sh
+. "$HERE/cases.sh"
 
-# 2. openssh_verbose_kex: the negotiated KEX is the hybrid, and the host
-# key algorithm is the composite (ADR-0047, openssh_hostkey_composite).
-verbose="$(ssh -v "${SSH_OPTS[@]}" tester@127.0.0.1 'true' 2>&1)" \
-    || fail "verbose_kex: ssh exited $?"
-grep -q "kex: algorithm: mlkem768x25519-sha256" <<<"$verbose" \
-    || fail "verbose_kex: hybrid KEX not negotiated"
-echo "ok: openssh_verbose_kex"
-grep -q "kex: host key algorithm: ssh-mldsa44-ed25519" <<<"$verbose" \
-    || fail "hostkey_composite: ssh-mldsa44-ed25519 not negotiated"
-echo "ok: openssh_hostkey_composite"
+# ---------------------------------------------------------------------
+# The catalogue: a Markdown table, `| case | checks | may skip |`. A row
+# counts when its first cell is a case name; the header and the rule
+# under it are not.
+NAMES=()
+MAY_SKIP=()
+while IFS='|' read -r _ name _ may_skip _; do
+    name="$(tr -d '[:space:]' <<<"$name")"
+    [[ "$name" =~ ^[a-z0-9_]+$ ]] || continue
+    may_skip="$(sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' <<<"$may_skip")"
+    [ -n "$may_skip" ] || fail "catalogue: $name has no 'may skip' cell"
+    NAMES+=("$name")
+    MAY_SKIP+=("$may_skip")
+done < <(grep '^|' "$CATALOGUE")
+[ "${#NAMES[@]}" -gt 0 ] || fail "catalogue: $CATALOGUE lists no case"
 
-# 2b. openssh_aes_gcm (ADR-0055 §5): stock OpenSSH prefers ChaCha20, so the
-# server's second cipher is asked for explicitly. It is mandatory wherever
-# the client offers it; a client built without OpenSSL (the macOS release
-# leg) does not, and the gate says it skipped the check.
-if ssh -Q cipher | grep -qx "aes256-gcm@openssh.com"; then
-    verbose="$(ssh -v "${SSH_OPTS[@]}" -o Ciphers=aes256-gcm@openssh.com \
-        tester@127.0.0.1 'echo gcm-ok' 2>&1)" || fail "aes_gcm: ssh exited $?"
-    grep -q "cipher: aes256-gcm@openssh.com" <<<"$verbose" \
-        || fail "aes_gcm: aes256-gcm@openssh.com not negotiated"
-    grep -qx "gcm-ok" <<<"$verbose" || fail "aes_gcm: the command's output is missing"
-    echo "ok: openssh_aes_gcm"
-else
-    echo "skip: openssh_aes_gcm (this client offers no aes256-gcm@openssh.com)"
-fi
-
-# 3. negative_no_hybrid: a classical-only client is rejected (no downgrade).
-if ssh "${SSH_OPTS[@]}" -o KexAlgorithms=curve25519-sha256 \
-       tester@127.0.0.1 'true' 2>/dev/null; then
-    fail "negative_no_hybrid: classical-only client was NOT rejected"
-fi
-echo "ok: negative_no_hybrid"
-
-# 3b. negative_ed25519_hostkey (ADR-0047): a client limited to ssh-ed25519
-# host keys finds no common algorithm; nothing falls back. The failure
-# must be that negotiation, not any other one.
-if refused="$(ssh "${SSH_OPTS[@]}" -o HostKeyAlgorithms=ssh-ed25519 \
-       tester@127.0.0.1 'true' 2>&1)"; then
-    fail "negative_ed25519_hostkey: an ssh-ed25519-only client was NOT rejected"
-fi
-grep -q "no matching host key type found. Their offer: ssh-mldsa44-ed25519" <<<"$refused" \
-    || fail "negative_ed25519_hostkey: refused for another reason: $refused"
-echo "ok: negative_ed25519_hostkey"
-
-# 4. exit-status propagation (ADR-0023): `exit 3` reports 3.
-rc=0
-ssh "${SSH_OPTS[@]}" tester@127.0.0.1 'exit 3' || rc=$?
-[ "$rc" -eq 3 ] || fail "exit_status: got $rc, want 3"
-echo "ok: exit_status_propagation"
-
-# 5. re-keying (ADR-0026): a low client RekeyLimit forces several
-# client-initiated re-keys mid-transfer; the server must respond and the
-# stream must survive intact.
-n=$(ssh "${SSH_OPTS[@]}" -o RekeyLimit=16K tester@127.0.0.1 'head -c 262144 /dev/zero' | wc -c | tr -d ' ')
-[ "$n" = "262144" ] || fail "rekey: got $n bytes across re-keys, want 262144"
-echo "ok: openssh_rekey"
-
-# 6. PTY (ADR-0038): `ssh -tt` allocates a pseudo-terminal; the command
-# runs on it, with the slave as its controlling terminal.
-out="$(ssh -tt "${SSH_OPTS[@]}" tester@127.0.0.1 'tty; : < /dev/tty && echo ctty-ok' </dev/null | tr -d '\r')" \
-    || fail "pty: ssh exited $?"
-case "$out" in
-    /dev/*ctty-ok*) ;;
-    *) fail "pty: unexpected output '$out'" ;;
-esac
-echo "ok: openssh_pty"
-
-# 7. SFTP (ADR-0041): `sftp -b` and `scp` (which uses SFTP by default)
-# against the server's own SFTP v3 helper, each checked byte for byte.
-# Remote paths are absolute: the helper starts in the account's $HOME.
-COPY_OPTS=(-i "$WORK/clientkey" -P "$PORT"
-    -o StrictHostKeyChecking=no
-    -o UserKnownHostsFile=/dev/null
-    -o PasswordAuthentication=no
-    -o IdentitiesOnly=yes
-    -o ConnectTimeout=10)
-head -c 300000 /dev/urandom > "$WORK/payload"
-cat > "$WORK/batch" <<EOF
-mkdir $WORK/remote
-put $WORK/payload $WORK/remote/a
-rename $WORK/remote/a $WORK/remote/b
-get $WORK/remote/b $WORK/got
-ls -l $WORK/remote
-rm $WORK/remote/b
-rmdir $WORK/remote
-EOF
-sftp -b "$WORK/batch" "${COPY_OPTS[@]}" tester@127.0.0.1 >/dev/null || fail "sftp: batch exited $?"
-cmp -s "$WORK/payload" "$WORK/got" || fail "sftp: downloaded bytes differ"
-[ ! -e "$WORK/remote" ] || fail "sftp: rmdir left the directory"
-echo "ok: openssh_sftp"
-
-scp "${COPY_OPTS[@]}" "$WORK/payload" "tester@127.0.0.1:$WORK/scp-up" || fail "scp: upload exited $?"
-cmp -s "$WORK/payload" "$WORK/scp-up" || fail "scp: uploaded bytes differ"
-scp "${COPY_OPTS[@]}" "tester@127.0.0.1:$WORK/scp-up" "$WORK/scp-down" || fail "scp: download exited $?"
-cmp -s "$WORK/payload" "$WORK/scp-down" || fail "scp: downloaded bytes differ"
-echo "ok: openssh_scp"
-
-# 8. User certificates (ADR-0050 §8): `ssh-keygen -s` signs for the
-# `tester` principal with a validity window, and the exec round trip runs
-# on the certificate alone. A certificate for another principal, an
-# expired one, and one from a CA the server does not trust are refused.
-ssh-keygen -t mldsa44-ed25519 -N "" -f "$WORK/untrusted_ca" -q
-sign() { # sign <name> <ca> <principal> <validity>: writes $WORK/<name>-cert.pub
-    cp "$WORK/certkey.pub" "$WORK/$1.pub"
-    ssh-keygen -q -s "$WORK/$2" -I "tester@interop" -n "$3" -V "$4" "$WORK/$1.pub"
-}
-sign valid ca tester -5m:+5m
-sign other ca someone-else -5m:+5m
-sign expired ca tester 20200101:20200102
-sign untrusted untrusted_ca tester -5m:+5m
-CERT_OPTS=(-i "$WORK/certkey" -p "$PORT"
-    -o StrictHostKeyChecking=no
-    -o UserKnownHostsFile=/dev/null
-    -o PasswordAuthentication=no
-    -o IdentitiesOnly=yes
-    -o ConnectTimeout=10)
-out="$(ssh "${CERT_OPTS[@]}" -o CertificateFile="$WORK/valid-cert.pub" \
-    tester@127.0.0.1 'echo cert-ok')" || fail "cert: ssh exited $?"
-[ "$out" = "cert-ok" ] || fail "cert: output '$out' != 'cert-ok'"
-grep -q "cert_key_id=tester@interop" "$WORK/server.log" \
-    || fail "cert: auth.succeeded lacks cert_key_id (ADR-0051)"
-echo "ok: openssh_cert"
-for refused in other expired untrusted; do
-    if ssh "${CERT_OPTS[@]}" -o CertificateFile="$WORK/$refused-cert.pub" \
-           tester@127.0.0.1 'true' 2>/dev/null; then
-        fail "cert: the $refused certificate was NOT refused"
-    fi
+listed=" ${NAMES[*]} "
+dups="$(printf '%s\n' "${NAMES[@]}" | sort | uniq -d | tr '\n' ' ')"
+[ -z "$dups" ] || fail "catalogue: listed more than once: $dups"
+for name in "${NAMES[@]}"; do
+    declare -F "case_$name" >/dev/null || fail "catalogue: $name has a line and no case"
 done
-echo "ok: openssh_cert_refusals"
+while read -r _ _ fn; do
+    case "$fn" in
+        case_*) ;;
+        *) continue ;;
+    esac
+    case "$listed" in
+        *" ${fn#case_} "*) ;;
+        *) fail "catalogue: ${fn#case_} is a case with no line" ;;
+    esac
+done < <(declare -F)
+for name in ${INTEROP_ALLOW_SKIP:-}; do
+    case "$listed" in
+        *" $name "*) ;;
+        *) fail "INTEROP_ALLOW_SKIP names $name, which is not a case" ;;
+    esac
+done
 
-# 9. quantumssh keygen (RFC-0018 §6, ADR-0058 §4): ssh-keygen reads the key
-# keygen wrote back to the same public key and fingerprint, and a server
-# started with that key serves the stock client. The first server is
-# stopped first, so a pass cannot come from it.
-kill "$SRV" && wait "$SRV" 2>/dev/null || true
-SRV=0
-kg_out="$("$BIN" keygen "$WORK/kghk")" || fail "keygen: exited $?"
-[ "$(ssh-keygen -y -f "$WORK/kghk")" = "$(cat "$WORK/kghk.pub")" ] \
-    || fail "keygen: ssh-keygen -y does not reproduce kghk.pub"
-kg_fp="$(tail -n 1 <<<"$kg_out")"
-[ "$(ssh-keygen -lf "$WORK/kghk.pub" | awk '{print $2}')" = "$kg_fp" ] \
-    || fail "keygen: ssh-keygen -lf disagrees with the fingerprint keygen printed"
-echo "ok: keygen_read_by_ssh_keygen"
+# ---------------------------------------------------------------------
+start_server "$PORT" "$WORK/hostkey" "$WORK/server.log" --config "$WORK/config.toml"
 
-KG_PORT=$((10#$PORT + 1)) # base 10: a leading zero is not octal
-LOG="$WORK/server-keygen.log"
-"$BIN" --listen "127.0.0.1:$KG_PORT" \
-       --host-key "$WORK/kghk" \
-       --authorized-keys "$WORK/authorized_keys" \
-       --log-format human \
-       > "$LOG" 2>&1 &
-SRV=$!
-wait_listening "$KG_PORT"
-KG_OPTS=(-i "$WORK/clientkey" -p "$KG_PORT"
-    -o StrictHostKeyChecking=no
-    -o UserKnownHostsFile=/dev/null
-    -o PasswordAuthentication=no
-    -o IdentitiesOnly=yes
-    -o ConnectTimeout=10)
-verbose="$(ssh -v "${KG_OPTS[@]}" tester@127.0.0.1 'true' 2>&1)" \
-    || fail "keygen: ssh against the keygen host key exited $?"
-grep -q "Server host key: ssh-mldsa44-ed25519 $kg_fp" <<<"$verbose" \
-    || fail "keygen: the server did not present the keygen host key"
-echo "ok: keygen_host_key_serves"
+passed=0
+skipped=0
+i=0
+while [ "$i" -lt "${#NAMES[@]}" ]; do
+    CASE="${NAMES[$i]}"
+    CASE_SKIP=""
+    CASE_DIR="$WORK/c/$CASE"
+    mkdir -p "$CASE_DIR"
+    # Called as a plain statement, so `set -e` holds inside the case.
+    "case_$CASE"
+    if [ -n "$CASE_SKIP" ]; then
+        [ "${MAY_SKIP[$i]}" != never ] \
+            || fail "skipped ($CASE_SKIP), and its catalogue line says never"
+        case "$ALLOW_SKIP" in
+            *" $CASE "*) ;;
+            *) fail "skipped ($CASE_SKIP), and this leg does not allow it (INTEROP_ALLOW_SKIP)" ;;
+        esac
+        echo "skip: $CASE ($CASE_SKIP)"
+        skipped=$((skipped + 1))
+    else
+        echo "ok: $CASE"
+        passed=$((passed + 1))
+    fi
+    i=$((i + 1))
+done
+CASE=summary
 
-echo "INTEROP PASS"
+[ $((passed + skipped)) -eq "${#NAMES[@]}" ] \
+    || fail "$((passed + skipped)) cases reported, the catalogue lists ${#NAMES[@]}"
+
+FINISHED=1
+echo "INTEROP PASS: $passed cases passed, $skipped skipped, ${#NAMES[@]} in the catalogue"
