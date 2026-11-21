@@ -296,18 +296,24 @@ case_openssh_cert() {
 }
 
 # A certificate for another principal, an expired one, and one from a CA
-# the server does not trust are refused.
+# the server does not trust are refused. Each run must show that the
+# client offered the certificate and was denied, so a run that failed for
+# any other reason does not pass.
 case_openssh_cert_refusals() {
-    local refused
+    local refused out
     ssh-keygen -t mldsa44-ed25519 -N "" -f "$CASE_DIR/untrusted_ca" -q
     sign_cert other "$WORK/ca" someone-else -5m:+5m
     sign_cert expired "$WORK/ca" tester 20200101:20200102
     sign_cert untrusted "$CASE_DIR/untrusted_ca" tester -5m:+5m
     for refused in other expired untrusted; do
-        if ssh -i "$WORK/certkey" -p "$PORT" "${COMMON[@]}" \
-            -o CertificateFile="$CASE_DIR/$refused-cert.pub" "$HOST" true 2>/dev/null; then
+        if out="$(ssh -v -i "$WORK/certkey" -p "$PORT" "${COMMON[@]}" \
+            -o CertificateFile="$CASE_DIR/$refused-cert.pub" "$HOST" true 2>&1)"; then
             fail "the $refused certificate was NOT refused"
         fi
+        grep -qF "Offering public key: $CASE_DIR/$refused-cert.pub ED25519-CERT" <<<"$out" \
+            || fail "the client never offered the $refused certificate: $out"
+        grep -qF "Permission denied (publickey)." <<<"$out" \
+            || fail "the $refused certificate was refused for another reason: $out"
     done
 }
 
