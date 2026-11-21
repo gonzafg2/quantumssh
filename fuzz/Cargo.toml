@@ -111,4 +111,11 @@ test  = false
 doc   = false
 bench = false
 
+[[bin]]
+name  = "channel"
+path  = "fuzz_targets/channel.rs"
+test  = false
+doc   = false
+bench = false
+
 [workspace]
