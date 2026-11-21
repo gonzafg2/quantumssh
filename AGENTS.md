@@ -85,6 +85,10 @@ warnings.
 - Integration tests in `crates/quantumssh-core/tests/` use `tokio::test`
   with real TCP against an ephemeral-port server.
 - `cargo test --workspace` runs everything. No special setup required.
+- The OpenSSH conformance suite (ADR-0062) drives a stock OpenSSH client,
+  10.6 or later, against the release binary: `cargo build --release`, then
+  `bash tests/interop/run_openssh_client.sh`. Every case is in
+  `tests/interop/cases.sh`, with its line in `tests/interop/CASES.md`.
 - Fuzz targets live in `fuzz/` (ADR-0060), built with cargo-fuzz and
   `--sanitizer none` on the pinned stable toolchain:
   `bash scripts/fuzz-prepare.sh`, then `cargo fuzz run --sanitizer none
@@ -128,6 +132,7 @@ warnings.
 | `.github/REVIEW-FORMAT.md` | Report contract the two workflow reviewers follow |
 | `deny.toml` | `cargo deny` configuration |
 | `fuzz/` | cargo-fuzz targets, seeds and fixtures (ADR-0060) |
+| `tests/interop/` | OpenSSH conformance suite: driver, cases and the catalogue `CASES.md` (ADR-0062) |
 | `clippy.toml` | Clippy tuning |
 | `rust-toolchain.toml` | Pinned toolchain (stable, MSRV 1.92) |
 | `rustfmt.toml` | Formatting rules (100 cols, module imports) |
@@ -146,6 +151,11 @@ Read by the Codex cloud GitHub App when it reviews a pull request
 - A PR that adds or changes a pre-authentication parser without adding or
   updating its fuzz target and seeds in `fuzz/` breaks the `CLAUDE.md`
   hard security rule on the pre-authentication path (ADR-0060 §9).
+- A PR that adds or changes a behaviour a stock OpenSSH client can reach,
+  a refusal included, without adding or updating its case in
+  `tests/interop/cases.sh` and its line in `tests/interop/CASES.md`,
+  breaks ADR-0062 §8. So does a PR that removes a case and leaves the
+  document that stated the behaviour as it was.
 - An accepted ADR changes only by supersession, apart from its Status
   field and annotated errata (ADR-0015). Do not ask for one to be edited
   in place.

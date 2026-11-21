@@ -891,7 +891,11 @@ mechanism.
 ([RFC-0011](rfcs/0011-zero-legacy-floor-reconciliation.md)); there is
 no profile that offers it. Public-key authentication does not benefit
 the attacker from repetition: either the attacker holds the
-private key or they do not. Authentication-failure events must be
+private key or they do not. A connection has a budget of 12
+authentication requests. Each one that fails spends one, and so does
+a probe of a key the server knows; the twelfth ends the connection
+with `SSH_DISCONNECT_BY_APPLICATION` (11), reason
+`too-many-auth-attempts`. Authentication-failure events must be
 rate-limited per source. The per-target-user dimension is
 deliberately omitted: on a public-key-only server, per-user
 counters create a user-enumeration oracle, where the attacker

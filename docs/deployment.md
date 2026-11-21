@@ -147,6 +147,12 @@ the following:
 - It prints both paths and the key's fingerprint, the one `server.started`
   logs. Publish the fingerprint out of band, so clients can check it on
   their first connection.
+- `ssh-keyscan` cannot fetch the key. It does not negotiate strict-kex,
+  which the server requires, so the server disconnects it with code 3
+  (`no-strict-kex`) before it sends a host key. To trust the key before a
+  first connection, add the `.pub` line to the client's `known_hosts`
+  with the host in front: `[<host>]:<port> ssh-mldsa44-ed25519 AAAA…`, or
+  `<host> ssh-mldsa44-ed25519 AAAA…` on port 22.
 - It never replaces a file, the key or its `.pub`. To rotate the key,
   move both aside, run `keygen` and the `chown` above again, publish the
   new fingerprint and restart. Each client then removes the old entry

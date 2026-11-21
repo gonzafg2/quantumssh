@@ -136,7 +136,7 @@ Tracked in [#248](https://github.com/gonzafg2/quantumssh/issues/248).
 
 - ✅ Continuous fuzzing with `cargo-fuzz` of every pre-authentication parser — [ADR-0060](./docs/adr/0060-continuous-fuzzing-cargo-fuzz-on-the-pinned-stable-toolchain.md), implemented in [#272](https://github.com/gonzafg2/quantumssh/pull/272). The SFTP request handlers ([#270](https://github.com/gonzafg2/quantumssh/issues/270)) and the channel layer ([#271](https://github.com/gonzafg2/quantumssh/issues/271)) follow.
 - OSS-Fuzz integration, once the project meets its bar
-- Conformance tests against OpenSSH client
+- ✅ Conformance tests against the OpenSSH client — [ADR-0062](./docs/adr/0062-conformance-suite-driven-by-the-stock-openssh-client.md), implemented in [#290](https://github.com/gonzafg2/quantumssh/pull/290): a case for every documented behaviour a stock client can reach, refusals included, listed in [`tests/interop/CASES.md`](./tests/interop/CASES.md) and run on every PR and every release artifact
 - Per-user privilege separation, which closes threat model §8.12 — an RFC, tracked in [#43](https://github.com/gonzafg2/quantumssh/issues/43); scoping note in [`docs/plans/phase3-privsep-scoping.md`](./docs/plans/phase3-privsep-scoping.md)
 - Reproducible builds, RFC-gated (threat model §5.5.2 and §6.4)
 - Security audit (community-funded or grant-funded)

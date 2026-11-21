@@ -34,7 +34,8 @@ version exchange → `mlkem768x25519-sha256` hybrid KEX → AEAD transport →
 publickey Ed25519 authentication → one `session` channel running one
 `exec` → clean close, with mid-session re-keying (1 GiB / 1 h, [ADR-0026](docs/adr/0026-phase-1-rekeying-policy.md))
 — and interoperate with a stock OpenSSH 10.x client
-(the `interop` CI gate, [ADR-0020](docs/adr/0020-phase-1-ci-openssh-interop-gate.md)).
+(the `interop` CI gate, [ADR-0020](docs/adr/0020-phase-1-ci-openssh-interop-gate.md),
+grown into the conformance suite of [ADR-0062](docs/adr/0062-conformance-suite-driven-by-the-stock-openssh-client.md)).
 It is **not** hardened for production: there is no per-user privilege
 separation until Phase 3 (threat model §8.12).
 
@@ -83,6 +84,12 @@ authoritative reference; the operative rules a reviewer applies:
   A PR that adds or changes a parser of peer-supplied bytes before
   authentication adds or updates its fuzz target and seeds in `fuzz/` in the
   same PR ([ADR-0060](docs/adr/0060-continuous-fuzzing-cargo-fuzz-on-the-pinned-stable-toolchain.md) §9).
+- **What a stock OpenSSH client can reach has a conformance case.** A PR
+  that adds or changes a behaviour a stock client tool reaches, a refusal
+  included, adds or updates its case in `tests/interop/cases.sh` and its
+  line in `tests/interop/CASES.md` in the same PR. A PR that removes a case
+  changes the document that stated the behaviour
+  ([ADR-0062](docs/adr/0062-conformance-suite-driven-by-the-stock-openssh-client.md) §8).
 - **Fail closed.** A peer that does not offer the hybrid PQ KEX, or does not
   negotiate strict-kex, is rejected (`SSH_DISCONNECT_KEY_EXCHANGE_FAILED`).
   No downgrade path may exist.
@@ -149,7 +156,7 @@ authoritative reference; the operative rules a reviewer applies:
 | `crates/quantumssh-core/` | The library — modules `wire`, `kex`, `cipher`, `composite` (the `ssh-mldsa44-ed25519` signature), `host_key`, `transport` (type-state machine), `auth`, `cert`, `channel`, `exec`, `pty`, `server`, `sftp` |
 | `crates/quantumssh/` | The thin binary entrypoint over the library (two crates, flat — [ADR-0017](docs/adr/0017-phase-1-workspace-topology-two-crates-flat.md)) |
 | `fuzz/` | The cargo-fuzz targets, one per pre-authentication parser plus SFTP field parsing and terminal modes, with their seeds and fixtures: a package with its own workspace and lockfile, outside the root workspace ([ADR-0060](docs/adr/0060-continuous-fuzzing-cargo-fuzz-on-the-pinned-stable-toolchain.md)) |
-| `tests/interop/` | `run_openssh_client.sh` — the OpenSSH interop gate driver (ADR-0020) |
+| `tests/interop/` | The OpenSSH conformance suite (ADR-0020, ADR-0062): `run_openssh_client.sh`, the driver; `cases.sh`, one function per case; `CASES.md`, the catalogue the run enforces |
 | `scripts/` | Maintenance scripts, such as `extract-acvp-mlkem768.py`, which regenerates the ML-KEM-768 ACVP vectors in `crates/quantumssh-core/tests/vectors/`; `scripts/release/` holds the release workflow's static-link check, packaging and pinned signature check; `verify-download.sh` is the user's check of a release's `SHA256SUMS` signature, and `verify-release.sh` the maintainer's check of a draft before signing it (ADR-0054); `fuzz-prepare.sh`, `fuzz-run.sh`, `align-fuzz-lock.py` and `fuzz-seeds.py` build, run, align and seed the fuzz targets (ADR-0060) |
 | `contrib/systemd/`, [`docs/deployment.md`](docs/deployment.md) | The reference systemd unit and the operator guide ([ADR-0043](docs/adr/0043-systemd-notify-service-and-reference-unit.md)) |
 | `tests/release/` | `run_verify_download.sh` — `verify-download.sh` and the pinned signature check through each pin-set role, with keys generated per run |
@@ -172,9 +179,11 @@ cargo build --workspace --release                            # the connectable b
 ```
 
 The `interop` CI job additionally drives a real OpenSSH 10.x client through
-connect → auth → exec → close against the release binary
-([ADR-0020](docs/adr/0020-phase-1-ci-openssh-interop-gate.md)); reproduce it
-locally with `tests/interop/run_openssh_client.sh`. `build (ubuntu-latest)`
+every case of `tests/interop/CASES.md` against the release binary
+([ADR-0020](docs/adr/0020-phase-1-ci-openssh-interop-gate.md),
+[ADR-0062](docs/adr/0062-conformance-suite-driven-by-the-stock-openssh-client.md));
+reproduce it locally with `bash tests/interop/run_openssh_client.sh`, with an
+OpenSSH 10.6 or later client on `PATH`. `build (ubuntu-latest)`
 also builds every fuzz target and replays its seeds and regressions; reproduce
 it with `bash scripts/fuzz-prepare.sh`, then `cargo fuzz run --sanitizer none
 <target> fuzz/seeds/<target> -- -runs=0` (ADR-0060). It also runs the

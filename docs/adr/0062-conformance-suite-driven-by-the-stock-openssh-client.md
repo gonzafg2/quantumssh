@@ -1,7 +1,7 @@
 # ADR 0062: Grow the OpenSSH interop gate into a conformance suite, with a catalogue of cases that the run enforces
 
-- **Status:** Proposed
-- **Date:** — (set on acceptance; drafted 2026-11-20)
+- **Status:** Accepted
+- **Date:** 2026-11-21 (accepted with the implementing PR, [#290](https://github.com/gonzafg2/quantumssh/pull/290); drafted 2026-11-20)
 - **Deciders:** Project lead
 - **Related:**
   - Extends [ADR-0020](0020-phase-1-ci-openssh-interop-gate.md), the interop gate, and keeps its hard subset.
@@ -177,8 +177,9 @@ of conformance with RFC 4253 at large.
 
 ### 3. The catalogue is a file, and the run enforces it
 
-- **A catalogue in `tests/interop/` (planned)** holds one line per case:
-  its name, the document it checks, and the legs on which it may skip.
+- **A catalogue, `tests/interop/CASES.md`,** holds one line per case in a
+  Markdown table: its name, the document it checks, and what a client may
+  lack for the case to skip (`never` when nothing may).
 - **The driver runs the cases the catalogue lists.**
   - Before the first case, it fails if a case has no line or a line has no
     case.
@@ -210,6 +211,12 @@ of conformance with RFC 4253 at large.
 - No package is added to the image, and no leg gains a toolchain.
 - ADR-0055 §3's rule stands. The script runs unchanged on every leg, and a
   part that is not portable is fixed in the script, not forked.
+- **The client reads nothing of the account that runs it.** Every client
+  run passes `-F /dev/null`, and the driver unsets `SSH_AUTH_SOCK`. The
+  implementing PR found why: on a developer's machine whose
+  `ssh_config` sets `AddKeysToAgent`, every run left its throwaway keys in
+  that user's agent, and an agent reorders the keys a client offers, which
+  broke the authentication-budget case.
 
 ### 6. Where it runs
 
@@ -219,13 +226,20 @@ of conformance with RFC 4253 at large.
 - **Skips are declared twice.** The catalogue line says where a case may
   skip, and the workflow that calls a leg names the skips it allows. Any
   other skip fails the run.
-  - Today there is one: the AES-GCM cases on the macOS leg, whose client
-    has no AES-GCM (ADR-0055 §3).
+  - The skips are named in `INTEROP_ALLOW_SKIP`, set by the workflow.
+  - Four cases may skip, all on the macOS leg, whose client is built
+    without OpenSSL and without zlib (ADR-0055 §3): the two AES-GCM cases,
+    the RSA and ECDSA user keys, and compression. The drafted text named
+    only the AES-GCM cases; the implementing PR found the other two.
   - On the PR gate and on both Linux release legs, nothing skips.
 - **Time.** A script that tried the 22 behaviours took 21 seconds on the
   development machine, most of it fixed waits and a transfer of 1.2 GB.
-  The implementing PR reports the step's time on the PR runner. If the
-  suite outgrows a required check, splitting it is a new decision.
+  The suite took 7 to 9 seconds on macOS arm64 and 11 to 14 seconds in the
+  gate image on aarch64, with no failure in eight runs. On the PR runner,
+  x86_64, the step took 17 seconds, up from 3, and passed all 43 cases
+  with none skipped (run
+  [44864009111](https://github.com/gonzafg2/quantumssh/actions/runs/44864009111)).
+  If the suite outgrows a required check, splitting it is a new decision.
 
 ### 7. One client: the pin
 
@@ -235,8 +249,13 @@ of conformance with RFC 4253 at large.
   becomes the pin (ADR-0034's procedure, in ADR-0059's image). A case
   whose result changes is what that PR's review is about.
 - **The probe is not the pin.** It used 10.6p2 on macOS. The implementing
-  PR runs every case on the pinned client and records any result that
-  differs from the table above.
+  PR ran every case on the pinned client, `OpenSSH_10.6p1 Debian-1` in the
+  gate image, and on the macOS leg's client, 10.6p1 built from the pinned
+  tarball. No server behaviour differed from the table above. Two things
+  about the client's side did, and the cases allow for both: an
+  interactive shell may print its prompt in front of a line, and script(1)
+  types an EOF (BSD) or a NUL (util-linux) when its input ends, which the
+  remote PTY echoes.
 
 ### 8. The rule for later PRs
 
@@ -253,6 +272,10 @@ The implementing PR's catalogue holds at least:
 - **The 15 checks of today's gate.** What they assert does not change,
   except `negative_no_hybrid` (§4).
 - **A case for each behaviour in the probe's table.**
+- **The catalogue the implementing PR merged has 43 cases:** the 15, 26
+  for the probe's table, `shell_on_pty`, and `known_hosts_from_pub`, which
+  checks the way to trust the host key that `docs/deployment.md` gives in
+  place of `ssh-keyscan`.
 - **The three behaviours that did not match a document, each put right
   first** (§2):
   - the refusal of `ssh-keyscan`, as a sentence in `docs/deployment.md`;
@@ -260,15 +283,13 @@ The implementing PR's catalogue holds at least:
     implementing PR finds it belongs;
   - the forwarding channel, as an erratum to ADR-0023.
 
-Three behaviours are left out, each for a stated reason:
+Two behaviours are left out, each for a stated reason:
 
 - **X11 forwarding.** Without `xauth` the client's own setup failed in
   the probe, so it could not tell that failure from a refusal by the
   server. The gate image does not install `xauth`.
 - **The one-hour re-key** (ADR-0026). No client option shortens the
   server's timer, so the case would run for an hour.
-- **An interactive shell on a PTY.** The probe did not reach it. The
-  implementing PR adds the case, or records why it cannot.
 
 ### 10. Scope
 
@@ -376,10 +397,13 @@ resize.
 
 ## Links
 
-- Implementation (planned): `tests/interop/run_openssh_client.sh`, the
-  catalogue beside it, the skips each leg allows in
-  `.github/workflows/interop.yml` and `.github/workflows/release.yml`,
-  the sentences of §9, and the rule of §8 in `CLAUDE.md` and `AGENTS.md`.
+- Implementation: [#290](https://github.com/gonzafg2/quantumssh/pull/290).
+  `tests/interop/run_openssh_client.sh` (the driver),
+  `tests/interop/cases.sh` (the cases) and `tests/interop/CASES.md` (the
+  catalogue); the macOS leg's skips in `.github/workflows/release.yml`;
+  the sentences of §9 in `docs/deployment.md` §3, threat model §5.3.1 and
+  ADR-0023's erratum of 2026-11-21; and the rule of §8 in `CLAUDE.md` and
+  `AGENTS.md`.
 - The probe: 2026-11-20, `OpenSSH_10.6p2` on macOS arm64, against `main`
   at `04503b0`. Its scripts were throwaway and are not in the repository.
 - The step's time today: the `OpenSSH interop gate` step of run

@@ -27,6 +27,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Not covered yet.** The SFTP request handlers wait for OS-level
     confinement (#270), and the channel layer waits for its parsers to
     be extracted (#271).
+- The OpenSSH interop gate is now a conformance suite
+  ([ADR-0062](docs/adr/0062-conformance-suite-driven-by-the-stock-openssh-client.md)).
+  It has 43 cases, up from 15 checks: one for every behaviour that a
+  document states and a stock OpenSSH client can reach, refusals included.
+  - **Catalogue.** `tests/interop/CASES.md` lists each case and the
+    document it checks. The run fails if a case is missing from it, if it
+    lists a case that does not exist, or if a case did not report.
+  - **Refusals assert their reason.** `negative_no_hybrid` used to pass on
+    any failure, a server that was down included. It now asserts the
+    client's "no matching key exchange method found".
+  - **Skips are declared.** A case may skip only where its line and the
+    workflow both allow it. Only the macOS release leg skips: four cases,
+    because its client has no OpenSSL and no zlib.
+  - **Where it runs.** On every PR and on every release artifact, as the
+    gate did.
 - Documentation: the threat model's §5.3.5 covers password
   authentication bypass, with CVE-2026-123158 ("sshole", OpenSSH 10.6p2)
   as its exemplar. QuantumSSH compiles no password authentication, so the
@@ -64,6 +79,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   transport ciphers wipe theirs, as listed under Security; the key
   exchange, the host-key signature and the key derivation are not
   covered (#286).
+- Documentation, from the conformance suite:
+  - `docs/deployment.md` §3 says that `ssh-keyscan` cannot fetch the host
+    key, because it does not negotiate strict-kex, and how to trust the
+    key from its `.pub` line instead.
+  - Threat model §5.3.1 states the authentication budget: 12 requests per
+    connection, the twelfth ending it with code 11.
+  - ADR-0023 has an erratum: once a session is open, a forwarding channel
+    gets "administratively prohibited", not "unknown channel type".
 
 ### Security
 

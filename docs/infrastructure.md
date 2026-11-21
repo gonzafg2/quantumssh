@@ -346,8 +346,10 @@ Five CI contexts must report success before a PR can merge
 - `build (macos-latest)` — same on macOS
 - `cargo deny` — license, advisories, sources, and bans
 - `commit-lint` — every commit subject in the PR follows Conventional Commits
-- `openssh-interop` — the OpenSSH client gate
-  ([ADR-0020](./adr/0020-phase-1-ci-openssh-interop-gate.md))
+- `openssh-interop` — the OpenSSH conformance suite, every case of
+  `tests/interop/CASES.md` against a stock client
+  ([ADR-0020](./adr/0020-phase-1-ci-openssh-interop-gate.md),
+  [ADR-0062](./adr/0062-conformance-suite-driven-by-the-stock-openssh-client.md))
 
 The full configuration is readable via `gh api` (see
 [`operations.md`](./operations.md) for the invocation).
