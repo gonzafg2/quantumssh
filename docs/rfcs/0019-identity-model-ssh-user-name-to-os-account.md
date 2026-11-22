@@ -208,9 +208,11 @@ because nothing could log in to it (§5).
 A request for a name that is not listed fails as a wrong key does: one
 `SSH_MSG_USERAUTH_FAILURE`, one attempt spent from the budget of threat
 model §5.3.1, and no lookup that a listed name would not also make. The
-server must not answer an unlisted name differently from a listed one,
-in its reply or in its timing. That is what keeps the list from becoming
-an account-enumeration oracle.
+server must not answer an unlisted name differently from a listed name
+whose credential fails, in its reply or in its timing. That is what
+keeps the list from becoming an account-enumeration oracle. A
+credential that does authorize a listed account is answered
+differently, as in every SSH server: Drawbacks covers the `PK_OK` case.
 
 ### 4. The account record
 
@@ -229,7 +231,7 @@ an account-enumeration oracle.
     session uses.
 - **If that read fails, the request fails as a wrong key does.** The
   account may have left `/etc/passwd`, its UID may have become 0, or the
-  files may now have the wrong owner or mode. The server answers
+  files may now fail the account-mode file check of §8. The server answers
   `SSH_MSG_USERAUTH_FAILURE`, spends an attempt, emits `auth.failed`,
   and leaves a diagnostic record with a fixed reason, as ADR-0050 §5
   does for a refused certificate. `auth.succeeded` is emitted only for a
@@ -289,6 +291,11 @@ an account-enumeration oracle.
   switches to the account.
 - **`authenticated_identity` does not change:** the fingerprint of the
   key that authenticated (RFC-0014 §4).
+- **`server.started` gains `identity_mode`** (enumeration:
+  `service_account`, `account`), on every start, in both modes. Without
+  it a log consumer could tell account mode from service-account mode,
+  or from an older binary, only by the absence of `account`. It is a new
+  field on an existing event, additive under RFC-0014 §5.
 - **`auth.failed` gains nothing.** Logging the user name a client asked
   for would put an unauthenticated, attacker-chosen string in every
   failure record. RFC-0014 escapes control characters, but threat model
@@ -310,8 +317,8 @@ account mode. An older binary fails closed on a file that uses
 ### 8. Security properties
 
 - **Fail closed at startup.** A listed account the server cannot resolve,
-  with UID 0, or with no way to authorize stops the start. So do
-  `/etc/passwd` and `/etc/group` with the wrong owner or mode.
+  with UID 0, or with no way to authorize stops the start. So does any
+  file that fails the account-mode file check below.
 - **Fail closed at login.** An account that stopped resolving, or whose
   UID became 0, fails authentication on its next connection (§4).
 - **No new pre-authentication input.** The user name is already parsed
