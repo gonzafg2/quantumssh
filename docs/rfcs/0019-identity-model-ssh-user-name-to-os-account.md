@@ -360,8 +360,10 @@ account mode. An older binary fails closed on a file that uses
   This holds whatever privilege the privilege-separation RFC gives the
   server. The host key keeps ADR-0029's check as it is, because it
   grants no access to an account.
-- **No confused deputy on user files.** The server reads only files root
-  owns, and none under a path a user can write.
+- **No confused deputy on user files.** In account mode, every file that
+  grants access to an account is owned by root, and none lies under a
+  path a user can write. The host key is the one file the server reads
+  that may still be owned by the process UID, as ADR-0029 allows.
 - **A trusted CA's reach is the list.** That closes the gap ADR-0050 §7
   records, once account mode is in use.
 
