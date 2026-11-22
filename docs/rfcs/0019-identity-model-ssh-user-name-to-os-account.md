@@ -328,7 +328,12 @@ account mode. An older binary fails closed on a file that uses
 
   The rest of the check is ADR-0029's: the file is not group- or
   world-writable, and neither is any ancestor directory up to the root,
-  over the canonical path. A file that fails stops the start.
+  over the canonical path. Account mode adds one condition: every
+  ancestor directory is owned by root too. The owner of a directory can
+  rename and replace its entries whatever their owner, so a user who
+  owned the directory of two root-owned key files could swap them, and
+  their key would then authorize the other account. A file that fails
+  stops the start.
 - **Why root only.** ADR-0029 also accepts the process UID, which in
   service-account mode is the account the sessions run as. In account
   mode, a file the server's own account could write would let that
