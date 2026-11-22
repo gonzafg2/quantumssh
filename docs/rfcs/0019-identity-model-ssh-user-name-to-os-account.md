@@ -332,8 +332,15 @@ account mode. An older binary fails closed on a file that uses
   ancestor directory is owned by root too. The owner of a directory can
   rename and replace its entries whatever their owner, so a user who
   owned the directory of two root-owned key files could swap them, and
-  their key would then authorize the other account. A file that fails
-  stops the start.
+  their key would then authorize the other account.
+- **No symlinks on the way.** In account mode, each of those paths, as
+  configured, must already be its canonical path: absolute, with no
+  symlink in any component. Whoever controls a link chooses the file it
+  leads to, and checking only the resolved path cannot see that. A user
+  who owned the link `/home/alice/keys/deploy` could point it at
+  another account's root-owned key file before startup. A path that
+  resolves anywhere but itself is a configuration error.
+- **A file that fails either rule stops the start.**
 - **Why root only.** ADR-0029 also accepts the process UID, which in
   service-account mode is the account the sessions run as. In account
   mode, a file the server's own account could write would let that
