@@ -1,6 +1,6 @@
 # RFC 0019: The identity model — which operating-system account a connection logs in to
 
-- **Status:** Draft
+- **Status:** Accepted (2026-11-22). The project lead shortened the 14-day comment period on [#291](https://github.com/gonzafg2/quantumssh/pull/291), with the reason stated there (`docs/rfcs/README.md`, step 5). The four unresolved questions are resolved at acceptance with the answers proposed below.
 - **Authors:** Gonzalo Fleming Garrido
 - **Created:** 2026-11-21
 - **Roadmap issue:** [#248](https://github.com/gonzafg2/quantumssh/issues/248) (Phase 3); the privilege-separation RFC it unblocks is tracked in [#43](https://github.com/gonzafg2/quantumssh/issues/43)
@@ -572,6 +572,8 @@ write against.
   own earlier statements of the problem.
 
 ## Unresolved questions
+
+All four were resolved at acceptance, with the proposed answer each one gives.
 
 1. **Locked and expired accounts.** Should account mode read
    `/etc/shadow` and refuse an account that `passwd -l` locked or whose

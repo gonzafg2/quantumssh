@@ -1,11 +1,11 @@
 <!--
-  Governance status (2026-11-20):
+  Governance status (2026-11-22):
   Non-authoritative design note (ADR-0027). Scopes the Phase-3
   privilege-separation RFC; tracked in #43. It decides nothing — it
   records a constraint set and an option matrix so the eventual RFC does
-  not start from a blank page. Authoritative decisions: none yet. Phase 2
-  has closed: two of the three prerequisites below exist and the
-  identity model does not ("Where the three stand").
+  not start from a blank page. Authoritative decisions: RFC-0019
+  (Accepted 2026-11-22), the identity model. All three prerequisites
+  below now exist ("Where the three stand").
 -->
 # Phase-3 privilege separation — scoping note (non-normative)
 
@@ -54,11 +54,15 @@ option matrix below.
 The list above is as written on 2026-07-01. Phase 2 has closed since, with
 `0.1.0`. Two of the three exist and one does not:
 
-1. **The identity model: still missing.** Phase 2 added OpenSSH user
-   certificates ([RFC-0008](../rfcs/0008-ssh-certificate-authentication.md)),
-   and no key or principal maps to an OS account. Threat model §6.3 says
-   so: "Until Phase 3 maps principals to accounts, the CA file is the
-   access boundary".
+1. **The identity model: decided since 2026-11-22.** On 2026-11-20 it
+   was missing: Phase 2 added OpenSSH user certificates
+   ([RFC-0008](../rfcs/0008-ssh-certificate-authentication.md)), and no
+   key or principal mapped to an OS account. Threat model §6.3 says so:
+   "Until Phase 3 maps principals to accounts, the CA file is the access
+   boundary". [RFC-0019](../rfcs/0019-identity-model-ssh-user-name-to-os-account.md)
+   now decides it: the SSH user name names an operator-listed account,
+   whose record comes from `/etc/passwd` and `/etc/group`. It is
+   implemented together with the privilege-separation RFC.
 2. **The configuration schema: exists.**
    [RFC-0010](../rfcs/0010-configuration-file.md) and
    [ADR-0029](../adr/0029-phase-2-config-file-v1-schema-parser-strictmodes.md).
@@ -68,10 +72,9 @@ The list above is as written on 2026-07-01. Phase 2 has closed since, with
    [ADR-0038](../adr/0038-phase-2-interactive-pty-sessions.md) allocates
    the PTY through a re-exec helper.
 
-The one that is missing is the one this note calls the biggest blocker.
-Whether the mapping gets an RFC of its own or is decided inside the
-privilege-separation RFC is open, and
-[#43](https://github.com/gonzafg2/quantumssh/issues/43) tracks it.
+The mapping got an RFC of its own, so the privilege-separation RFC
+([#43](https://github.com/gonzafg2/quantumssh/issues/43)) is written
+against RFC-0019 and decides only how the server becomes the account.
 
 ## The load-bearing constraint (this is the finding worth recording early)
 
