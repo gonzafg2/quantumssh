@@ -40,6 +40,13 @@ SSH_MSG_KEXINIT = 20
 SSH_MSG_NEWKEYS = 21
 SSH_MSG_KEX_HYBRID_INIT = 30
 SSH_MSG_USERAUTH_REQUEST = 50
+SSH_MSG_GLOBAL_REQUEST = 80
+SSH_MSG_CHANNEL_OPEN = 90
+SSH_MSG_CHANNEL_WINDOW_ADJUST = 93
+SSH_MSG_CHANNEL_DATA = 94
+SSH_MSG_CHANNEL_EOF = 96
+SSH_MSG_CHANNEL_CLOSE = 97
+SSH_MSG_CHANNEL_REQUEST = 98
 
 CERT_ALGORITHM = b"ssh-ed25519-cert-v01@openssh.com"
 COMPOSITE_ALGORITHM = b"ssh-mldsa44-ed25519"
@@ -188,8 +195,52 @@ def main():
     )
 
     # pty-req terminal modes (RFC 4254 §8): VINTR 3, ECHO 1, TTY_OP_END.
-    write(seeds / "pty_modes/modes", b"\x01" + u32(3) + b"\x35" + u32(1) + b"\x00")
+    modes = b"\x01" + u32(3) + b"\x35" + u32(1) + b"\x00"
+    write(seeds / "pty_modes/modes", modes)
     write(seeds / "pty_modes/term", b"xterm-256color")
+
+    # channel: channel-layer payloads (RFC 4254 §5, §6), each as a string,
+    # in the order a stock OpenSSH client sends them for three sessions.
+    def channel(*payloads):
+        return b"".join(string(p) for p in payloads)
+
+    def request(name, want_reply, fields=b""):
+        return bytes([SSH_MSG_CHANNEL_REQUEST]) + u32(0) + string(name) + boolean(want_reply) + fields
+
+    open_session = bytes([SSH_MSG_CHANNEL_OPEN]) + string(b"session") + u32(0) + u32(2097152) + u32(32768)
+    data = bytes([SSH_MSG_CHANNEL_DATA]) + u32(0) + string(b"hello\n")
+    adjust = bytes([SSH_MSG_CHANNEL_WINDOW_ADJUST]) + u32(0) + u32(1048576)
+    eof = bytes([SSH_MSG_CHANNEL_EOF]) + u32(0)
+    close = bytes([SSH_MSG_CHANNEL_CLOSE]) + u32(0)
+    write(
+        seeds / "channel/exec",
+        channel(
+            open_session,
+            request(b"env", False, string(b"LANG") + string(b"C.UTF-8")),
+            request(b"exec", True, string(b"echo hello")),
+            data,
+            adjust,
+            eof,
+            close,
+        ),
+    )
+    write(
+        seeds / "channel/pty-shell",
+        channel(
+            open_session,
+            request(b"pty-req", True, string(b"xterm-256color") + u32(80) + u32(24) + u32(0) + u32(0) + string(modes)),
+            request(b"shell", True),
+            request(b"window-change", False, u32(132) + u32(43) + u32(0) + u32(0)),
+            bytes([SSH_MSG_GLOBAL_REQUEST]) + string(b"keepalive@openssh.com") + boolean(True),
+            data,
+            eof,
+            close,
+        ),
+    )
+    write(
+        seeds / "channel/sftp",
+        channel(open_session, request(b"subsystem", True, string(b"sftp")), eof, close),
+    )
 
 
 if __name__ == "__main__":

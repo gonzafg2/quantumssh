@@ -1366,8 +1366,9 @@ repeating it.
   Defends §5.4 generally.
 - **Continuous fuzzing ([ADR-0060](/docs/adr/0060-continuous-fuzzing-cargo-fuzz-on-the-pinned-stable-toolchain.md)).** cargo-fuzz runs on the pinned
   stable toolchain, with no sanitizer, over a target for every
-  pre-authentication parser, SFTP framing and field parsing, and
-  terminal modes.
+  pre-authentication parser, SFTP framing and field parsing, terminal
+  modes, and the channel layer's inbound messages and window
+  arithmetic.
   - Every PR builds every target and replays its seeds and
     regressions, and `main` is fuzzed every day.
   - A finding is encrypted to the security key before it leaves the
