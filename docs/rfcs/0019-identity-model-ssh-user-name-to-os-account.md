@@ -218,10 +218,11 @@ an account-enumeration oracle.
 - **The server's own parser reads both files.** It is bounded in file
   size, line length and field count, and has no `unsafe`. There is no
   NSS, and no other source of accounts.
-- **Both files must be owned by root, and not group- or
-  world-writable,** or the server refuses to start. This is the
-  StrictModes rule of ADR-0029, applied to the two files it trusts for
-  identity.
+- **Both files pass ADR-0029's integrity check, with its owner narrowed
+  to root,** or the server refuses to start (§5 says why root). The
+  rest of the check is ADR-0029's: the file is not group- or
+  world-writable, and no ancestor directory up to the root is either,
+  over the canonical path.
 - **The record is read twice.**
   - At startup, to validate every listed account (§3).
   - When a request's credential has verified, and before the server
@@ -254,10 +255,14 @@ an account-enumeration oracle.
 - **Bare keys.** An entry may name an `authorized_keys` file for the
   account.
   - Its format and rules are those of today's file: `ssh-ed25519` lines
-    only, no options (ADR-0040), loaded at startup, checked by the
-    StrictModes walk of ADR-0029.
-  - In account mode the server runs privileged, so the file must be
-    owned by root.
+    only, no options (ADR-0040), and loaded at startup.
+  - It passes ADR-0029's integrity check with the owner narrowed to
+    root. ADR-0029 also accepts the process UID, which in
+    service-account mode is the account the sessions run as. In account
+    mode, a file the server's own account could write would let that
+    account give itself any listed account, so only root may own it.
+    This holds whatever privilege the privilege-separation RFC gives
+    the server.
   - A key authorizes a connection for the account whose file lists it,
     and for no other.
   - A key may appear in two accounts' files, for one person with two
