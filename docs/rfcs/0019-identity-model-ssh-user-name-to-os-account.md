@@ -142,7 +142,9 @@ Then:
 ### What the audit records show
 
 The records of a session in account mode name the account next to the
-key that authenticated it:
+key that authenticated it. Account mode ships with privilege separation
+(Summary), so `executing_uid` is the account's UID, not the service
+account's:
 
 ```json
 {"schema_version":1,"timestamp":"2026-12-01T10:00:00.000000Z","level":"INFO","event":"exec.started","peer_addr":"192.0.2.7:50022","authenticated_identity":"SHA256:cp4BNirSzGclLcIrv4GSoYcZD47+bqGl0GdHc/vPJE8","account":"alice","executing_uid":1001,"command":"uptime","request_type":"exec","pty":false}
@@ -218,11 +220,8 @@ an account-enumeration oracle.
 - **The server's own parser reads both files.** It is bounded in file
   size, line length and field count, and has no `unsafe`. There is no
   NSS, and no other source of accounts.
-- **Both files pass ADR-0029's integrity check, with its owner narrowed
-  to root,** or the server refuses to start (§5 says why root). The
-  rest of the check is ADR-0029's: the file is not group- or
-  world-writable, and no ancestor directory up to the root is either,
-  over the canonical path.
+- **Both files pass the account-mode file check of §8,** or the server
+  refuses to start.
 - **The record is read twice.**
   - At startup, to validate every listed account (§3).
   - When a request's credential has verified, and before the server
@@ -256,13 +255,7 @@ an account-enumeration oracle.
   account.
   - Its format and rules are those of today's file: `ssh-ed25519` lines
     only, no options (ADR-0040), and loaded at startup.
-  - It passes ADR-0029's integrity check with the owner narrowed to
-    root. ADR-0029 also accepts the process UID, which in
-    service-account mode is the account the sessions run as. In account
-    mode, a file the server's own account could write would let that
-    account give itself any listed account, so only root may own it.
-    This holds whatever privilege the privilege-separation RFC gives
-    the server.
+  - It passes the account-mode file check of §8.
   - A key authorizes a connection for the account whose file lists it,
     and for no other.
   - A key may appear in two accounts' files, for one person with two
@@ -325,9 +318,31 @@ account mode. An older binary fails closed on a file that uses
   and bounded. Account mode adds an in-memory lookup of it. The only
   file read in the authentication path comes after a credential has
   verified (§4).
-- **No confused deputy on user files.** The server reads only files the
-  operator owns: its configuration, the key files, `/etc/passwd` and
-  `/etc/group`.
+- **Only root may own what grants access.** In account mode, every file
+  that decides who reaches which account passes ADR-0029's integrity
+  check with its owner narrowed to root:
+  - the configuration file;
+  - `auth.trusted_user_ca_keys`;
+  - every account's key file;
+  - `/etc/passwd` and `/etc/group`.
+
+  The rest of the check is ADR-0029's: the file is not group- or
+  world-writable, and neither is any ancestor directory up to the root,
+  over the canonical path. A file that fails stops the start.
+- **Why root only.** ADR-0029 also accepts the process UID, which in
+  service-account mode is the account the sessions run as. In account
+  mode, a file the server's own account could write would let that
+  account give itself any listed account:
+  - a line in a key file reaches one account;
+  - a CA in `auth.trusted_user_ca_keys` reaches every listed name;
+  - an `[[account]]` entry in the configuration reaches any account, at
+    the next restart.
+
+  This holds whatever privilege the privilege-separation RFC gives the
+  server. The host key keeps ADR-0029's check as it is, because it
+  grants no access to an account.
+- **No confused deputy on user files.** The server reads only files root
+  owns, and none under a path a user can write.
 - **A trusted CA's reach is the list.** That closes the gap ADR-0050 §7
   records, once account mode is in use.
 
