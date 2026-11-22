@@ -200,10 +200,20 @@ Names follow the rule `useradd(8)` states:
 - not fully numeric, and not `.` or `..`;
 - at most 256 bytes, the bound the user-name parser already applies.
 
-A listed name outside the rule, a name listed twice, or a listed account
-that fails 2 or 3 is a configuration error, at startup. So is an entry
-that names no key file when `auth.trusted_user_ca_keys` is not set,
-because nothing could log in to it (§5).
+These are configuration errors, at startup:
+
+- a listed name outside the rule, or a name listed twice;
+- a listed account whose UID is 0;
+- an entry that names no key file when `auth.trusted_user_ca_keys` is
+  not set, because nothing could ever log in to it (§5).
+
+**A listed account that cannot be reached right now is not an error.**
+That is one with no entry in `/etc/passwd`, or one whose key file holds
+no key when `auth.trusted_user_ca_keys` is not set. The server starts,
+that account fails closed alone, and a diagnostic record at startup
+names it and the reason. Otherwise an operator who ran `userdel`, or
+emptied a key file, would find at the next restart that the server
+refused to start for every account.
 
 A request for a name that is not listed fails as a wrong key does: one
 `SSH_MSG_USERAUTH_FAILURE`, one attempt spent from the budget of threat
@@ -257,6 +267,9 @@ differently, as in every SSH server: Drawbacks covers the `PK_OK` case.
   account.
   - Its format and rules are those of today's file: `ssh-ed25519` lines
     only, no options (ADR-0040), and loaded at startup.
+  - One rule differs. Today a file with no key is an error. In account
+    mode it is allowed: the account then has no bare key, and is reached
+    by certificate or, with no CA set, not at all (§3).
   - It passes the account-mode file check of §8.
   - A key authorizes a connection for the account whose file lists it,
     and for no other.
@@ -316,9 +329,10 @@ account mode. An older binary fails closed on a file that uses
 
 ### 8. Security properties
 
-- **Fail closed at startup.** A listed account the server cannot resolve,
-  with UID 0, or with no way to authorize stops the start. So does any
-  file that fails the account-mode file check below.
+- **Fail closed at startup.** The configuration errors of §3 stop the
+  start, and so does any file that fails the account-mode file check
+  below. A listed account that cannot be reached right now does not
+  stop it: it fails closed alone (§3).
 - **Fail closed at login.** An account that stopped resolving, or whose
   UID became 0, fails authentication on its next connection (§4).
 - **No new pre-authentication input.** The user name is already parsed
@@ -409,7 +423,8 @@ The documents that change are:
   - removing it from `[[account]]`, which takes effect at the next
     restart, because the configuration is read at startup only;
   - removing it from `/etc/passwd`, which takes effect on its next
-    connection (§4).
+    connection (§4). The next start reports the account as
+    unreachable, and does not fail (§3).
 
   Emptying its key file is not enough. That file is also read at
   startup only, and a certificate whose principals include the name
