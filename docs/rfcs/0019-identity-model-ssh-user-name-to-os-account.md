@@ -200,8 +200,8 @@ Names follow the rule `useradd(8)` states:
 
 A listed name outside the rule, a name listed twice, or a listed account
 that fails 2 or 3 is a configuration error, at startup. So is an entry
-that names neither a key file nor a way to authorize by certificate
-(§5), because nothing could log in to it.
+that names no key file when `auth.trusted_user_ca_keys` is not set,
+because nothing could log in to it (§5).
 
 A request for a name that is not listed fails as a wrong key does: one
 `SSH_MSG_USERAUTH_FAILURE`, one attempt spent from the budget of threat
@@ -224,11 +224,20 @@ an account-enumeration oracle.
   identity.
 - **The record is read twice.**
   - At startup, to validate every listed account (§3).
-  - When a connection has authenticated, for the record that session
-    uses. An account removed from `/etc/passwd`, or whose UID became 0,
-    then fails closed on its next connection, without a restart. That
-    read happens after authentication, so the pre-authentication path
-    does no file I/O, as now.
+  - When a request's credential has verified, and before the server
+    sends `SSH_MSG_USERAUTH_SUCCESS`. That record is the one the
+    session uses.
+- **If that read fails, the request fails as a wrong key does.** The
+  account may have left `/etc/passwd`, its UID may have become 0, or the
+  files may now have the wrong owner or mode. The server answers
+  `SSH_MSG_USERAUTH_FAILURE`, spends an attempt, emits `auth.failed`,
+  and leaves a diagnostic record with a fixed reason, as ADR-0050 §5
+  does for a refused certificate. `auth.succeeded` is emitted only for a
+  record that resolved. So a removed account stops working on its next
+  connection, without a restart.
+- **The read needs a verified credential.** A peer reaches it only by
+  proving a key or a certificate for a listed account. Before that,
+  nothing in the authentication path reads a file, as now.
 - **Linux only.** On macOS, `/etc/passwd` "is consulted directly only
   when the system is running in single-user mode"; Open Directory holds
   the accounts (the file's own header says so). There the documented
@@ -283,9 +292,12 @@ an account-enumeration oracle.
 - **`authenticated_identity` does not change:** the fingerprint of the
   key that authenticated (RFC-0014 §4).
 - **`auth.failed` gains nothing.** Logging the user name a client asked
-  for would add a per-target-user dimension that threat model §5.3.1
-  omits on purpose, and an attacker-chosen string to every failure
-  record. That is open as an unresolved question below.
+  for would put an unauthenticated, attacker-chosen string in every
+  failure record. RFC-0014 escapes control characters, but threat model
+  §5.4.3 counts such strings as log injection for any tool that reads
+  the log naively. ADR-0050 §5 keeps the same rule for certificates:
+  nothing in one is logged on failure, because nothing in it is
+  authenticated yet. That is open as an unresolved question below.
 
 ### 7. Configuration compatibility
 
@@ -303,10 +315,11 @@ account mode. An older binary fails closed on a file that uses
   with UID 0, or with no way to authorize stops the start. So do
   `/etc/passwd` and `/etc/group` with the wrong owner or mode.
 - **Fail closed at login.** An account that stopped resolving, or whose
-  UID became 0, refuses its next session.
+  UID became 0, fails authentication on its next connection (§4).
 - **No new pre-authentication input.** The user name is already parsed
-  and bounded. Account mode adds an in-memory lookup of it, and no file
-  I/O before authentication.
+  and bounded. Account mode adds an in-memory lookup of it. The only
+  file read in the authentication path comes after a credential has
+  verified (§4).
 - **No confused deputy on user files.** The server reads only files the
   operator owns: its configuration, the key files, `/etc/passwd` and
   `/etc/group`.
@@ -350,9 +363,16 @@ The documents that change are:
   no account policy from PAM modules. Some of that, such as resource
   limits, is the privilege-separation RFC's to provide another way.
 - **`/etc/shadow` is not read.** An account locked with `passwd -l`, or
-  past its expiry date, can still log in with a key if the operator
-  lists it. The list is the control: an operator who locks an account
-  should also remove it, or its keys. This is an unresolved question.
+  past its expiry date, can still log in, by key or by certificate, if
+  the operator lists it. What stops it:
+  - removing it from `[[account]]`, which takes effect at the next
+    restart, because the configuration is read at startup only;
+  - removing it from `/etc/passwd`, which takes effect on its next
+    connection (§4).
+
+  Emptying its key file is not enough. That file is also read at
+  startup only, and a certificate whose principals include the name
+  still authorizes it. This is an unresolved question.
 - **Two modes in one binary,** with their own tests, until a later
   decision retires one.
 - **Names are listed twice:** once in `/etc/passwd` and once in the
@@ -500,8 +520,9 @@ write against.
 1. **Locked and expired accounts.** Should account mode read
    `/etc/shadow` and refuse an account that `passwd -l` locked or whose
    expiry has passed? It would mean reading a root-only file of password
-   hashes in the privileged process. Proposed answer: no; the list is the
-   control, and `docs/deployment.md` says so.
+   hashes in the privileged process. Proposed answer: no. The list is the
+   control, and `docs/deployment.md` says what stops a locked account
+   and when (Drawbacks).
 2. **The requested user name on `auth.failed`.** Proposed answer: not
    logged, for the reasons in §6. An operator who wants to see attempts
    on `root` would lose that view.
