@@ -9,6 +9,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The session helper of account mode
+  ([ADR-0065](docs/adr/0065-session-helper-identity-change-checks-and-environment.md)),
+  ahead of the launcher that starts it (#43).
+  - **Identity.** The binary's `--quantumssh-internal-session` mode,
+    started as root, becomes the session leader and takes the PTY when
+    there is one. It sets the account's groups, GID and UID.
+  - **Checks.** The real and effective IDs and the groups must read back
+    as set. The permitted, effective and inheritable capability sets
+    must be empty. `setresuid(0, 0, 0)` and `setresgid(0, 0, 0)` must
+    fail. If any check fails, the helper exits with 127.
+  - **The session.** The helper then runs the account's login shell, or
+    the SFTP server in-process.
+  - **Tests.** A new CI step runs it as root in a disposable container
+    of the gate image (`tests/privsep/`). It checks the account's
+    identity, groups, capabilities and home, and `exec`, `shell` and
+    `sftp`. It also checks the refusals: a caller that is not root, a
+    UID of 4294967295, and an inheritable capability that the drop
+    does not clear.
+- The launcher protocol of account mode
+  ([ADR-0063](docs/adr/0063-launcher-protocol-seqpacket-socket-pair-ssh-wire-encoding.md)),
+  ahead of the launcher that uses it (#43).
+  - **What it covers.** `quantumssh-core::launcher` encodes and parses
+    the records between the network server and the root launcher:
+    `ready`, `start` and `end`, then `listener`, `started`, `refused`
+    and `exited`.
+  - **Bounds.** Every field is bounded, and a record is at most 36 KiB.
+  - **Fuzzing.** The launcher's parser of server records is the only
+    root-process parser of bytes another process chose. It gets the
+    `launcher_request` fuzz target, with seeds from
+    `scripts/fuzz-seeds.py`.
 - Continuous fuzzing
   ([ADR-0060](docs/adr/0060-continuous-fuzzing-cargo-fuzz-on-the-pinned-stable-toolchain.md)),
   run by cargo-fuzz with `--sanitizer none` on the pinned stable
@@ -92,6 +122,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- The first `SSH_MSG_USERAUTH_REQUEST` fixes the user name for the
+  connection. A later request that names another user ends the
+  connection with `SSH_DISCONNECT_PROTOCOL_ERROR`, before its method is
+  acted on, as OpenSSH does
+  ([RFC-0019](docs/rfcs/0019-identity-model-ssh-user-name-to-os-account.md)
+  §2). It holds in every mode, and it lands ahead of account mode, which
+  uses the name to select an account (#43).
 - The ChaCha20 cipher objects built for each packet are erased when
   dropped. Their state holds the session key words and their buffer
   holds keystream, and both were dropped as they were: the workspace

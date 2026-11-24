@@ -139,10 +139,10 @@ def main():
         bytes([SSH_MSG_SERVICE_REQUEST]) + string(b"ssh-userauth"),
     )
 
-    def userauth(method, tail=b""):
+    def userauth(method, tail=b"", user=b"alice"):
         return (
             bytes([SSH_MSG_USERAUTH_REQUEST])
-            + string(b"alice")
+            + string(user)
             + string(b"ssh-connection")
             + string(method)
             + tail
@@ -158,6 +158,10 @@ def main():
     write(seeds / "userauth_request/probe", userauth(b"publickey", probe))
     write(seeds / "userauth_request/signed", userauth(b"publickey", signed))
     write(seeds / "userauth_request/none", userauth(b"none"))
+    # RFC-0019 §2: a refused method under the bound user goes on; a probe
+    # under another user ends where the connection would.
+    write(seeds / "userauth_request/password", userauth(b"password", boolean(False) + string(b"x")))
+    write(seeds / "userauth_request/other_user", userauth(b"publickey", probe, user=b"bob"))
 
     # A structurally valid user certificate from the fixture CA, with a
     # signature of the right length that does not verify.
@@ -240,6 +244,28 @@ def main():
     write(
         seeds / "channel/sftp",
         channel(open_session, request(b"subsystem", True, string(b"sftp")), eof, close),
+    )
+
+    # launcher_request: records from the network server to the root
+    # launcher (ADR-0063 §2), one record per seed, with an empty one and a
+    # start at every bound of §3 (ADR-0063 §6).
+    def start(account, kind, tail=b""):
+        return bytes([2]) + string(account) + bytes([kind]) + tail
+
+    def pty(term, modes_blob):
+        return boolean(True) + string(term) + u32(80) + u32(24) + u32(0) + u32(0) + string(modes_blob)
+
+    write(seeds / "launcher_request/ready", bytes([1]))
+    write(seeds / "launcher_request/end", bytes([3]) + u64(1))
+    write(seeds / "launcher_request/exec", start(b"alice", 1, string(b"uptime") + boolean(False)))
+    write(seeds / "launcher_request/shell-pty", start(b"alice", 2, pty(b"xterm-256color", modes)))
+    write(seeds / "launcher_request/sftp", start(b"deploy", 3))
+    write(seeds / "launcher_request/empty", b"")
+    # Bounds: account 256 (the user-name bound), command 35000
+    # (wire::MAX_PACKET), TERM 64 and modes 1024 (ADR-0038 §2).
+    write(
+        seeds / "launcher_request/bounds",
+        start(b"a" * 256, 1, string(b"x" * 35000) + pty(b"t" * 64, bytes(1024))),
     )
 
 

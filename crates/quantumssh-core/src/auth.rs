@@ -436,6 +436,8 @@ pub(crate) enum UserauthRequest<'a> {
     /// key type other than `ssh-ed25519` and its certificate. It is
     /// refused, and the rest of the request is not read.
     Refused {
+        /// The user name, which the connection binds (RFC-0019 §2).
+        user: &'a str,
         /// The method name, for the `auth.failed` record.
         method: &'a str,
     },
@@ -450,6 +452,22 @@ pub(crate) enum UserauthRequest<'a> {
         /// The signature part of a signed request.
         signature: Option<Signed<'a>>,
     },
+}
+
+impl UserauthRequest<'_> {
+    /// The user name the request names, whatever its method.
+    pub(crate) const fn user(&self) -> &str {
+        match self {
+            Self::Refused { user, .. } | Self::PublicKey { user, .. } => user,
+        }
+    }
+}
+
+/// RFC-0019 §2: whether a request naming `user` may go on, on a
+/// connection whose first request fixed `bound`. The first request fixes
+/// it (`bound` is `None`), and every later one must name the same user.
+pub(crate) fn same_user(bound: Option<&str>, user: &str) -> bool {
+    bound.is_none_or(|bound| bound == user)
 }
 
 /// The signature part of a signed `publickey` request.
@@ -480,12 +498,12 @@ pub(crate) fn parse_userauth_request(payload: &[u8]) -> Result<UserauthRequest<'
     }
     let method = utf8_field(&mut r, METHOD_NAME_BOUND)?;
     if method != AUTH_METHOD {
-        return Ok(UserauthRequest::Refused { method });
+        return Ok(UserauthRequest::Refused { user, method });
     }
     let sig_present = r.boolean().map_err(|_| RequestError::Malformed)?;
     let key_algorithm = utf8_field(&mut r, KEY_ALGO_BOUND)?;
     if key_algorithm != KEY_ALGORITHM && key_algorithm != cert::CERT_ALGORITHM {
-        return Ok(UserauthRequest::Refused { method });
+        return Ok(UserauthRequest::Refused { user, method });
     }
     let key_blob_bound = if key_algorithm == cert::CERT_ALGORITHM {
         cert::CERT_BLOB_BOUND
@@ -1108,12 +1126,24 @@ mod tests {
     }
 
     #[test]
+    fn the_first_request_fixes_the_user_name() {
+        assert!(same_user(None, "alice"));
+        assert!(same_user(Some("alice"), "alice"));
+        assert!(!same_user(Some("alice"), "root"));
+        assert!(!same_user(Some("alice"), "Alice"));
+        assert!(!same_user(Some("alice"), ""));
+    }
+
+    #[test]
     fn userauth_parser_refuses_another_method_before_reading_the_rest() {
         let mut w = request_head(b"ssh-connection", b"password");
         w.put_bytes(b"not a well-formed remainder");
         assert_eq!(
             parse_userauth_request(&w.into_bytes()),
-            Ok(UserauthRequest::Refused { method: "password" })
+            Ok(UserauthRequest::Refused {
+                user: "alice",
+                method: "password"
+            })
         );
     }
 
@@ -1123,6 +1153,7 @@ mod tests {
         assert_eq!(
             parse_userauth_request(&payload),
             Ok(UserauthRequest::Refused {
+                user: "alice",
                 method: AUTH_METHOD
             })
         );
