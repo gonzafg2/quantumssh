@@ -36,7 +36,7 @@ getrandom          = { version = "0.4", default-features = false }  # OS randomn
 # #4), and it wraps the raw syscalls so first-party code stays
 # `unsafe`-free (ADR-0018). ADR-0038 §4 adds `pty` and `termios` for
 # PTY allocation, modes and window size.
-rustix             = { version = "1", default-features = false, features = ["std", "process", "fs", "pty", "termios"] }
+rustix             = { version = "1", default-features = false, features = ["std", "process", "fs", "pty", "termios", "thread"] }
 # ADR-0029 (RFC-0010): the TOML config file. The parser is `toml`
 # (ADR-0044, replacing the unmaintained `basic-toml`): parse and serde
 # only. No `display`, and no `unbounded`, so the recursion limit stays.

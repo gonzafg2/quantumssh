@@ -29,6 +29,7 @@ pub mod kex;
 pub mod launcher;
 pub mod pty;
 pub mod server;
+pub mod session_helper;
 pub mod sftp;
 pub mod transport;
 pub mod wire;

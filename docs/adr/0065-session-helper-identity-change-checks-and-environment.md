@@ -217,7 +217,8 @@ The implementing PR adds:
 
 - **unit tests** for the argument parser;
 - **an integration test that runs as root** in the gate image
-  (ADR-0059), in a disposable container. It starts the helper as a test
+  (ADR-0059), in a disposable container: `tests/privsep/`, run by CI's
+  `build (ubuntu-latest)`. It starts the helper as a test
   account, and the session reads its own `/proc/self/status`. It checks:
   - all four values of `Uid:` and `Gid:`, and `Groups:`;
   - `CapPrm`, `CapEff` and `CapInh` are zero;
