@@ -668,9 +668,11 @@ docker:x:999:alice\n";
     #[test]
     fn a_root_owned_file_in_root_owned_directories_passes() {
         // Root-owned on Linux and macOS, with root-owned, unwritable
-        // ancestors: /usr/bin, /usr, /.
-        assert_eq!(check_root_file(Path::new("/usr/bin/true")), Ok(()));
-        assert!(read_root_file(Path::new("/usr/bin/true")).is_ok());
+        // ancestors. Canonicalised first: some distributions make
+        // /usr/bin/true a symlink, to gnutrue for one.
+        let path = std::fs::canonicalize("/usr/bin/true").expect("true exists");
+        assert_eq!(check_root_file(&path), Ok(()));
+        assert!(read_root_file(&path).is_ok());
     }
 
     #[cfg(target_os = "linux")]
