@@ -93,6 +93,12 @@ of a large host. The file bound leaves room for many such lines.
 
 **Both files:**
 
+- **Comment and NIS lines are skipped before any other rule.** A line
+  whose first byte is `#`, `+` or `-` is never read as an entry, a
+  membership or a malformed line. In `/etc/group` this matters: a
+  commented-out `#wheel:x:10:alice` splits into four valid fields. Read
+  as an entry, it would give `alice` the GID 10 that the operator took
+  away. There is therefore no NIS either.
 - A NUL byte anywhere in a line makes the line malformed.
 - An empty line is skipped.
 
@@ -109,10 +115,8 @@ skipped, as musl skips it.
 - **If that line is malformed, the account does not resolve.** The
   parser does not move on to a later line with the same name. That
   would let a later line override the one `getpwnam` reads first.
-- **Every other line is ignored,** malformed or not.
-- **Lines that start with `+`, `-` or `#`** can never be an account's
-  line, because no valid name (ADR-0070 §2) starts with one of them.
-  So NIS compatibility entries are ignored, and there is no NIS.
+- **Every other line is ignored,** malformed or not. Comment and NIS
+  lines never reach this rule (§2).
 
 **In `/etc/group`:**
 
@@ -127,10 +131,11 @@ skipped, as musl skips it.
     dropped group could then grant more than the operator set.
 - **A malformed line that does not name the account is ignored.**
 
-**What the caller sees.** A lookup that fails this way is an account
-that does not resolve:
+**What the caller sees.** A lookup that fails this way, or that finds
+more groups than §1 allows, is an account that does not resolve:
 
-- at startup, the `malformed_entry` diagnostic record (ADR-0070 §4);
+- at startup, the diagnostic record of ADR-0070 §4, with the reason
+  `malformed_entry` or `too_many_groups`;
 - at authentication, a failure as a wrong key, with a diagnostic record
   (RFC-0019 §4);
 - at a session start, `refused` with reason 2 (ADR-0064 §2).
@@ -150,7 +155,8 @@ that does not resolve:
   - an earlier malformed line with the account's name;
   - a malformed group line that names the account, and one that does
     not;
-  - NIS-style lines;
+  - NIS-style lines, and a `#`-prefixed group line that lists the
+    account, which must not give it that GID;
   - a name that appears only as a group name, which is not membership.
 - **No fuzz target.** Both files are owned by root, and RFC-0019 §8
   checks that before every read. ADR-0060 §9's rule covers parsers of

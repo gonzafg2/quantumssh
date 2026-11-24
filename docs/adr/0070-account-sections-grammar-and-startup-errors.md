@@ -140,7 +140,8 @@ the field `account` (its name), and the field `reason`:
 | `reason` | Meaning |
 |---|---|
 | `no_passwd_entry` | `/etc/passwd` has no line for the name |
-| `malformed_entry` | the first line for the name is malformed (ADR-0071 §3) |
+| `malformed_entry` | the account's line in `/etc/passwd` is malformed, or a line in `/etc/group` that names it is malformed (ADR-0071 §3) |
+| `too_many_groups` | the account belongs to more than 65,536 supplementary groups (ADR-0071 §1) |
 | `no_key` | its key file holds no key, and `auth.trusted_user_ca_keys` is unset |
 
 These records are diagnostic, not audit. RFC-0014 §5 lets diagnostic

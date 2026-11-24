@@ -94,7 +94,7 @@ covers:
   | Remove a key from an account's key file | at the next restart, because key files load at startup |
   | `userdel` the account, or give it UID 0 | at its next connection, which fails as a wrong key does (RFC-0019 §4) |
   | Remove the account from a group | at its next session (ADR-0064 §2) |
-  | `passwd -l` or an expiry date | never: account mode does not read `/etc/shadow` (RFC-0019's unresolved question 1). Remove the account from the list, or its keys, and restart |
+  | `passwd -l` or an expiry date | never: account mode does not read `/etc/shadow` (RFC-0019's unresolved question 1). Remove the account from `[[account]]` and restart, or remove it from `/etc/passwd`. Emptying its key file is not enough when `auth.trusted_user_ca_keys` is set: a certificate whose principals include the name still logs in (RFC-0019's Drawbacks, §5) |
 
 - **RFC-0020 §8's warning, as it stands.** List only accounts whose
   whole privilege you accept exposing to a compromise of the network
