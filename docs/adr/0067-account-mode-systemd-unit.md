@@ -47,7 +47,7 @@ After=network.target
 [Service]
 Type=notify
 NotifyAccess=main
-ExecStart=/usr/local/bin/quantumssh --config /etc/quantumssh/config.toml
+ExecStart=/usr/local/bin/quantumssh --config /etc/quantumssh/config.toml --require-account-mode
 KillMode=mixed
 Restart=on-failure
 
@@ -58,19 +58,22 @@ WantedBy=multi-user.target
 **How an operator installs it.** It goes in as
 `/etc/systemd/system/quantumssh.service`, in place of ADR-0043's unit.
 An operator installs the unit that matches the configuration's mode.
-The two mistakes behave differently:
+Both mistakes fail the start, and the error names the reason:
 
-- **An account-mode configuration under ADR-0043's unit** fails to
-  start, and names the reason: it is not running as root (ADR-0066 §1).
-- **A service-account configuration under this unit** starts, and runs
-  the whole server as root. RFC-0020 leaves service-account mode
-  unchanged, and that mode has never refused root. The operator guide
-  warns against this combination.
+- **An account-mode configuration under ADR-0043's unit** is not running
+  as root (ADR-0066 §1).
+- **A service-account configuration under this unit** meets
+  `--require-account-mode`, which refuses a configuration that lists no
+  account (ADR-0066 §1). Without the flag it would serve the network as
+  root.
 
 What differs from ADR-0043 §3, and why:
 
 - **No `User=` or `Group=`.** systemd starts the launcher as root, and
   the launcher starts the server as `quantumssh` (ADR-0066 §2).
+- **`--require-account-mode` on `ExecStart=`.** A unit that starts as
+  root must never run the network server as root, so it refuses a
+  configuration without accounts (ADR-0066 §1).
 - **No `NoNewPrivileges=`.** RFC-0020 §8 gives the reason above.
 - **`Type=notify` and `NotifyAccess=main`.** The launcher is the main
   process and the only process that notifies (ADR-0066 §3). The
@@ -120,8 +123,8 @@ the operator's choice (threat model §8.8).
 
 An account-mode section covers:
 
-- **which unit to install,** and the warning that a service-account
-  configuration under this unit runs as root (§1);
+- **which unit to install,** and the start failure that each wrong
+  combination gives (§1);
 - **the service account,** still required and still named `quantumssh`
   (ADR-0066 §1);
 - **file ownership:**
@@ -149,6 +152,9 @@ checks:
   - The server runs as `quantumssh`, with `NoNewPrivs` 1.
   - A session has `NoNewPrivs` 0.
 - **Reload.** `systemctl reload` is refused.
+- **The wrong configuration.** A configuration that lists no account
+  fails the start under this unit, and the journal names
+  `--require-account-mode`.
 - **The stop.** It runs under `TimeoutStopSec=2`, shorter than a 4 s
   drain, while a session runs and a `setsid` process has escaped.
   - It ends with `Result=success` after the drain.
@@ -167,9 +173,10 @@ checks:
 
 ### Negative
 
-- **Two reference units, one per mode.** One of the two mistakes is
-  silent: a service-account configuration under this unit runs as root
-  (§1). Only the operator guide guards against it.
+- **Two reference units, one per mode.** Installing the wrong one fails
+  the start, with an error that names the reason (§1).
+- **One more command-line flag,** `--require-account-mode`, which only
+  this unit needs.
 - **The launcher keeps root's full capability set** (§2).
 - **No sandboxing by default,** as under ADR-0043.
 
@@ -202,6 +209,20 @@ Rejected for the reference unit. It would limit `sudo` in every session
 
 Rejected. RFC-0020 §8 leaves it out so that sessions can use `sudo`.
 Operators who want it can set it (§2).
+
+### Alternative 5: refuse root in service-account mode
+
+That would close the same mistake without a flag. Rejected:
+
+- It changes service-account mode, which RFC-0020 leaves as it is.
+  ADR-0016 names a non-root account, but the binary has never refused
+  root.
+- The interop gate runs that mode as root in its container (ADR-0068),
+  and so can anyone who runs the server in a container. Each of them
+  would break.
+
+The flag puts the check only where the mistake can happen: in the unit
+that starts as root.
 
 ## Links
 

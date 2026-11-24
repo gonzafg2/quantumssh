@@ -115,7 +115,8 @@ integration tests:
 - RFC-0019 §2's change of user name mid-authentication, which the
   client never sends;
 - the startup refusals: a listed UID 0, a start other than as root, a
-  listed service account, and a writable executable (ADR-0066 §1);
+  listed service account, a writable executable, and
+  `--require-account-mode` with no account (ADR-0066 §1);
 - the launcher's protocol faults, which ADR-0063 also fuzzes.
 
 ### 4. When the cases land

@@ -109,6 +109,13 @@ this file.
 >     program the launcher did not choose.
 >   - The host key, which the network server holds, is exposed as in
 >     service-account mode.
+>   - So is the audit log. The network server writes every audit
+>     record, `authenticated_identity` and `executing_uid` included
+>     (ADR-0024, ADR-0066). A compromised server can write false records
+>     for the sessions it starts, or none. The launcher knows which
+>     accounts got sessions, but writes no record of them: it shares the
+>     server's stderr, so the server could imitate any record it wrote
+>     there.
 > - *Held by the network server:* the service account's UID, no
 >   supplementary groups, no capabilities, and `no_new_privs`
 >   (ADR-0066).
@@ -122,6 +129,8 @@ this file.
 >     `sudo` or a group such as `docker`.
 >   - **What it does not yield:** UID 0 directly, or an unlisted
 >     account.
+>   - **What it can falsify:** the audit records of the sessions it
+>     starts. No second process writes an independent record (§4.2).
 >   - **The bound** is the operator's list. OpenSSH's monitor verifies
 >     authentication itself and bounds the same compromise more tightly
 >     (RFC-0020, Alternative 3).

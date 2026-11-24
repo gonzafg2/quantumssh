@@ -53,6 +53,18 @@ After it reads its configuration, the binary picks one of three paths:
 | `[[account]]` | 0 | the launcher |
 | `[[account]]` | not 0 | nothing: it refuses to start, and says account mode needs it to start as root |
 
+**`--require-account-mode`.** The account-mode unit passes this flag
+(ADR-0067 §1).
+
+- **With it,** a configuration that lists no account is refused at
+  startup, whatever the UID, and the error names the flag.
+- **It selects nothing.** `[[account]]` still selects the mode (RFC-0019
+  §1), and account mode without the flag works as the table says.
+- **Why it exists.** Without it, a service-account configuration under
+  the account-mode unit would start as root, and the process that reads
+  the network would hold root. That is the outcome RFC-0020's
+  Alternative 1 rejects.
+
 **The launcher's startup checks.** It runs them as root, before anything
 else. Each failure stops the start.
 
@@ -172,6 +184,12 @@ as its caller. Its stdin is not the launcher's socket, so reading
   logger and format (ADR-0024, RFC-0014), on the same stderr.
 - **Every audit event stays the server's.** The launcher knows no
   connection.
+- **The launcher writes no record per session,** though it knows which
+  accounts got sessions. It shares the server's stderr, so a compromised
+  server could imitate any record the launcher wrote there. An
+  independent record would need its own log channel, which this ADR
+  does not add. ADR-0069 states the residual: a compromised server can
+  falsify the audit records of the sessions it starts.
 - **`server.started` comes from the server** and carries
   `identity_mode` `account` (RFC-0019 §6).
 
