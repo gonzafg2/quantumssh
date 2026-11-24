@@ -73,7 +73,7 @@ else. Each failure stops the start.
    `/etc/passwd` and `/etc/group`.
 2. **The service account.**
    - The account named `quantumssh` must resolve in `/etc/passwd`, with
-     a UID that is not 0.
+     a UID and a primary GID that are not 0.
    - The launcher records that UID.
    - No listed account may have that UID, whatever its name. ADR-0064 §2
      repeats the check at every session start, because `/etc/passwd` is
@@ -120,10 +120,13 @@ would change the grammar (RFC-0016), and nothing needs that yet.
    exists (RFC-0020 §1; rustix 1.1.6, `src/thread/prctl.rs:631`).
 2. **It checks its own privileges, and exits with failure if a check
    fails.**
-   - Its real and effective UIDs are not 0.
+   - Its real and effective UIDs and GIDs are not 0.
    - `getgroups` is empty.
    - `capabilities(None)` returns empty permitted, effective and
      inheritable sets.
+   - `set_thread_res_uid(0, 0, 0)` and `set_thread_res_gid(0, 0, 0)`
+     both fail. By setresuid(2)'s rule, that proves the saved IDs are
+     not 0, as ADR-0065 §2 proves them for the helper.
 
    The kernel empties the capability sets when every UID leaves 0, but
    a securebit such as `SECBIT_NO_SETUID_FIXUP` stops that
@@ -182,8 +185,9 @@ as its caller. Its stdin is not the launcher's socket, so reading
 
 | Event | What follows |
 |---|---|
-| The server exits, for any reason | The launcher ends every session (ADR-0064 §5), then exits: 0 if the server exited with 0, otherwise 1 |
-| The launcher reads a zero-length record: an end of file, or an empty record (ADR-0063 §1) | It stops reading and waits for the server's exit, as in the row above. The exit status comes from the server, never from the read |
+| The server exits before `ready` | The launcher has sent no `READY=1`. It ends every session and exits with 1, whatever the server's status (§3) |
+| The server exits after `ready`, for any reason | The launcher ends every session (ADR-0064 §5), then exits: 0 if the server exited with 0, otherwise 1 |
+| The launcher reads a zero-length record: an end of file, or an empty record (ADR-0063 §1) | It stops reading and waits for the server's exit, as in the rows above. The exit status comes from the server, never from the read |
 | The launcher reads a malformed message (ADR-0063 §3) | It sends `SIGKILL` to the server, with no drain, because the server is faulty or compromised. It then ends every session and exits with 1 |
 | The server reads end-of-file from the launcher, or an unexpected descriptor (ADR-0063 §4) | It can no longer start or end sessions, so it exits at once with failure, without draining |
 
@@ -220,8 +224,11 @@ launcher with `$NOTIFY_SOCKET` set. It checks:
 - **the stop:** `SIGTERM` produces `STOPPING=1` and the extension, the
   drain runs, and the launcher exits with 0, leaving no session process;
 - **the launcher:** it has one thread;
-- **the server:** its `Uid:` is the service account in all four places;
-  `Groups:` is empty; `CapEff` and `CapPrm` are zero; `NoNewPrivs` is 1.
+- **the server:**
+  - its `Uid:` and `Gid:` are the service account's in all four places;
+  - `Groups:` is empty;
+  - `CapPrm`, `CapEff` and `CapInh` are zero;
+  - `NoNewPrivs` is 1.
 
 The systemd gate runs the same checks under the unit of ADR-0067.
 

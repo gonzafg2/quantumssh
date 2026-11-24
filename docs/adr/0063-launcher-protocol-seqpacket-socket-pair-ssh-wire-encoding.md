@@ -128,6 +128,18 @@ exactly one `started` or `refused` before it reads the next message.
 `listener` and `exited` arrive unprompted. The server therefore matches
 a reply to its request by order, with no request identifier.
 
+**On the server, one task owns the socket.**
+
+- It sends every message.
+- It keeps a FIFO of the connections that wait for an answer to
+  `start`: one entry per `start` it sends.
+- It hands each `started` or `refused` to the oldest entry.
+- Connection tasks never touch the socket. They pass their requests to
+  this task.
+
+The launcher's order is therefore the order in which the server matches,
+however many `start`s are in flight.
+
 ### 3. Bounds in the launcher's parser
 
 | Item | Bound | Source |
@@ -181,9 +193,15 @@ reason 5. Today's server already fails such a spawn.
   - It keeps serving, as it keeps accepting when `accept` fails with
     `EMFILE` (`crates/quantumssh-core/tests/accept_resources.rs`).
 - **A `listener` short of its descriptor fails the start.**
-- **A launcher fault ends the server** (ADR-0066 §5). Faults are
-  descriptors on a message that carries none, or more descriptors than
-  the message carries.
+- **A launcher fault ends the server** (ADR-0066 §5). There are two
+  kinds:
+  - descriptors on a message that carries none, `refused` or `exited`;
+  - more descriptors than the message carries, without `MSG_CTRUNC`:
+    two or three on a PTY session's `started`, or two or more on
+    `listener`.
+- **`MSG_CTRUNC` on `started` always fails just that session,** whoever
+  caused it. The server cannot tell its own descriptor limit from a
+  sender that sent too many.
 - **The launcher never runs a call on a descriptor the server chose,**
   because it never receives one (RFC-0020 §2).
 
@@ -203,9 +221,13 @@ reason 5. Today's server already fails such a spawn.
 
 - **A new target, `launcher_request`,** drives the launcher's parser of
   server messages.
-- **Its seeds:** `ready`; `end`; `start` for `exec`, for `shell` with a
-  PTY (TERM, dimensions and modes), and for `sftp`; and one `start` at
-  every bound of §3.
+- **Its seeds:**
+  - `ready` and `end`;
+  - `start` for `exec`, for `shell` with a PTY (TERM, dimensions and
+    modes), and for `sftp`;
+  - one `start` at every bound of §3;
+  - an empty input. §1 handles an empty record before the parser runs,
+    but the parser must still reject one.
 - **When.** It lands in the PR that implements this ADR.
 - **Why this one is fuzzed.** ADR-0060 §9's rule binds parsers that run
   before authentication. This parser runs after it, but it sits on a

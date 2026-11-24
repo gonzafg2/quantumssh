@@ -67,8 +67,9 @@ when they can.
   2. `pty` or `pipes`;
   3. the UID, in decimal;
   4. the primary GID, in decimal;
-  5. the supplementary groups: decimal GIDs separated by commas, which
-     may be empty;
+  5. the supplementary groups: decimal GIDs separated by commas. The
+     list is never empty, because it always holds the primary GID
+     (§2, step 2);
   6. the home directory;
   7. the program to run: the record's login shell, or `/bin/sh` when the
      field is empty, as passwd(5) says ("if empty, use `/bin/sh`");
@@ -179,6 +180,19 @@ these.
   session (RFC-0020, unresolved question 2).
 - **It writes no login records** (question 1), and uses no PAM
   (RFC-0019).
+- **It gives the session no kernel session keyring of its own.**
+  - **Why every process shares one.** Under systemd, `KeyringMode=`
+    defaults to `private` for system services: one session keyring is
+    allocated when a service process is invoked (systemd.exec(5)). Every
+    process of the unit inherits it: every session of every listed
+    account, and the network server. A key that one of them links into
+    that keyring is within reach of the others.
+  - **How OpenSSH avoids it.** It gives each session a fresh keyring
+    through `pam_keyinit`, and account mode has no PAM (RFC-0019).
+  - **Why the helper does not create one.** Joining a new session
+    keyring takes `keyctl(KEYCTL_JOIN_SESSION_KEYRING)`. rustix 1.1.6
+    has no such call, and a crate for it would contradict RFC-0020 §11.
+  - ADR-0069 states the residual. Closing it is follow-up work.
 - **It does not set a umask.** The launcher's umask applies: 0022 under
   systemd, which is `UMask=`'s default for system units
   (systemd.exec(5)).

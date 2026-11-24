@@ -39,6 +39,11 @@ Two of RFC-0020 §9's pointers need a reading:
   service-account mode, because that mode still runs every session as
   the service account. The text below records that.
 
+Two more sections of the threat model state §8.12's gap as if it held
+in every mode: §2.7, on the audit fields, and §5.4.5, on the SFTP
+helper. RFC-0020 §9 does not list them, but they become wrong for
+account mode, so this ADR scopes them to the two modes too.
+
 ## Decision
 
 The implementing PR makes the changes below, with this text. Section
@@ -120,7 +125,7 @@ this file.
 >   supplementary groups, no capabilities, and `no_new_privs`
 >   (ADR-0066).
 
-### 4. §7: a new entry, after "Compromise of the host or operator account"
+### 4. §7: two new entries, after "Compromise of the host or operator account"
 
 > - **Compromise of the network server in account mode** (§4.2).
 >   - **What it yields:** a remote code-execution bug in the process
@@ -136,6 +141,16 @@ this file.
 >     (RFC-0020, Alternative 3).
 >   - **In service-account mode,** the same compromise yields the
 >     service account, which every session already runs as.
+> - **One kernel session keyring for every account-mode session**
+>   (ADR-0065 §4).
+>   - **Who shares it.** Under systemd's default `KeyringMode=private`,
+>     the unit's processes share one session keyring: every session of
+>     every listed account, and the network server.
+>   - **What follows.** A key that one session links into that keyring
+>     is within reach of the others, and of a compromised network
+>     server.
+>   - **The advice.** Until each session gets its own keyring, keep no
+>     secret in the session keyring of an account-mode session.
 
 ### 5. §8.12: the heading and the text are replaced
 
@@ -170,7 +185,41 @@ this file.
 > [RFC-0020](rfcs/0020-privilege-separation-root-launcher-and-session-helper.md)
 > for its closure.
 
-### 6. Documents that restate §8.12
+### 6. §2.7 and §5.4.5: scoped to the two modes
+
+§2.7, "What.": the last sentence's ending, "as separate fields, so that
+the gap documented in §8.12 is visible to anyone reviewing server logs",
+becomes:
+
+> as separate fields. In service-account mode they make the gap
+> documented in §8.12 visible to anyone reviewing server logs. In
+> account mode `executing_uid` is the listed account's UID, and the
+> `account` field names it (RFC-0019 §6).
+
+§5.4.5, "Assets at risk.": the ending "and the files the service account
+can reach, which QuantumSSH does not protect from that account in Phase 2
+(§8.12)" becomes:
+
+> and the files that the session's account can reach: the service
+> account's in service-account mode (§8.12), the listed account's in
+> account mode.
+
+§5.4.5, "ATT&CK reference.": the ending "because Phase 2 grants no
+confinement to escape" becomes:
+
+> because neither mode confines the helper beyond its account's own
+> permissions, so there is no confinement to escape.
+
+§5.4.5, "Test handle.": the last bullet is replaced by:
+
+> - The helper runs as the service account in service-account mode. In
+>   account mode it runs as the listed account, after ADR-0065's
+>   identity change. In both modes nothing confines it beyond that
+>   account: any path the account can reach is reachable, which is the
+>   access a `shell` session already has. Confinement is
+>   [#270](https://github.com/gonzafg2/quantumssh/issues/270)'s.
+
+### 7. Documents that restate §8.12
 
 The same PR updates every document that describes §8.12 as open in all
 modes:
@@ -225,5 +274,5 @@ divides the server's side of §4.2 in two, so it reads best there.
 
 - [RFC-0020](../rfcs/0020-privilege-separation-root-launcher-and-session-helper.md) §9, §12, Alternative 3.
 - [RFC-0019](../rfcs/0019-identity-model-ssh-user-name-to-os-account.md) §1, §6, §8, §9.
-- [`docs/threat-model.md`](../threat-model.md) §2.5, §3.2.1, §3.2.4, §4.2, §7, §8.12.
+- [`docs/threat-model.md`](../threat-model.md) §2.5, §2.7, §3.2.1, §3.2.4, §4.2, §5.4.5, §7, §8.12.
 - [ADR-0015](0015-permit-annotated-errata-in-adrs.md), errata in accepted ADRs.

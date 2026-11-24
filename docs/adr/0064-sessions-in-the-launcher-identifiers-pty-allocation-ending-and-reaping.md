@@ -92,6 +92,14 @@ No partly started session survives the turn.
         (`tcsetwinsize`).
 
      A failed step refuses with reason 4.
+
+     **Step 2 changes a path, and that path names this pair's slave.**
+     The launcher opens exactly `/dev/ptmx`. The kernel serves it from
+     the devpts instance mounted at `pts` in the same directory
+     (`fs/devpts/inode.c`, `devpts_acquire` and `devpts_ptmx_path`, at
+     torvalds/linux `8d7fe9885c62`). That instance is `/dev/pts`, where
+     `ptsname`'s `/dev/pts/N` points. Only root could remount `/dev/pts`
+     between the two calls.
 4. **Start the helper** (ADR-0065), with the session's ends as its stdin,
    stdout and stderr. A failure refuses with reason 5.
 5. **Close the launcher's copies of the session's ends** as soon as the
