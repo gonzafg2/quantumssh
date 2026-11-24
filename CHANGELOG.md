@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The launcher protocol of account mode
+  ([ADR-0063](docs/adr/0063-launcher-protocol-seqpacket-socket-pair-ssh-wire-encoding.md)),
+  ahead of the launcher that uses it (#43).
+  - **What it covers.** `quantumssh-core::launcher` encodes and parses
+    the records between the network server and the root launcher:
+    `ready`, `start` and `end`, then `listener`, `started`, `refused`
+    and `exited`.
+  - **Bounds.** Every field is bounded, and a record is at most 36 KiB.
+  - **Fuzzing.** The launcher's parser of server records is the only
+    root-process parser of bytes another process chose. It gets the
+    `launcher_request` fuzz target, with seeds from
+    `scripts/fuzz-seeds.py`.
 - Continuous fuzzing
   ([ADR-0060](docs/adr/0060-continuous-fuzzing-cargo-fuzz-on-the-pinned-stable-toolchain.md)),
   run by cargo-fuzz with `--sanitizer none` on the pinned stable

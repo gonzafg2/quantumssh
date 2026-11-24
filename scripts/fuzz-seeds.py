@@ -242,6 +242,28 @@ def main():
         channel(open_session, request(b"subsystem", True, string(b"sftp")), eof, close),
     )
 
+    # launcher_request: records from the network server to the root
+    # launcher (ADR-0063 §2), one record per seed, with an empty one and a
+    # start at every bound of §3 (ADR-0063 §6).
+    def start(account, kind, tail=b""):
+        return bytes([2]) + string(account) + bytes([kind]) + tail
+
+    def pty(term, modes_blob):
+        return boolean(True) + string(term) + u32(80) + u32(24) + u32(0) + u32(0) + string(modes_blob)
+
+    write(seeds / "launcher_request/ready", bytes([1]))
+    write(seeds / "launcher_request/end", bytes([3]) + u64(1))
+    write(seeds / "launcher_request/exec", start(b"alice", 1, string(b"uptime") + boolean(False)))
+    write(seeds / "launcher_request/shell-pty", start(b"alice", 2, pty(b"xterm-256color", modes)))
+    write(seeds / "launcher_request/sftp", start(b"deploy", 3))
+    write(seeds / "launcher_request/empty", b"")
+    # Bounds: account 256 (the user-name bound), command 35000
+    # (wire::MAX_PACKET), TERM 64 and modes 1024 (ADR-0038 §2).
+    write(
+        seeds / "launcher_request/bounds",
+        start(b"a" * 256, 1, string(b"x" * 35000) + pty(b"t" * 64, bytes(1024))),
+    )
+
 
 if __name__ == "__main__":
     main()

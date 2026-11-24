@@ -207,11 +207,14 @@ reason 5. Today's server already fails such a spawn.
 
 ### 5. Where the code lives
 
-- **A new module, `launcher`, in `quantumssh-core`,** for Linux only.
-  - It holds the message types, the encoder and the parser.
-  - These are pure functions over byte slices, with no I/O.
-  - The parser of server messages is `pub(crate)`. The `fuzzing` module
-    reaches it, as ADR-0060 §3 provides.
+- **A new module, `launcher`, in `quantumssh-core`.**
+  - It holds the message types, the encoders and the parsers.
+  - These are pure functions over byte slices, with no I/O, so they
+    build and are tested on every platform the crate builds on. The
+    launcher that uses them is Linux only, like account mode (RFC-0019
+    §4).
+  - The parser of server messages is part of the crate's API. The
+    `fuzzing` module reaches it, as ADR-0060 §3 provides.
 - **The socket I/O wraps those functions.** Descriptors are `OwnedFd`
   and `BorrowedFd` throughout, and nothing needs `unsafe`.
 - **Dependencies.** No new crate. The `rustix` pin gains the `net`
@@ -252,7 +255,8 @@ reason 5. Today's server already fails such a spawn.
   its service (ADR-0066 §5). That trades availability for failing closed
   when the server misbehaves.
 - **One more fuzz target** runs in the daily fuzzing job.
-- **The protocol exists on Linux only,** like account mode (RFC-0019 §4).
+- **Only Linux uses the protocol,** because only Linux has account mode
+  (RFC-0019 §4). The codec itself builds everywhere.
 
 ### Neutral
 

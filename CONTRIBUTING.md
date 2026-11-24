@@ -142,9 +142,12 @@ the issue or RFC the change is associated with.
 - Every pre-authentication parser of peer-supplied bytes has a
   `cargo-fuzz` target in `fuzz/`
   ([ADR-0060](docs/adr/0060-continuous-fuzzing-cargo-fuzz-on-the-pinned-stable-toolchain.md)).
-  So do SFTP framing and field parsing, the terminal modes, and the
+  So do SFTP framing and field parsing, the terminal modes, the
   channel layer's inbound messages and window arithmetic
-  ([#271](https://github.com/gonzafg2/quantumssh/issues/271)). The SFTP
+  ([#271](https://github.com/gonzafg2/quantumssh/issues/271)), and the
+  records the root launcher of account mode reads from the network
+  server
+  ([ADR-0063](docs/adr/0063-launcher-protocol-seqpacket-socket-pair-ssh-wire-encoding.md)). The SFTP
   request handlers ([#270](https://github.com/gonzafg2/quantumssh/issues/270))
   do not have a target yet.
 - A change to a pre-authentication parser adds or updates its target and
