@@ -1,6 +1,6 @@
 # RFC 0020: Privilege separation — a root launcher, an unprivileged server, and a helper that becomes the account
 
-- **Status:** Draft
+- **Status:** Accepted (2026-11-24). The project lead shortened the 14-day comment period on [#296](https://github.com/gonzafg2/quantumssh/pull/296), with the reason stated there (`docs/rfcs/README.md`, step 5). The four unresolved questions are resolved at acceptance with the answers proposed below.
 - **Authors:** Gonzalo Fleming Garrido
 - **Created:** 2026-11-23
 - **Roadmap issue:** [#248](https://github.com/gonzafg2/quantumssh/issues/248) (Phase 3); tracked in [#43](https://github.com/gonzafg2/quantumssh/issues/43)
@@ -519,6 +519,8 @@ RFC-0019 rules out.
   Alternative 3.
 
 ## Unresolved questions
+
+All four were resolved at acceptance, with the proposed answer each one gives.
 
 1. **Login records.** Should account mode write utmp, wtmp and lastlog?
    Proposed answer: not in this RFC. Writing them is a further root-only

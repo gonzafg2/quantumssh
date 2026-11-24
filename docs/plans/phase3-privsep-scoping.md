@@ -1,11 +1,12 @@
 <!--
-  Governance status (2026-11-22):
-  Non-authoritative design note (ADR-0027). Scopes the Phase-3
-  privilege-separation RFC; tracked in #43. It decides nothing — it
-  records a constraint set and an option matrix so the eventual RFC does
-  not start from a blank page. Authoritative decisions: RFC-0019
-  (Accepted 2026-11-22), the identity model. All three prerequisites
-  below now exist ("Where the three stand").
+  Governance status (2026-11-24):
+  Non-authoritative design note (ADR-0027). Scoped the Phase-3
+  privilege-separation RFC; tracked in #43. It decides nothing.
+  Authoritative decisions: RFC-0019 (Accepted 2026-11-22), the identity
+  model, and RFC-0020 (Accepted 2026-11-24), privilege separation: a
+  root launcher, an unprivileged network server, and a single-threaded
+  helper per session, closest to option C below. The note is kept as
+  the record of the constraint and the options the RFC weighed.
 -->
 # Phase-3 privilege separation — scoping note (non-normative)
 
