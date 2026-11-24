@@ -118,4 +118,11 @@ test  = false
 doc   = false
 bench = false
 
+[[bin]]
+name  = "launcher_request"
+path  = "fuzz_targets/launcher_request.rs"
+test  = false
+doc   = false
+bench = false
+
 [workspace]
