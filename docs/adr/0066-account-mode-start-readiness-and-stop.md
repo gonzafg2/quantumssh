@@ -118,11 +118,22 @@ would change the grammar (RFC-0016), and nothing needs that yet.
 
 1. **`rustix::thread::set_no_new_privs(true)` first,** before any thread
    exists (RFC-0020 §1; rustix 1.1.6, `src/thread/prctl.rs:631`).
-2. **It reads `listener` from stdin** before it starts its runtime. That
+2. **It checks its own privileges, and exits with failure if a check
+   fails.**
+   - Its real and effective UIDs are not 0.
+   - `getgroups` is empty.
+   - `capabilities(None)` returns empty permitted, effective and
+     inheritable sets.
+
+   The kernel empties the capability sets when every UID leaves 0, but
+   a securebit such as `SECBIT_NO_SETUID_FIXUP` stops that
+   (capabilities(7)). `no_new_privs` does not clear sets already held.
+   The server checks this as ADR-0065 §2 checks the session helper.
+3. **It reads `listener` from stdin** before it starts its runtime. That
    descriptor is its listener, and it binds nothing itself.
-3. **It reads its configuration and keys** as the service account, with
+4. **It reads its configuration and keys** as the service account, with
    the same checks as today. The launcher's checks do not replace them.
-4. **It serves as today.** The exception is sessions, which it starts
+5. **It serves as today.** The exception is sessions, which it starts
    and ends through the launcher (ADR-0064).
 
 **Run by hand, the reserved argument grants nothing.** The process runs
@@ -172,6 +183,7 @@ as its caller. Its stdin is not the launcher's socket, so reading
 | Event | What follows |
 |---|---|
 | The server exits, for any reason | The launcher ends every session (ADR-0064 §5), then exits: 0 if the server exited with 0, otherwise 1 |
+| The launcher reads a zero-length record: an end of file, or an empty record (ADR-0063 §1) | It stops reading and waits for the server's exit, as in the row above. The exit status comes from the server, never from the read |
 | The launcher reads a malformed message (ADR-0063 §3) | It sends `SIGKILL` to the server, with no drain, because the server is faulty or compromised. It then ends every session and exits with 1 |
 | The server reads end-of-file from the launcher, or an unexpected descriptor (ADR-0063 §4) | It can no longer start or end sessions, so it exits at once with failure, without draining |
 

@@ -70,8 +70,16 @@ The kernel gives three guarantees (unix(7), Linux man-pages 6.19):
   each `recvmsg` returns one. There is no length framing, and no message
   spans two records. A message's descriptors arrive in the same record as
   its bytes.
-- **End of file.** Every message is at least one byte, so a zero-length
-  read means the peer has closed its end.
+- **A zero-length read.** It means the peer has closed its end, or that
+  it sent an empty record. `SOCK_SEQPACKET` allows empty records, and no
+  message is one. The launcher treats both cases alike:
+  - it reads no more messages;
+  - it waits for the server's exit, which ADR-0066 §5 handles.
+
+  The launcher's exit status therefore comes from the server's wait
+  status, never from the read. A running server that sends an empty
+  record only stops itself from starting or ending sessions. It can
+  already end its own service by exiting.
 - **No version field.** The launcher starts the server from its own
   image, `/proc/self/exe` (ADR-0066), so both ends always run the same
   build.
