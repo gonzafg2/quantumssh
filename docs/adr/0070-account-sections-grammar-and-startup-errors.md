@@ -80,8 +80,14 @@ applies (`auth.rs`, `USER_NAME_BOUND`). It must also be:
 - **not starting with `-`;**
 - **not all digits.**
 
-`.` and `..`, which useradd(8) also forbids, cannot occur, because `.`
-is not in the alphabet. The rule is checked byte by byte on the TOML
+`.` and `..` cannot occur, because `.` is not in the alphabet.
+
+- **This is the rule useradd(8) states,** and the rule RFC-0019 §3 fixes.
+- **shadow-utils' implementation is wider.** It also accepts `.` inside
+  a name, such as `john.doe` (`lib/chkname.c`, the pattern
+  `[a-zA-Z0-9_.][a-zA-Z0-9_.-]*$\?`).
+- **Such an account cannot be listed.** The startup error names it.
+  Accepting `.` would be a change to RFC-0019 §3. The rule is checked byte by byte on the TOML
 string. Nothing is normalized: `Alice` and `alice` are two names, as
 they are in `/etc/passwd`.
 
@@ -141,7 +147,7 @@ the field `account` (its name), and the field `reason`:
 |---|---|
 | `no_passwd_entry` | `/etc/passwd` has no line for the name |
 | `malformed_entry` | the account's line in `/etc/passwd` is malformed, or a line in `/etc/group` that names it is malformed (ADR-0071 §3) |
-| `too_many_groups` | the account belongs to more than 65,536 supplementary groups (ADR-0071 §1) |
+| `too_many_groups` | its groups, primary GID included, exceed 65,536 (ADR-0071 §1) |
 | `no_key` | its key file holds no key, and `auth.trusted_user_ca_keys` is unset |
 
 These records are diagnostic, not audit. RFC-0014 §5 lets diagnostic
@@ -194,5 +200,5 @@ out at the next restart.
 
 - [RFC-0019](../rfcs/0019-identity-model-ssh-user-name-to-os-account.md) §1, §3, §5, §7, §8, §9; [RFC-0016](../rfcs/0016-config-schema-v1.md) §1, §2; [RFC-0014](../rfcs/0014-audit-log-schema-v1.md) §4, §5.
 - [ADR-0029](0029-phase-2-config-file-v1-schema-parser-strictmodes.md); [ADR-0040](0040-refuse-authorized-keys-options-until-enforced.md); [ADR-0066](0066-account-mode-start-readiness-and-stop.md) §1, §6.
-- useradd(8), "Caveats": the user-name rule.
+- useradd(8), "Caveats": the user-name rule. shadow-utils `lib/chkname.c` (master, read 2026-11-24): the wider rule its implementation applies.
 - `crates/quantumssh/src/config.rs`; `crates/quantumssh-core/src/auth.rs`, `USER_NAME_BOUND`.

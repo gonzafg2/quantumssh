@@ -39,10 +39,11 @@ The implementing PR makes these changes, with this text.
 
 ### 1. Threat model §6.3
 
-The last two sentences of the "User certificates from operator-listed
-CAs" bullet are "Until Phase 3 maps principals to accounts, the CA file
-is the access boundary: every certificate a trusted CA issued gets in,
-whatever its principal." They are replaced by:
+The last sentence of the "User certificates from operator-listed CAs"
+bullet is "Until Phase 3 maps principals to accounts, the CA file is
+the access boundary: every certificate a trusted CA issued gets in,
+whatever its principal." It is replaced by the text below. The sentences
+before it stay as they are:
 
 > In service-account mode the CA file is the access boundary: every
 > certificate a trusted CA issued gets in, whatever its principal. In

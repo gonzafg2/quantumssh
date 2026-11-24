@@ -60,7 +60,7 @@ setresuid(2). A record carrying it must never reach the helper.
 | File size | 16 MiB | the file is unusable: at startup a `file_unavailable` error names it; at authentication and at a session start, the read fails as RFC-0019 §4 and ADR-0064 §2 prescribe |
 | Line length | 1 MiB | the line is malformed (§3) |
 | Fields per line | exactly 7 in `/etc/passwd`, exactly 4 in `/etc/group` | the line is malformed |
-| Supplementary groups per account | 65,536, Linux's `NGROUPS_MAX` | the account does not resolve |
+| Groups per account | 65,536, Linux's `NGROUPS_MAX`, counted on the final list that `setgroups` gets: the `/etc/group` memberships plus the primary GID, without duplicates (ADR-0065 §2) | the account does not resolve |
 
 The 1 MiB line bound leaves room for a group that lists every account
 of a large host. The file bound leaves room for many such lines.
@@ -75,13 +75,16 @@ of a large host. The file bound leaves room for many such lines.
   or space. The value must be at most 4294967294. 4294967295 is
   malformed, because setresuid(2) and setresgid(2) read it as "leave
   unchanged".
-- **home:** any bytes other than NUL. A home that is empty or not
-  absolute is kept. `chdir` then fails, and the helper falls back to `/`
-  (ADR-0065 §2).
+- **home:** an absolute path. An empty or relative home is malformed.
+  `chdir` would resolve a relative one against the helper's working
+  directory, and `HOME` would carry it into the session. A home that
+  does not exist is not malformed: `chdir` fails, and the helper falls
+  back to `/` (ADR-0065 §2).
 - **shell:** empty, or an absolute path. An empty shell becomes
-  `/bin/sh`, as passwd(5) says. A relative shell is malformed: `execve`
-  of a name with no `/` would search `PATH`, so the shell run would
-  depend on the session's environment.
+  `/bin/sh`, as passwd(5) says. A relative shell is malformed.
+  `execve(2)` itself does not search `PATH`, but `std::process::Command`
+  does, as `execvp(3)` does, for a name with no `/`. The shell run would
+  then depend on the session's environment.
 - **The password and GECOS fields** are not read.
 
 **`/etc/group`:**
@@ -93,14 +96,17 @@ of a large host. The file bound leaves room for many such lines.
 
 **Both files:**
 
-- **Comment and NIS lines are skipped before any other rule.** A line
-  whose first byte is `#`, `+` or `-` is never read as an entry, a
-  membership or a malformed line. In `/etc/group` this matters: a
+- **Leading ASCII whitespace is skipped first:** space, `\t`, `\v`,
+  `\f` and `\r`. glibc's reader does the same before it looks for a
+  comment (`nss/nss_readline.c:68-70` at `04e750e75b73`). A line that is
+  empty after that is skipped.
+- **Comment and NIS lines are then skipped, before any other rule.** A
+  line whose first byte, after the whitespace, is `#`, `+` or `-` is
+  never read as an entry, a membership or a malformed line. In `/etc/group` this matters: a
   commented-out `#wheel:x:10:alice` splits into four valid fields. Read
   as an entry, it would give `alice` the GID 10 that the operator took
   away. There is therefore no NIS either.
 - A NUL byte anywhere in a line makes the line malformed.
-- An empty line is skipped.
 
 ### 3. Malformed lines
 
@@ -156,7 +162,8 @@ more groups than §1 allows, is an account that does not resolve:
   - a malformed group line that names the account, and one that does
     not;
   - NIS-style lines, and a `#`-prefixed group line that lists the
-    account, which must not give it that GID;
+    account, plain and indented with `\t`, which must not give it that
+    GID;
   - a name that appears only as a group name, which is not membership.
 - **No fuzz target.** Both files are owned by root, and RFC-0019 §8
   checks that before every read. ADR-0060 §9's rule covers parsers of
@@ -176,10 +183,10 @@ more groups than §1 allows, is an account that does not resolve:
 
 ### Negative
 
-- **Stricter than libc in two places.** A relative shell, or a
-  malformed group line that names the account, makes the account
-  unreachable where `login` would still let it in. The startup record
-  says why.
+- **Stricter than libc in three places.** A relative shell, an empty or
+  relative home, or a malformed group line that names the account makes
+  the account unreachable where `login` would still let it in. The
+  startup record says why.
 - **No NSS, no NIS, no `nscd`.** RFC-0019's Drawbacks accept this.
 
 ### Neutral
@@ -210,4 +217,5 @@ builds would add `nscd` lookups, not directory services.
 - [RFC-0019](../rfcs/0019-identity-model-ssh-user-name-to-os-account.md) §3, §4, §8, §9, Drawbacks.
 - passwd(5), group(5), setresuid(2): Linux man-pages 6.19.
 - musl `src/passwd/getpwent_a.c` (git.musl-libc.org, read 2026-11-24): a line that cannot be split is skipped.
+- glibc `nss/nss_readline.c:68-70` at `04e750e75b73`: leading whitespace, empty lines and `#` lines are skipped.
 - [ADR-0060](0060-continuous-fuzzing-cargo-fuzz-on-the-pinned-stable-toolchain.md) §9.
