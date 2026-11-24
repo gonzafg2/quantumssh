@@ -9,11 +9,18 @@
 use crate::auth::{self, AuthorizedKeys, UserauthRequest};
 use crate::cert::{self, TrustedUserCaKeys};
 use crate::wire::{self, Reader};
-use crate::{channel, pty, sftp, transport};
+use crate::{channel, launcher, pty, sftp, transport};
 
 /// Parses an `SSH_MSG_SERVICE_REQUEST` payload.
 pub fn service_request(payload: &[u8]) {
     let _ = transport::parse_service_request(payload);
+}
+
+/// Parses a record from the network server as the root launcher does
+/// (ADR-0063 §6): the only parser in the root process that reads bytes
+/// another process chose.
+pub fn launcher_request(record: &[u8]) {
+    let _ = launcher::parse_request(record);
 }
 
 /// A fixed `authorized_keys` set and session id for

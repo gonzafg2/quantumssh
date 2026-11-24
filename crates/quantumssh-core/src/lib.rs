@@ -26,6 +26,7 @@ mod exec;
 pub mod fuzzing;
 pub mod host_key;
 pub mod kex;
+pub mod launcher;
 pub mod pty;
 pub mod server;
 pub mod session_helper;
