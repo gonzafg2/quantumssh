@@ -130,7 +130,7 @@ fn stat(path: &Path) -> Result<rustix::fs::Stat, FileCheck> {
 /// A `stat` mode as `u32`: `st_mode` is `u16` on the libc (macOS)
 /// backend and `u32` on `linux_raw`.
 #[must_use]
-pub fn mode_of(st: &rustix::fs::Stat) -> u32 {
+pub(crate) fn mode_of(st: &rustix::fs::Stat) -> u32 {
     #[allow(clippy::useless_conversion)]
     u32::from(st.st_mode)
 }
@@ -144,14 +144,15 @@ pub fn mode_of(st: &rustix::fs::Stat) -> u32 {
 /// fails or the file is over its bound.
 pub fn read_root_file(path: &Path) -> Result<Vec<u8>, FileCheck> {
     check_root_file(path)?;
-    let unavailable =
-        |e: std::io::Error| FileCheck::Unavailable(format!("{}: cannot read: {e}", path.display()));
+    let failed = |what: &str, e: std::io::Error| {
+        FileCheck::Unavailable(format!("{}: cannot {what}: {e}", path.display()))
+    };
     let mut bytes = Vec::new();
     std::fs::File::open(path)
-        .map_err(unavailable)?
+        .map_err(|e| failed("open", e))?
         .take(MAX_FILE as u64 + 1)
         .read_to_end(&mut bytes)
-        .map_err(unavailable)?;
+        .map_err(|e| failed("read", e))?;
     if bytes.len() > MAX_FILE {
         return Err(FileCheck::Unavailable(format!(
             "{}: over its bound of {MAX_FILE} bytes",
@@ -184,14 +185,10 @@ pub fn resolve(name: &str) -> Result<AccountRecord, ResolveError> {
 }
 
 /// [`resolve`] over the given paths.
-fn resolve_from(
-    passwd: &Path,
-    group: &Path,
-    name: &str,
-) -> Result<AccountRecord, ResolveError> {
-    let passwd = read_root_file(passwd).map_err(ResolveError::File)?;
-    let group = read_root_file(group).map_err(ResolveError::File)?;
-    lookup(&passwd, &group, name).map_err(ResolveError::Unresolved)
+fn resolve_from(passwd: &Path, group: &Path, name: &str) -> Result<AccountRecord, ResolveError> {
+    let passwd_bytes = read_root_file(passwd).map_err(ResolveError::File)?;
+    let group_bytes = read_root_file(group).map_err(ResolveError::File)?;
+    lookup(&passwd_bytes, &group_bytes, name).map_err(ResolveError::Unresolved)
 }
 
 /// What a session runs as (RFC-0019 §4).
