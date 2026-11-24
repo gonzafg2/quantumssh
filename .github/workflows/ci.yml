@@ -189,6 +189,14 @@ jobs:
         if: steps.members.outputs.count != '0' && runner.os == 'Linux'
         run: bash tests/systemd/run_in_docker.sh
 
+      # ADR-0065 §6: account mode's session helper, run as root in a
+      # disposable container of the gate image, becomes a test account and
+      # proves root cannot be regained. It uses the release binary built
+      # above.
+      - name: Session helper as root
+        if: steps.members.outputs.count != '0' && runner.os == 'Linux'
+        run: bash tests/privsep/run_in_docker.sh
+
       # ADR-0054 §6–§7: the download signature check and the pinned check,
       # with keys generated for the test. Its retired-key case reads this
       # repository's v0.1.0 release record with gh, hence the token.

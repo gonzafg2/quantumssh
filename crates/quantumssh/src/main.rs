@@ -464,8 +464,11 @@ fn load_key_file<T>(
 
 fn main() -> ExitCode {
     // First, before CLI parsing, configuration, logging or the runtime:
-    // PTY and SFTP children re-execute this binary in a helper mode, which
-    // never returns (ADR-0038 §5, ADR-0041 §2).
+    // PTY and SFTP children, and account mode's session helper, re-execute
+    // this binary in a helper mode, which never returns (ADR-0038 §5,
+    // ADR-0041 §2, ADR-0065 §1).
+    #[cfg(target_os = "linux")]
+    quantumssh_core::session_helper::run_if_requested();
     quantumssh_core::pty::run_helper_if_requested();
     quantumssh_core::sftp::run_server_if_requested();
     let args: Vec<String> = std::env::args().skip(1).collect();

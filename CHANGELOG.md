@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The session helper of account mode
+  ([ADR-0065](docs/adr/0065-session-helper-identity-change-checks-and-environment.md)),
+  ahead of the launcher that starts it (#43).
+  - **Identity.** The binary's `--quantumssh-internal-session` mode,
+    started as root, becomes the session leader and takes the PTY when
+    there is one. It sets the account's groups, GID and UID.
+  - **Checks.** The real and effective IDs and the groups must read back
+    as set. The permitted, effective and inheritable capability sets
+    must be empty. `setresuid(0, 0, 0)` and `setresgid(0, 0, 0)` must
+    fail. If any check fails, the helper exits with 127.
+  - **The session.** The helper then runs the account's login shell, or
+    the SFTP server in-process.
+  - **Tests.** A new CI step runs it as root in a disposable container
+    of the gate image (`tests/privsep/`). It checks the account's
+    identity, groups, capabilities and home, and `exec`, `shell` and
+    `sftp`. It also checks the refusals: a caller that is not root, a
+    UID of 4294967295, and an inheritable capability that the drop
+    does not clear.
 - Continuous fuzzing
   ([ADR-0060](docs/adr/0060-continuous-fuzzing-cargo-fuzz-on-the-pinned-stable-toolchain.md)),
   run by cargo-fuzz with `--sanitizer none` on the pinned stable

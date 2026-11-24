@@ -114,11 +114,18 @@ pub fn run_server_if_requested() {
     if !in_home {
         let _ = std::env::set_current_dir("/");
     }
+    std::process::exit(serve_stdio());
+}
+
+/// Serves SFTP on stdin and stdout, from the current working directory,
+/// and returns the exit status. ADR-0041 §2's helper calls it, and so does
+/// the account-mode session helper, once it runs as the account
+/// (ADR-0065 §2).
+pub(crate) fn serve_stdio() -> i32 {
     // `~` and relative REALPATHs resolve against the working directory,
     // as OpenSSH's `getcwd` (ADR-0041 §4).
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
-    let code = serve(io::stdin().lock(), io::stdout().lock(), cwd);
-    std::process::exit(code);
+    serve(io::stdin().lock(), io::stdout().lock(), cwd)
 }
 
 /// A malformed request: the session ends.
