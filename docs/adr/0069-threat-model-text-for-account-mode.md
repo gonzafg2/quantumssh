@@ -84,10 +84,16 @@ this file.
 > - *Trusted by the launcher from the server:* nothing.
 >   - Every message is bounded and read by a fuzzed parser, and a
 >     malformed message ends the service (ADR-0063).
->   - No descriptor, path, program or environment variable crosses from
->     the server.
->   - The command string of `exec` is the one value the server passes
->     on, and only the account's shell interprets it.
+>   - No descriptor, path or program crosses from the server.
+>   - The values that do cross are the account's name, the session's
+>     kind, the `exec` command and, with a PTY, `TERM`, the window size
+>     and the terminal modes. Each has a bound (ADR-0063 §3).
+>   - `TERM` must match ADR-0038 §2's pattern, and is the only variable
+>     of the session's environment that comes from the server
+>     (ADR-0065 §3).
+>   - The modes go through the parser the server already uses and
+>     fuzzes.
+>   - Only the account's shell interprets the command.
 > - *Checked by the launcher before each session:*
 >   - the account is listed;
 >   - it resolves now, with a UID that is not 0, in files that pass

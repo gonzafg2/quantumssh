@@ -27,7 +27,8 @@ RFC-0020 §2 fixes the content of that conversation:
 It also fixes what the launcher refuses to trust:
 
 - no descriptor flows from the server to the launcher;
-- no path, program or environment variable comes from the server;
+- no path, program or environment variable comes from the server, except
+  the command of `exec` (§2) and, on a PTY, `TERM` (RFC-0020 §5);
 - every field has a bound;
 - a malformed message ends the launcher's service;
 - the parser gets a fuzz target.

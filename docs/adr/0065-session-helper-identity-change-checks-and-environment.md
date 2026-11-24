@@ -75,7 +75,8 @@ when they can.
   8. for `exec` only, the command.
 - **Where the arguments come from.** The launcher writes them, from the
   record it read for this session (ADR-0064 §2). The command is the one
-  value that comes from the server, as RFC-0020 §2 allows.
+  argument that comes from the server, as RFC-0020 §2 allows. `TERM` is
+  the one variable that does (§3).
 - **A malformed argument list** exits 127, like every other failure (§2).
 
 ### 2. The sequence
