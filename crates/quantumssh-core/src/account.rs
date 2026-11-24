@@ -116,7 +116,7 @@ pub fn lookup(passwd: &[u8], group: &[u8], name: &str) -> Result<AccountRecord, 
         let (gid, members) = parse_group_line(line).ok_or(Unresolved::Malformed)?;
         if members
             .split(|&b| b == b',')
-            .any(|member| member == name.as_bytes())
+            .any(|member| list_item(member) == name.as_bytes())
         {
             groups.push(gid);
         }
@@ -162,7 +162,18 @@ fn first_field(line: &[u8]) -> &[u8] {
 fn names(line: &[u8], name: &[u8]) -> bool {
     line.split(|&b| b == b':')
         .flat_map(|field| field.split(|&b| b == b','))
-        .any(|item| item == name)
+        .any(|item| list_item(item) == name)
+}
+
+/// A comma-separated item without its leading ASCII whitespace, as
+/// glibc's `parse_list` reads a group's members ("Skip leading white
+/// space", `nss/nss_files/files-parse.c`), so `bob, alice` lists `alice`.
+fn list_item(item: &[u8]) -> &[u8] {
+    let start = item
+        .iter()
+        .position(|b| !matches!(b, b' ' | b'\t' | b'\n' | 0x0b | 0x0c | b'\r'))
+        .unwrap_or(item.len());
+    &item[start..]
 }
 
 /// A line within [`MAX_LINE`], with no NUL byte, split into exactly `n`
@@ -290,7 +301,7 @@ docker:x:999:alice\n";
 
     #[test]
     fn ids_take_digits_only_and_never_the_leave_unchanged_value() {
-        for uid in [
+        for bad in [
             "",
             "+1",
             "-1",
@@ -300,17 +311,17 @@ docker:x:999:alice\n";
             "12345678901",
             "4294967295",
         ] {
-            let passwd = format!("alice:x:{uid}:1001::/home/alice:/bin/bash\n");
+            let passwd = format!("alice:x:{bad}:1001::/home/alice:/bin/bash\n");
             assert_eq!(
                 lookup(passwd.as_bytes(), b"", "alice"),
                 Err(Unresolved::Malformed),
-                "uid {uid:?}"
+                "{bad:?} in the third field"
             );
-            let passwd = format!("alice:x:1001:{uid}::/home/alice:/bin/bash\n");
+            let passwd = format!("alice:x:1001:{bad}::/home/alice:/bin/bash\n");
             assert_eq!(
                 lookup(passwd.as_bytes(), b"", "alice"),
                 Err(Unresolved::Malformed),
-                "gid {uid:?}"
+                "{bad:?} in the fourth field"
             );
         }
         let passwd = b"alice:x:4294967294:0000001001::/home/alice:/bin/bash\n";
@@ -376,6 +387,24 @@ docker:x:999:alice\n";
     fn a_malformed_group_line_that_does_not_name_the_account_is_skipped() {
         let group = b"wheel:x:ten:bob\nteam:x:2000:alice\n";
         assert_eq!(ok(PASSWD, group, "alice").groups, vec![1001, 2000]);
+    }
+
+    #[test]
+    fn a_member_after_a_comma_and_whitespace_counts() {
+        // glibc skips leading whitespace in a member list; so does the parser.
+        let group = b"team:x:2000:bob, alice\nops:x:3000:\talice\n";
+        assert_eq!(ok(PASSWD, group, "alice").groups, vec![1001, 2000, 3000]);
+        // Trailing whitespace stays part of the item, as in glibc.
+        assert_eq!(
+            ok(PASSWD, b"team:x:2000:alice \n", "alice").groups,
+            vec![1001]
+        );
+        // A malformed line that lists the account after whitespace still
+        // fails the lookup.
+        assert_eq!(
+            lookup(PASSWD, b"wheel:x:ten:bob, alice\n", "alice"),
+            Err(Unresolved::Malformed)
+        );
     }
 
     #[test]

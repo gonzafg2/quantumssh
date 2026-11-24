@@ -90,8 +90,11 @@ of a large host. The file bound leaves room for many such lines.
 **`/etc/group`:**
 
 - **GID:** the passwd rule above.
-- **user list:** split on `,`, with empty items ignored. Each item is
-  compared byte for byte with the account's name.
+- **user list:** split on `,`, with empty items ignored. Each item
+  loses its leading ASCII whitespace, as glibc's `parse_list` does ("Skip
+  leading white space", `nss/nss_files/files-parse.c:264` at
+  `04e750e75b73`), so `bob, alice` lists `alice`. It is then compared
+  byte for byte with the account's name.
 - **The group name and password** are not read.
 
 **Both files:**
