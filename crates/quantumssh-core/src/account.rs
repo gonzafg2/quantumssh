@@ -183,12 +183,8 @@ pub fn resolve(name: &str) -> Result<AccountRecord, ResolveError> {
     resolve_from(Path::new(PASSWD), Path::new(GROUP), name)
 }
 
-/// [`resolve`] over other paths, for tests.
-///
-/// # Errors
-///
-/// [`ResolveError`].
-pub fn resolve_from(
+/// [`resolve`] over the given paths.
+fn resolve_from(
     passwd: &Path,
     group: &Path,
     name: &str,
