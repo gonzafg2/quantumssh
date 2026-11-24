@@ -171,13 +171,23 @@ socket pair.
 
 - **Server to launcher:**
   - *start a session*: the account's name, the kind (`exec` and its
-    command, `shell`, or `sftp`), and whether it runs on a PTY; with
-    the session's stdio descriptors attached by `SCM_RIGHTS`;
-  - *signal a session*: kill its process group.
+    command, `shell`, or `sftp`), and, for a PTY, the `pty-req` fields:
+    the terminal modes blob and the window size;
+  - *signal a session*: kill its process group, by the identifier the
+    launcher gave it.
 - **Launcher to server:**
-  - *started*: the session's identifier and the UID it runs under;
+  - *started*: the session's identifier, the UID it runs under, and the
+    server's ends of the session's stdio, attached by `SCM_RIGHTS`;
   - *refused*;
   - *exited*: the exit status, or the signal.
+
+**No descriptor flows from the server to the launcher.** The launcher
+creates every descriptor a session uses: the three pipes of a session
+without a PTY, or the PTY pair. It keeps the session's ends and passes
+the server its own: the pipes' other ends, or the PTY master. It does
+the same with the listening socket at startup (§1). So the root
+process never runs a privileged call on a descriptor that a
+compromised server chose, such as `/dev/ptmx` in place of a slave.
 
 The launcher treats every byte as hostile, because it must hold if the
 server is compromised.
@@ -190,43 +200,66 @@ server is compromised.
   program name and no environment variable from it. The command string
   of `exec` is the one exception: it is the user's own request, and
   only the account's shell interprets it.
+- **The modes blob goes through the parser the server already uses,**
+  `pty::Modes::parse`, which has its own fuzz target (`pty_modes`). It
+  is bounded to 1024 bytes, as ADR-0038 §2 bounds it.
+- **Session identifiers are never reused.** The launcher signals a
+  session's process group only while it still holds the group's leader
+  unreaped. It watches for the exit with `WNOWAIT`, as `exec.rs` does
+  today. A request for a session whose leader it has already reaped is
+  refused. Once a leader is reaped, its process group ID could belong to
+  an unrelated process, and root would signal it.
 
 ### 3. What the launcher checks, and what it does not
 
 Before it starts a session for account `A`, the launcher checks:
 
 1. `A` is in the list it read at startup.
-2. `A` resolves in `/etc/passwd`, read now, with a UID that is not 0.
-   This is the record the session runs with. RFC-0019 §4's read in the
-   server stays the gate for authentication, but it no longer decides
-   the session's identity, because the launcher cannot trust it.
-3. The descriptors attached match the kind: one PTY slave, or three
-   pipe ends.
+2. `A` resolves now, in `/etc/passwd` and `/etc/group`, both read for
+   this session, with a UID that is not 0. This is the record the
+   session runs with, supplementary groups included: an account removed
+   from a group loses it on its next session, without a restart.
+   RFC-0019 §4's read in the server stays the gate for authentication,
+   but it no longer decides the session's identity, because the
+   launcher cannot trust it.
 
 It does not check that the connection authenticated as `A`. A
 compromised server can therefore ask for a session as any listed
-account. It cannot get one as root, as an unlisted account, or with a
-program the launcher did not choose. Drawbacks and Alternative 3 weigh
+account. It cannot get one with UID 0, as an unlisted account, or
+running a program the launcher did not choose. But a session as a
+listed account can do whatever that account can, its own ways to
+become root included: `sudo`, a group such as `docker` or `disk`, a
+set-user-ID program it can reach. Drawbacks and Alternative 3 weigh
 this against a launcher that verifies authentication itself.
 
 ### 4. The session helper
 
 The launcher starts the helper with `std::process::Command` on its own
-executable, with a reserved argument, the passed descriptors as stdin,
-stdout and stderr, and a cleared environment. The helper's `main`
+executable, with a reserved argument, the session's ends of the
+descriptors it created as stdin, stdout and stderr, and a cleared
+environment. The helper's `main`
 checks the reserved argument before anything else, as ADR-0038 §5's
 does, so it is single-threaded throughout.
 
 What the helper does, in order:
 
-1. **Session leader, while still root.** `setsid`. On a PTY, also
-   `ioctl_tiocsctty` on the slave, then `fchown` of the slave to the
-   account and `fchmod`. OpenSSH's `pty_setowner` gives the slave the
-   `tty` group and mode `0620` when that group exists, and the user's
-   own group and `0600` otherwise. The implementing ADR takes the same
-   rule.
+1. **Session leader, while still root.** `setsid`, and on a PTY
+   `ioctl_tiocsctty` on the slave. The launcher allocated that pair
+   itself, as root, before it started the helper, with the sequence
+   `pty::allocate` uses today (ADR-0038 §4):
+   - open `/dev/ptmx`, then `grantpt`;
+   - while the pair is still locked, give the slave to the account and
+     set its mode to `0600`;
+   - `unlockpt`, then open the slave through `ioctl_tiocgptpeer`;
+   - apply the modes and the window size.
+
+   That keeps ADR-0038 §10's Phase-2 mode, which leaves out OpenSSH's
+   `tty` group write bit so that `write` and `wall` cannot reach a
+   session. ADR-0038 §10 named two ways for Phase 3 to give the slave
+   to the user, and this is the first: the privileged side allocates
+   the pair and gives the slave away before the drop.
 2. **Groups.** `set_thread_groups` to the account's supplementary
-   groups, from RFC-0019's record.
+   groups, from the launcher's read for this session (§3).
 3. **GID.** `set_thread_res_gid(g, g, g)`.
 4. **UID.** `set_thread_res_uid(u, u, u)`. Root changing every UID to a
    non-zero one also clears the capability sets.
@@ -254,7 +287,10 @@ Every call above is safe in rustix 1.1:
   the whole helper;
 - `rustix::process::setsid` and `ioctl_tiocsctty`, which ADR-0038 already
   uses;
-- `rustix::fs::fchown` and `fchmod`.
+- in the launcher, the calls `pty::allocate` already makes:
+  `rustix::fs::open`, `rustix::pty::grantpt`, `ptsname`, `unlockpt` and
+  `ioctl_tiocgptpeer`, with `rustix::fs::chown` for the owner;
+- `std::io::pipe` for the three pipes.
 
 ### 5. The session's environment
 
@@ -281,8 +317,9 @@ shell. That answers the shell question RFC-0019 left to this RFC.
   process of another UID, so it sends a request and the launcher kills
   the session's process group. ADR-0023's kill on an early close works
   that way.
-- **The PTY master stays in the server,** which relays its bytes as now.
-  Only the slave goes to the launcher.
+- **The PTY master is the server's,** which relays its bytes and
+  applies `window-change` to it as now. The launcher keeps the slave,
+  and only the helper gets it.
 
 ### 7. Platform
 
@@ -295,6 +332,12 @@ Account mode exists on Linux only (RFC-0019 §4), and so does this design.
 - **No `NoNewPrivileges=`.** It would bind every session, and a real
   account's session may rely on `sudo` or other set-user-ID programs.
   The network server sets `no_new_privs` on itself instead (§1).
+- **What that means for the list.** Every way a listed account has to
+  become root is within reach of a compromised server (§3). An operator
+  should list only accounts whose whole privilege, escalation paths
+  included, they accept exposing that way. An operator who wants no
+  session to gain privilege can still set `NoNewPrivileges=yes`, at the
+  cost of `sudo` in every session.
 - **The launcher is the main process** for `Type=notify` and
   `NotifyAccess=main`. How readiness passes from the server to it is
   the implementing ADR's.
@@ -316,7 +359,9 @@ model:
   - what the launcher trusts from the server (nothing);
   - what it checks (§3);
   - what a compromised server can reach: every listed account, never
-    root, never an unlisted account.
+    UID 0 directly, never an unlisted account, and through a listed
+    account whatever that account can reach, root included if it has a
+    way there (§8).
 - **§3.2.1's and §3.2.4's residuals** say the same about a remote
   compromise of the network server.
 
@@ -331,6 +376,10 @@ model:
   stays the authentication gate.
 - **ADR-0038 §5 and ADR-0041:** their helpers start from the launcher,
   not the server, and the identity change of §4 runs first.
+- **ADR-0038 §4 and §10:** in account mode the launcher, not the server,
+  allocates the PTY pair. Of the two ways §10 named for Phase 3, this is
+  the first. The slave keeps §10's mode `0600`, now owned by the
+  account.
 - **ADR-0043:** its unit becomes the service-account-mode unit (§8).
 
 ### 11. Dependencies
@@ -343,6 +392,9 @@ change ADR-0029 made when it added `fs`.
 ### 12. What the implementing ADRs decide
 
 - the launcher protocol's encoding and bounds, and its fuzz target;
+- the session identifier's lifecycle: when the launcher allocates a
+  PTY, when it releases one that was never started, and how it refuses
+  a request for a session it has reaped (§2);
 - the helper's exact sequence and checks, and the default `PATH`;
 - how the launcher starts and stops with the server, and how readiness
   and `SIGTERM` pass between them;
@@ -354,8 +406,10 @@ change ADR-0029 made when it added `fs`.
 ## Drawbacks
 
 - **A compromised network server reaches every listed account.** It can
-  ask the launcher for a session as any of them (§3). It cannot reach
-  root or an unlisted account. In service-account mode the same
+  ask the launcher for a session as any of them (§3). It cannot get UID
+  0 directly, or an unlisted account. But through a listed account it
+  reaches whatever that account can, root included if the account has
+  a way there, such as `sudo` (§8). In service-account mode the same
   compromise reaches the service account, which every session already
   runs as. OpenSSH's monitor does better here, because it verifies
   authentication itself (Alternative 3).
