@@ -162,7 +162,15 @@ fn first_field(line: &[u8]) -> &[u8] {
 fn names(line: &[u8], name: &[u8]) -> bool {
     line.split(|&b| b == b':')
         .flat_map(|field| field.split(|&b| b == b','))
-        .any(|item| list_item(item) == name)
+        .any(|item| until_nul(list_item(item)) == name)
+}
+
+/// The bytes before the first NUL: what a C-string reader such as glibc's
+/// sees. A line that names the account only up to a NUL still counts as
+/// naming it, so the NUL makes it malformed rather than skipped
+/// (ADR-0071 §2, §3).
+fn until_nul(item: &[u8]) -> &[u8] {
+    item.split(|&b| b == 0).next().unwrap_or(item)
 }
 
 /// A comma-separated item without its leading ASCII whitespace, as
@@ -398,6 +406,12 @@ docker:x:999:alice\n";
         assert_eq!(
             ok(PASSWD, b"team:x:2000:alice \n", "alice").groups,
             vec![1001]
+        );
+        // A NUL ends the item for a C-string reader: the line names the
+        // account, and the NUL makes it malformed.
+        assert_eq!(
+            lookup(PASSWD, b"wheel:x:10:alice\0carol\n", "alice"),
+            Err(Unresolved::Malformed)
         );
         // A malformed line that lists the account after whitespace still
         // fails the lookup.
