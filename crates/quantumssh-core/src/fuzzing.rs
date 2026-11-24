@@ -31,6 +31,9 @@ pub struct Userauth {
 }
 
 impl Userauth {
+    /// The user the connection's first request named: the seeds' user.
+    pub const BOUND_USER: &'static str = "alice";
+
     /// Builds the fixture from `authorized_keys` content.
     ///
     /// # Panics
@@ -45,17 +48,26 @@ impl Userauth {
         }
     }
 
-    /// Parses `payload` as the `authenticate` stage does. A request that
+    /// Parses `payload` as the `authenticate` stage does, as a later
+    /// request on a connection whose first request named
+    /// [`Userauth::BOUND_USER`]. A request for another user ends there, as
+    /// RFC-0019 §2 ends the connection; the rest goes on. A request that
     /// names a key of the set is resolved, and a signed one goes on to
     /// signature verification. Certificates are left to
     /// [`UserCertificate`], whose clock is fixed.
     pub fn check(&self, payload: &[u8]) {
-        let Ok(UserauthRequest::PublicKey {
+        let Ok(request) = auth::parse_userauth_request(payload) else {
+            return;
+        };
+        if !auth::same_user(Some(Self::BOUND_USER), request.user()) {
+            return;
+        }
+        let UserauthRequest::PublicKey {
             user,
             key_algorithm,
             key_blob,
             signature,
-        }) = auth::parse_userauth_request(payload)
+        } = request
         else {
             return;
         };

@@ -104,6 +104,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- The first `SSH_MSG_USERAUTH_REQUEST` fixes the user name for the
+  connection. A later request that names another user ends the
+  connection with `SSH_DISCONNECT_PROTOCOL_ERROR`, before its method is
+  acted on, as OpenSSH does
+  ([RFC-0019](docs/rfcs/0019-identity-model-ssh-user-name-to-os-account.md)
+  §2). It holds in every mode, and it lands ahead of account mode, which
+  uses the name to select an account (#43).
 - The ChaCha20 cipher objects built for each packet are erased when
   dropped. Their state holds the session key words and their buffer
   holds keystream, and both were dropped as they were: the workspace
