@@ -41,7 +41,7 @@ use tokio::time::Instant;
 use tracing::{debug, info, warn};
 use zeroize::Zeroizing;
 
-use crate::auth::{self, Authenticated, AuthorizedKeys};
+use crate::auth::{self, Authenticated};
 use crate::cert::TrustedUserCaKeys;
 use crate::cipher::PacketCipher;
 use crate::host_key::HostKey;
@@ -663,7 +663,7 @@ where
     #[allow(clippy::too_many_lines)]
     pub async fn authenticate(
         mut self,
-        authorized_keys: &AuthorizedKeys,
+        credentials: &auth::Credentials,
         trusted_cas: Option<&TrustedUserCaKeys>,
     ) -> Result<Expect<S, AuthAccepted>, TransportError> {
         // Two counters with distinct jobs: `attempts` is the hard
@@ -738,13 +738,9 @@ where
             let method = auth::AUTH_METHOD;
 
             if let Some(signed) = signature {
-                let Some(candidate) = auth::resolve(
-                    key_algorithm,
-                    key_blob,
-                    user_name,
-                    authorized_keys,
-                    trusted_cas,
-                ) else {
+                let Some(candidate) =
+                    auth::resolve_for(credentials, key_algorithm, key_blob, user_name, trusted_cas)
+                else {
                     attempts += 1;
                     failures += 1;
                     warn!(
@@ -774,35 +770,50 @@ where
                     &candidate.verifying_key,
                 ) == Ok(())
                 {
-                    let success = auth::build_success_payload();
-                    self.write_sealed(&success).await?;
-                    let authenticated = candidate.authenticated;
-                    // ADR-0051: the four `cert_*` fields are present on a
-                    // certificate authentication only.
-                    let cert = authenticated.certificate.as_ref();
-                    info!(
-                        target: "audit",
-                        authenticated_identity = %authenticated.fingerprint,
-                        auth_method = method,
-                        cert_key_id = cert.map(|c| c.key_id.as_str()),
-                        cert_serial = cert.map(|c| c.serial.as_str()),
-                        cert_ca_fingerprint = cert.map(|c| c.ca_fingerprint.as_str()),
-                        cert_principal = cert.map(|c| c.principal.as_str()),
-                        "auth.succeeded"
-                    );
-                    let stage = AuthAccepted {
-                        rx: self.stage.rx,
-                        tx: self.stage.tx,
-                        authenticated,
-                        session_id: self.stage.session_id,
-                        client_id: self.stage.client_id,
+                    // RFC-0019 §4: in account mode the record is read now,
+                    // and a refusal fails as a wrong key does.
+                    let account = match credentials {
+                        auth::Credentials::Service(_) => Ok(None),
+                        auth::Credentials::Accounts(mode) => {
+                            auth::read_account(mode, user_name).await.map(Some)
+                        }
                     };
-                    return Ok(Expect {
-                        stream: self.stream,
-                        seq_tx: self.seq_tx,
-                        seq_rx: self.seq_rx,
-                        stage,
-                    });
+                    match account {
+                        Ok(account) => {
+                            let success = auth::build_success_payload();
+                            self.write_sealed(&success).await?;
+                            let mut authenticated = candidate.authenticated;
+                            authenticated.account = account;
+                            // ADR-0051: the four `cert_*` fields are present on a
+                            // certificate authentication only.
+                            let cert = authenticated.certificate.as_ref();
+                            info!(
+                                target: "audit",
+                                authenticated_identity = %authenticated.fingerprint,
+                                auth_method = method,
+                                cert_key_id = cert.map(|c| c.key_id.as_str()),
+                                cert_serial = cert.map(|c| c.serial.as_str()),
+                                cert_ca_fingerprint = cert.map(|c| c.ca_fingerprint.as_str()),
+                                cert_principal = cert.map(|c| c.principal.as_str()),
+                                account = authenticated.account.as_ref().map(|a| a.name.as_str()),
+                                "auth.succeeded"
+                            );
+                            let stage = AuthAccepted {
+                                rx: self.stage.rx,
+                                tx: self.stage.tx,
+                                authenticated,
+                                session_id: self.stage.session_id,
+                                client_id: self.stage.client_id,
+                            };
+                            return Ok(Expect {
+                                stream: self.stream,
+                                seq_tx: self.seq_tx,
+                                seq_rx: self.seq_rx,
+                                stage,
+                            });
+                        }
+                        Err(reason) => info!(reason, "account record refused"),
+                    }
                 }
                 attempts += 1;
                 failures += 1;
@@ -832,14 +843,9 @@ where
             // model §5.3.1). A known-key probe is not a failure, so it
             // does not touch `failures` or emit `auth.failed`.
             attempts += 1;
-            let known = auth::resolve(
-                key_algorithm,
-                key_blob,
-                user_name,
-                authorized_keys,
-                trusted_cas,
-            )
-            .is_some();
+            let known =
+                auth::resolve_for(credentials, key_algorithm, key_blob, user_name, trusted_cas)
+                    .is_some();
             if !known {
                 // An unknown-key probe is a failure like any other.
                 failures += 1;

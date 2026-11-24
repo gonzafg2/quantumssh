@@ -189,7 +189,13 @@ async fn an_exec_session_writes_every_catalogue_line_whatever_rust_log_says() {
     let started = line_of(
         &seen,
         "server.started",
-        &["listen_addr", "host_key_fingerprint", "config_file"],
+        // RFC-0019 §6: `identity_mode` on every start, in both modes.
+        &[
+            "listen_addr",
+            "host_key_fingerprint",
+            "config_file",
+            "identity_mode",
+        ],
     );
     assert_eq!(value(started, "config_file"), canonical.to_str().unwrap());
     assert_eq!(

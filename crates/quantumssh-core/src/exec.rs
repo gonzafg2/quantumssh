@@ -36,12 +36,14 @@ use std::time::Duration;
 
 use rustix::process::{Pid, Signal};
 use tokio::io::unix::AsyncFd;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt, Interest};
-use tokio::process::{Child, ChildStdin, Command};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, Interest};
+use tokio::process::{Child, Command};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::{AbortHandle, JoinSet};
 use tokio::time::Instant;
 
+use crate::launcher::client::{Client, StartError, Started};
+use crate::launcher::{self, Exit};
 use crate::pty::{self, PtyPair, Size};
 
 /// Outbound chunk size — matches the channel `MAX_PACKET` (ADR-0023) so
@@ -256,19 +258,31 @@ pub(crate) struct ChildScope {
     /// (ADR-0038 §5, ADR-0041 §2); `None` refuses `pty-req` and
     /// `subsystem`.
     helper: Option<Arc<Path>>,
+    /// Account mode: the launcher that starts every session (ADR-0064).
+    launcher: Option<Client>,
+    /// The launcher's identifiers of this connection's live sessions,
+    /// which the kill guard ends.
+    remote: Arc<Mutex<Vec<u64>>>,
 }
 
 impl ChildScope {
-    pub(crate) fn new(helper: Option<Arc<Path>>) -> Self {
+    pub(crate) fn new(helper: Option<Arc<Path>>, launcher: Option<Client>) -> Self {
         Self {
             tasks: Mutex::default(),
             live: Arc::default(),
             helper,
+            launcher,
+            remote: Arc::default(),
         }
     }
 
     pub(crate) fn helper(&self) -> Option<&Path> {
         self.helper.as_deref()
+    }
+
+    /// Account mode's launcher, when the server runs under one.
+    pub(crate) const fn launcher(&self) -> Option<&Client> {
+        self.launcher.as_ref()
     }
 
     fn spawn<F>(&self, task: F) -> AbortHandle
@@ -289,6 +303,12 @@ impl ChildScope {
 
 impl Drop for ChildScope {
     fn drop(&mut self) {
+        // Account mode: the launcher ends what it started (ADR-0064 §4).
+        if let Some(launcher) = &self.launcher {
+            for &session in lock(&self.remote).iter() {
+                launcher.end(session);
+            }
+        }
         let live = lock(&self.live);
         for &pid in live.iter() {
             // By PID, then by group: a child not yet leading its own group
@@ -481,7 +501,7 @@ fn kill_group(child: &mut Child, pid: Pid) {
 /// (ADR-0038 §6): on Linux through a pidfd, which becomes readable at
 /// exit; elsewhere, or if that fails, by a `waitid` peek woken by
 /// `SIGCHLD`.
-async fn wait_exit(pid: Pid) {
+pub(crate) async fn wait_exit(pid: Pid) {
     // ponytail: tokio 1.51.6 deprecates the safe `AsyncFd` constructors
     // (RUSTSEC-2026-0386) in favour of `unsafe` ones, which the workspace
     // forbids (ADR-0018). This use is sound: the `AsyncFd` owns the
@@ -865,11 +885,13 @@ where
 /// driver replenish that window (ADR-0023) and count the bytes the child
 /// received (ADR-0042). Dropping the pipe at the end closes the child's
 /// stdin.
-async fn pump_stdin(
-    mut pipe: ChildStdin,
+async fn pump_stdin<W>(
+    mut pipe: W,
     mut rx: mpsc::Receiver<Vec<u8>>,
     consumed: mpsc::UnboundedSender<u32>,
-) {
+) where
+    W: AsyncWrite + Unpin,
+{
     while let Some(chunk) = rx.recv().await {
         // Each successful write is credited as it happens: a child that
         // reads a prefix and exits still received those bytes (ADR-0042),
@@ -932,6 +954,153 @@ fn exit_of(status: ExitStatus) -> ChildExit {
             code: 128 + signo,
             signal: signal_name(signo).map(|name| (name, status.core_dumped())),
         })
+}
+
+/// How a session the launcher reaped ended, as [`exit_of`] maps a local
+/// status (ADR-0064 §3).
+fn exit_of_remote(exit: Exit) -> ChildExit {
+    match exit {
+        Exit::Code(code) => ChildExit::code(i32::try_from(code).unwrap_or(EXIT_WAIT_FAILED)),
+        Exit::Signal {
+            signal,
+            core_dumped,
+        } => {
+            let signo = i32::try_from(signal).unwrap_or(0);
+            ChildExit {
+                code: 128 + signo,
+                signal: signal_name(signo).map(|name| (name, core_dumped)),
+            }
+        }
+    }
+}
+
+/// Asks the launcher for a session as `account` and supervises it in
+/// `scope` (ADR-0064): the same pumps as a local child, on the descriptors
+/// the launcher passed, and a reap task that waits for `exited` and turns
+/// a kill into `end`.
+///
+/// # Errors
+///
+/// An error if the scope has no launcher, the launcher refused the start
+/// or its descriptors did not arrive, or a descriptor cannot be
+/// registered. The channel answers as for a child that cannot be spawned
+/// (ADR-0064 §2).
+pub(crate) async fn spawn_remote(
+    account: &str,
+    session: launcher::Session<'_>,
+    scope: &ChildScope,
+) -> io::Result<(ChildIo, u32)> {
+    let client = scope
+        .launcher()
+        .ok_or_else(|| io::Error::other("no launcher"))?
+        .clone();
+    let started = client.start(account, session).await.map_err(|e| match e {
+        StartError::Refused(refusal) => io::Error::other(format!("refused: {refusal:?}")),
+        StartError::Failed => io::Error::other("start failed"),
+    })?;
+    let Started {
+        session: id,
+        uid,
+        fds,
+        exited,
+    } = started;
+    lock(&scope.remote).push(id);
+    let (out_tx, out_rx) = mpsc::channel::<ChildChunk>(OUT_QUEUE);
+    let (consumed_tx, consumed_rx) = mpsc::unbounded_channel::<u32>();
+    let (stdin_tx, stdin_rx) = mpsc::channel::<Vec<u8>>(STDIN_QUEUE);
+    let (kill_tx, kill_rx) = oneshot::channel();
+    let (failed_tx, failed_rx) = oneshot::channel();
+    let mut fds = fds.into_iter();
+    let (output_pumps, stdin_pump, master, on_exit) = match (fds.next(), fds.next(), fds.next()) {
+        (Some(master), None, None) => {
+            rustix::io::ioctl_fionbio(&master, true)?;
+            // ponytail: the deprecated constructor, sound as in `spawn_pty`.
+            #[allow(deprecated)]
+            let master = Arc::new(AsyncFd::with_interest(
+                master,
+                Interest::READABLE | Interest::WRITABLE,
+            )?);
+            let (exited_tx, exited_rx) = oneshot::channel();
+            let pump = scope.spawn(pump_pty(
+                Arc::clone(&master),
+                out_tx.clone(),
+                stdin_rx,
+                consumed_tx,
+                exited_rx,
+                failed_tx,
+            ));
+            (vec![pump], None, Some(master), Some(exited_tx))
+        }
+        (Some(stdin), Some(stdout), Some(stderr)) => {
+            let stdin = tokio::net::unix::pipe::Sender::from_owned_fd(stdin)?;
+            let stdout = tokio::net::unix::pipe::Receiver::from_owned_fd(stdout)?;
+            let stderr = tokio::net::unix::pipe::Receiver::from_owned_fd(stderr)?;
+            let pumps = vec![
+                scope.spawn(pump_output(stdout, out_tx.clone(), ChildChunk::Stdout)),
+                scope.spawn(pump_output(stderr, out_tx.clone(), ChildChunk::Stderr)),
+            ];
+            let stdin_pump = scope.spawn(pump_stdin(stdin, stdin_rx, consumed_tx));
+            drop(failed_tx);
+            (pumps, Some(stdin_pump), None, None)
+        }
+        _ => {
+            client.end(id);
+            return Err(io::Error::other("unexpected descriptors"));
+        }
+    };
+    let remote = Arc::clone(&scope.remote);
+    scope.spawn(async move {
+        let exit = reap_remote(&client, id, kill_rx, failed_rx, exited).await;
+        lock(&remote).retain(|&s| s != id);
+        if let Some(tx) = on_exit {
+            let _ = tx.send(());
+        }
+        let _ = out_tx.send(ChildChunk::Exited(exit)).await;
+    });
+    Ok((
+        ChildIo {
+            out_rx,
+            consumed_rx,
+            stdin_tx: Some(stdin_tx),
+            kill_tx: Some(kill_tx),
+            output_pumps,
+            stdin_pump,
+            master,
+        },
+        uid,
+    ))
+}
+
+/// Waits for the launcher's `exited`, turning a kill request or a master
+/// failure into `end` (ADR-0064 §4). The launcher runs ADR-0038 §7's kill
+/// sequence, so the server only asks.
+async fn reap_remote(
+    client: &Client,
+    session: u64,
+    mut kill_rx: oneshot::Receiver<()>,
+    mut failed_rx: oneshot::Receiver<()>,
+    mut exited: oneshot::Receiver<Exit>,
+) -> ChildExit {
+    let mut kill_pending = true;
+    let mut failure_pending = true;
+    loop {
+        tokio::select! {
+            biased;
+            _ = &mut kill_rx, if kill_pending => {
+                kill_pending = false;
+                client.end(session);
+            }
+            failed = &mut failed_rx, if failure_pending => {
+                failure_pending = false;
+                if failed.is_ok() {
+                    client.end(session);
+                }
+            }
+            exit = &mut exited => {
+                return exit.map_or(ChildExit::code(EXIT_WAIT_FAILED), exit_of_remote);
+            }
+        }
+    }
 }
 
 /// The RFC 4254 §6.10 name of `signo`, if it is on the list.

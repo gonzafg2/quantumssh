@@ -191,9 +191,12 @@ jobs:
 
       # ADR-0065 §6: account mode's session helper, run as root in a
       # disposable container of the gate image, becomes a test account and
-      # proves root cannot be regained. It uses the release binary built
-      # above.
-      - name: Session helper as root
+      # proves root cannot be regained. Then account mode's processes: the
+      # launcher stays root, the server runs as the service account without
+      # privileges, and a stop leaves nothing behind. What a client sees is
+      # the interop suite's account cases (ADR-0068). Both use the release
+      # binary built above.
+      - name: Account mode as root
         if: steps.members.outputs.count != '0' && runner.os == 'Linux'
         run: bash tests/privsep/run_in_docker.sh
 

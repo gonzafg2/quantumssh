@@ -3,7 +3,7 @@
 # run_openssh_client.sh, which supplies fail, skip, wait_for, port_open,
 # log_has, with_tty, start_server and stop_server, the option arrays
 # COMMON, SSH_OPTS and COPY_OPTS, and BIN, PORT, HOST, WORK, LOG and
-# CASE_DIR.
+# CASE_DIR; for the account cases, account_mode, acct_ssh and ACCT_PORT.
 #
 # One function per case, `case_<name>`, with a line in CASES.md that says
 # which document the case checks. A case fails through fail(), or by any
@@ -599,4 +599,169 @@ case_keygen_host_key_serves() {
     stop_server
     SRV=$main_srv
     LOG=$main_log
+}
+
+# ---------------------------------------------------------------------
+# Account mode (ADR-0068). Each case starts with account_mode, which
+# skips it where account mode cannot run. The listed accounts are
+# qssh-alice, qssh-deploy and qssh-nologin, each with its own key;
+# qssh-unlisted exists and is not listed.
+
+# offered_and_denied <key path> <output of ssh -v>: the client offered
+# that key and was refused, as a wrong key is.
+offered_and_denied() {
+    grep -qF "Offering public key: $1 ED25519" <<<"$2" || fail "the client never offered $1: $2"
+    grep -qF "Permission denied (publickey)." <<<"$2" || fail "refused for another reason: $2"
+}
+
+case_account_session_identity() {
+    account_mode || return 0
+    local got want home team
+    home="$(getent passwd qssh-alice | cut -d: -f6)"
+    team="$(getent group qssh-team | cut -d: -f3)"
+    got="$(acct_ssh alice qssh-alice@127.0.0.1 \
+        'id -u; id -g; id -G | tr " " "\n" | sort -n | tr "\n" " "; echo; pwd -P; echo "$HOME $USER $LOGNAME $SHELL"; echo "$PATH"')" \
+        || fail "ssh exited $?"
+    want="$(id -u qssh-alice)
+$(id -g qssh-alice)
+$(id -G qssh-alice | tr ' ' '\n' | sort -n | tr '\n' ' ')
+$home
+$home qssh-alice qssh-alice /bin/bash
+/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin"
+    [ "$got" = "$want" ] || fail "the session is not qssh-alice's: got '$got', want '$want'"
+    grep -qw "$team" <<<"$(sed -n 3p <<<"$got")" || fail "qssh-team is not among the groups: $got"
+}
+
+case_account_login_shell() {
+    account_mode || return 0
+    local rc=0 out
+    out="$(printf 'echo "zero=$0"\nexit 5\n' \
+        | acct_ssh alice -tt -o LogLevel=ERROR qssh-alice@127.0.0.1 | tr -d '\r')" || rc=$?
+    [ "$rc" -eq 5 ] || fail "the shell exited $rc, want 5"
+    grep -qx 'zero=-bash' <<<"$out" || fail "not bash as a login shell: $out"
+}
+
+case_account_pty_owner() {
+    account_mode || return 0
+    local out
+    out="$(acct_ssh alice -tt qssh-alice@127.0.0.1 'stat -c "%U %a" "$(tty)"' </dev/null | tr -d '\r')" \
+        || fail "ssh exited $?"
+    [ "$out" = "qssh-alice 600" ] || fail "the terminal is '$out', want 'qssh-alice 600'"
+}
+
+case_account_session_privileges() {
+    account_mode || return 0
+    local out field
+    out="$(acct_ssh alice qssh-alice@127.0.0.1 'cat /proc/self/status' | tr '\t' ' ')" \
+        || fail "ssh exited $?"
+    grep -qx 'NoNewPrivs: 0' <<<"$out" || fail "NoNewPrivs is not 0: $(grep NoNewPrivs <<<"$out")"
+    for field in CapInh CapPrm CapEff; do
+        grep -qx "$field: 0000000000000000" <<<"$out" || fail "$field is not empty: $(grep "$field" <<<"$out")"
+    done
+}
+
+case_account_audit_records() {
+    account_mode || return 0
+    local fp uid event marker="audit-$RANDOM"
+    fp="$(ssh-keygen -lf "$WORK/acct_alice.pub" | awk '{print $2}')"
+    uid="$(id -u qssh-alice)"
+    # shellcheck disable=SC2029 # $marker is meant to expand here
+    acct_ssh alice qssh-alice@127.0.0.1 "echo $marker" >/dev/null || fail "ssh exited $?"
+    log_has server.started '"identity_mode":"account"' \
+        || fail "server.started lacks identity_mode account"
+    for event in exec.started exec.finished; do
+        wait_for 5 log_has "$event" "\"command\":\"echo $marker\"" '"account":"qssh-alice"' \
+            "\"authenticated_identity\":\"$fp\"" "\"executing_uid\":$uid," \
+            || fail "no $event with the account, the key's fingerprint and UID $uid"
+    done
+}
+
+case_account_exit_status() {
+    account_mode || return 0
+    local rc=0 v
+    acct_ssh alice qssh-alice@127.0.0.1 'exit 3' || rc=$?
+    [ "$rc" -eq 3 ] || fail "exit 3 reported $rc"
+    rc=0
+    v="$(acct_ssh alice -v qssh-alice@127.0.0.1 'kill -TERM $$' 2>&1)" || rc=$?
+    [ "$rc" -eq 255 ] || fail "ssh exited $rc, want 255"
+    grep -q "rtype exit-signal" <<<"$v" || fail "no exit-signal reached the client"
+}
+
+case_account_client_gone_kills() {
+    account_mode || return 0
+    local n=$((80000 + RANDOM)) pid
+    # shellcheck disable=SC2029 # $n is meant to expand here, on the client
+    acct_ssh alice qssh-alice@127.0.0.1 "sleep $n & sleep $n" >/dev/null 2>&1 &
+    pid=$!
+    disown "$pid"
+    wait_for 10 sleeps_running "$n" 2 || { kill "$pid" 2>/dev/null; fail "the command never started"; }
+    [ "$(pgrep -u qssh-alice -fx "sleep $n" | wc -l | tr -d ' ')" -eq 2 ] \
+        || { kill "$pid" 2>/dev/null; fail "the command does not run as qssh-alice"; }
+    kill -KILL "$pid"
+    wait_for 10 sleeps_running "$n" 0 || { pkill -fx "sleep $n" || true; fail "the command outlived its client"; }
+}
+
+case_account_sftp_ownership() {
+    account_mode || return 0
+    local d=$CASE_DIR home
+    home="$(getent passwd qssh-alice | cut -d: -f6)"
+    head -c 100000 /dev/urandom >"$d/payload"
+    printf 'put "%s" "%s/sftp-owned"\n' "$d/payload" "$home" >"$d/batch"
+    sftp -b "$d/batch" -i "$WORK/acct_alice" -P "$ACCT_PORT" "${COMMON[@]}" qssh-alice@127.0.0.1 >/dev/null \
+        || fail "batch exited $?"
+    cmp -s "$d/payload" "$home/sftp-owned" || fail "uploaded bytes differ"
+    [ "$(stat -c '%U %G' "$home/sftp-owned")" = "qssh-alice $(id -gn qssh-alice)" ] \
+        || fail "the file belongs to $(stat -c '%U %G' "$home/sftp-owned")"
+}
+
+case_account_nologin() {
+    account_mode || return 0
+    local rc=0 out
+    out="$(acct_ssh nologin qssh-nologin@127.0.0.1 'echo ran' 2>&1)" || rc=$?
+    [ "$rc" -eq 1 ] || fail "exec exited $rc, want nologin's 1: $out"
+    grep -qF "This account is currently not available." <<<"$out" || fail "nologin did not answer: $out"
+    ! grep -qx ran <<<"$out" || fail "the command ran"
+    printf 'ls /\n' >"$CASE_DIR/batch"
+    sftp -b "$CASE_DIR/batch" -i "$WORK/acct_nologin" -P "$ACCT_PORT" "${COMMON[@]}" qssh-nologin@127.0.0.1 \
+        >/dev/null || fail "the sftp batch exited $?"
+}
+
+case_account_unlisted_refused() {
+    account_mode || return 0
+    local user out
+    ! getent passwd qssh-nobody >/dev/null || fail "qssh-nobody exists"
+    for user in root qssh-unlisted qssh-nobody; do
+        if out="$(acct_ssh alice -v "$user@127.0.0.1" true 2>&1)"; then
+            fail "$user logged in"
+        fi
+        offered_and_denied "$WORK/acct_alice" "$out"
+    done
+}
+
+case_account_key_bound_to_account() {
+    account_mode || return 0
+    local out
+    [ "$(acct_ssh deploy qssh-deploy@127.0.0.1 'id -un')" = qssh-deploy ] \
+        || fail "qssh-deploy's own key did not log in"
+    if out="$(acct_ssh alice -v qssh-deploy@127.0.0.1 true 2>&1)"; then
+        fail "qssh-alice's key logged in to qssh-deploy"
+    fi
+    offered_and_denied "$WORK/acct_alice" "$out"
+}
+
+case_account_certificate_principal() {
+    account_mode || return 0
+    local out
+    sign_cert alice "$WORK/ca" qssh-alice -5m:+5m
+    out="$(ssh -i "$WORK/certkey" -p "$ACCT_PORT" "${COMMON[@]}" \
+        -o CertificateFile="$CASE_DIR/alice-cert.pub" qssh-alice@127.0.0.1 'id -un')" \
+        || fail "ssh exited $?"
+    [ "$out" = qssh-alice ] || fail "the session ran as '$out'"
+    if out="$(ssh -v -i "$WORK/certkey" -p "$ACCT_PORT" "${COMMON[@]}" \
+        -o CertificateFile="$CASE_DIR/alice-cert.pub" qssh-deploy@127.0.0.1 true 2>&1)"; then
+        fail "a qssh-alice certificate logged in to qssh-deploy"
+    fi
+    grep -qF "Offering public key: $CASE_DIR/alice-cert.pub ED25519-CERT" <<<"$out" \
+        || fail "the client never offered the certificate: $out"
+    grep -qF "Permission denied (publickey)." <<<"$out" || fail "refused for another reason: $out"
 }
