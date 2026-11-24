@@ -643,6 +643,10 @@ where
     /// [`auth::MAX_AUTH_ATTEMPTS`] failures, the connection is
     /// terminated with `SSH_DISCONNECT_BY_APPLICATION` (11).
     ///
+    /// The first request fixes the user name. A later request that names
+    /// another user ends the connection with `SSH_DISCONNECT_PROTOCOL_ERROR`
+    /// (2) before its method is acted on (RFC-0019 §2).
+    ///
     /// Audit events (`auth.succeeded` / `auth.failed`) are emitted on
     /// the `audit` target (ADR-0024). Every failed request emits
     /// `auth.failed`, the one that exhausts the attempt budget included,
@@ -671,6 +675,9 @@ where
         // budget.
         let mut attempts: u32 = 0;
         let mut failures: u32 = 0;
+        // RFC-0019 §2: the first request fixes the user name for the
+        // connection, whatever its method.
+        let mut bound_user: Option<String> = None;
 
         loop {
             let payload = self.read_sealed().await?;
@@ -685,9 +692,23 @@ where
                     return Err(self.reject_sealed(protocol_error(reason)).await);
                 }
             };
+            // A later request with another user name ends the connection
+            // before its method is acted on, as OpenSSH's
+            // `input_userauth_request` does ("Change of username or service
+            // not allowed"). It spends no attempt and emits no `auth.failed`,
+            // like the other protocol errors above.
+            match bound_user.as_deref() {
+                None => bound_user = Some(request.user().to_owned()),
+                Some(bound) if bound != request.user() => {
+                    return Err(self
+                        .reject_sealed(protocol_error("user-name-changed"))
+                        .await);
+                }
+                Some(_) => {}
+            }
 
             let (user_name, key_algorithm, key_blob, signature) = match request {
-                auth::UserauthRequest::Refused { method } => {
+                auth::UserauthRequest::Refused { method, .. } => {
                     attempts += 1;
                     failures += 1;
                     warn!(

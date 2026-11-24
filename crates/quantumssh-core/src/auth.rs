@@ -436,6 +436,8 @@ pub(crate) enum UserauthRequest<'a> {
     /// key type other than `ssh-ed25519` and its certificate. It is
     /// refused, and the rest of the request is not read.
     Refused {
+        /// The user name, which the connection binds (RFC-0019 §2).
+        user: &'a str,
         /// The method name, for the `auth.failed` record.
         method: &'a str,
     },
@@ -450,6 +452,15 @@ pub(crate) enum UserauthRequest<'a> {
         /// The signature part of a signed request.
         signature: Option<Signed<'a>>,
     },
+}
+
+impl UserauthRequest<'_> {
+    /// The user name the request names, whatever its method.
+    pub(crate) const fn user(&self) -> &str {
+        match self {
+            Self::Refused { user, .. } | Self::PublicKey { user, .. } => user,
+        }
+    }
 }
 
 /// The signature part of a signed `publickey` request.
@@ -480,12 +491,12 @@ pub(crate) fn parse_userauth_request(payload: &[u8]) -> Result<UserauthRequest<'
     }
     let method = utf8_field(&mut r, METHOD_NAME_BOUND)?;
     if method != AUTH_METHOD {
-        return Ok(UserauthRequest::Refused { method });
+        return Ok(UserauthRequest::Refused { user, method });
     }
     let sig_present = r.boolean().map_err(|_| RequestError::Malformed)?;
     let key_algorithm = utf8_field(&mut r, KEY_ALGO_BOUND)?;
     if key_algorithm != KEY_ALGORITHM && key_algorithm != cert::CERT_ALGORITHM {
-        return Ok(UserauthRequest::Refused { method });
+        return Ok(UserauthRequest::Refused { user, method });
     }
     let key_blob_bound = if key_algorithm == cert::CERT_ALGORITHM {
         cert::CERT_BLOB_BOUND
@@ -1113,7 +1124,10 @@ mod tests {
         w.put_bytes(b"not a well-formed remainder");
         assert_eq!(
             parse_userauth_request(&w.into_bytes()),
-            Ok(UserauthRequest::Refused { method: "password" })
+            Ok(UserauthRequest::Refused {
+                user: "alice",
+                method: "password"
+            })
         );
     }
 
@@ -1123,6 +1137,7 @@ mod tests {
         assert_eq!(
             parse_userauth_request(&payload),
             Ok(UserauthRequest::Refused {
+                user: "alice",
                 method: AUTH_METHOD
             })
         );

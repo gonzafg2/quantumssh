@@ -669,6 +669,61 @@ async fn auth_failure_on_wrong_signature() {
     assert_eq!(auth_reply.first(), Some(&auth::SSH_MSG_USERAUTH_FAILURE));
 }
 
+/// RFC-0019 §2: the first `USERAUTH_REQUEST` fixes the user name; a
+/// later one that names another user ends the connection with
+/// `SSH_DISCONNECT_PROTOCOL_ERROR` before its method is acted on.
+#[tokio::test]
+async fn auth_user_name_change_ends_the_connection() {
+    let (addr, host_key) = start_server(Duration::from_secs(30)).await;
+    let mut stream = connect(addr).await;
+    let (mut client, _session_id, _server_id) = establish(
+        &mut stream,
+        &host_key,
+        OPENSSH_KEX_PLAIN,
+        "chacha20-poly1305@openssh.com",
+        "chacha20-poly1305@openssh.com",
+    )
+    .await;
+    client
+        .write_sealed(&mut stream, &service_request_payload())
+        .await;
+    let reply = client.read_sealed(&mut stream).await;
+    assert_eq!(reply.first(), Some(&6));
+
+    // The first request, under "testuser", fails as any refused method does.
+    let mut w = Writer::new();
+    w.put_byte(auth::SSH_MSG_USERAUTH_REQUEST);
+    w.put_string(b"testuser");
+    w.put_string(b"ssh-connection");
+    w.put_string(b"none");
+    client.write_sealed(&mut stream, &w.into_bytes()).await;
+    let reply = client.read_sealed(&mut stream).await;
+    assert_eq!(reply.first(), Some(&auth::SSH_MSG_USERAUTH_FAILURE));
+
+    // The same user again is still answered.
+    client
+        .write_sealed(&mut stream, &probe_auth_request(&[0xe0u8; 12]))
+        .await;
+    let reply = client.read_sealed(&mut stream).await;
+    assert_eq!(reply.first(), Some(&auth::SSH_MSG_USERAUTH_FAILURE));
+
+    // Another user name ends the connection, even for a probe whose key
+    // the server would otherwise look up.
+    let mut w = Writer::new();
+    w.put_byte(auth::SSH_MSG_USERAUTH_REQUEST);
+    w.put_string(b"root");
+    w.put_string(b"ssh-connection");
+    w.put_string(b"publickey");
+    w.put_boolean(false);
+    w.put_string(b"ssh-ed25519");
+    w.put_string(&[0xe0u8; 12]);
+    client.write_sealed(&mut stream, &w.into_bytes()).await;
+    let reply = client.read_sealed(&mut stream).await;
+    let mut r = Reader::new(&reply);
+    assert_eq!(r.byte().unwrap(), kex::SSH_MSG_DISCONNECT);
+    assert_eq!(r.uint32().unwrap(), 2, "SSH_DISCONNECT_PROTOCOL_ERROR");
+}
+
 #[tokio::test]
 async fn auth_rejects_non_publickey_method() {
     let auth_signing = SigningKey::from_bytes(&[77u8; 32]);
