@@ -96,8 +96,8 @@ this file.
 >   - Only the account's shell interprets the command.
 > - *Checked by the launcher before each session:*
 >   - the account is listed;
->   - it resolves now, with a UID that is not 0, in files that pass
->     RFC-0019 §8's check (ADR-0064).
+>   - it resolves now, in files that pass RFC-0019 §8's check;
+>   - its UID is neither 0 nor the network server's (ADR-0064).
 >
 >   The launcher does not check that the connection authenticated as
 >   that account.

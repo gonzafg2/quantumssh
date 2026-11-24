@@ -110,7 +110,7 @@ record. The client sees the same answer for all of them (ADR-0064 §2).
 | Reason | Meaning |
 |---|---|
 | 1 | the account is not listed |
-| 2 | the account does not resolve now: no entry, UID 0, or a file that fails RFC-0019 §8's check |
+| 2 | the account does not resolve now: no entry, UID 0, the service account's UID (ADR-0066 §1), or a file that fails RFC-0019 §8's check |
 | 3 | the session limit is reached (ADR-0064 §1) |
 | 4 | the PTY could not be allocated |
 | 5 | the helper could not be started |
@@ -161,9 +161,21 @@ reason 5. Today's server already fails such a spawn.
   carries three or one.
 - **The server receives** with `RecvFlags::CMSG_CLOEXEC` and a buffer
   sized for three descriptors (`cmsg_space!(ScmRights(3))`).
-  - Descriptors must arrive exactly with `listener` and `started`.
-  - Their number must match the message.
-  - Anything else is a launcher fault, and the server exits (ADR-0066 §5).
+- **A `started` short of descriptors fails that one session.** That is a
+  `started` with fewer descriptors than its session carries, or with
+  `MSG_CTRUNC`.
+  - The likely cause is the server's own descriptor table: descriptors
+    beyond the receiver's `RLIMIT_NOFILE` "are automatically closed in
+    the receiving process" (unix(7)).
+  - The server closes the descriptors that did arrive, sends `end` for
+    the session, and answers the client as it answers `refused`
+    (ADR-0064 §2).
+  - It keeps serving, as it keeps accepting when `accept` fails with
+    `EMFILE` (`crates/quantumssh-core/tests/accept_resources.rs`).
+- **A `listener` short of its descriptor fails the start.**
+- **A launcher fault ends the server** (ADR-0066 §5). Faults are
+  descriptors on a message that carries none, or more descriptors than
+  the message carries.
 - **The launcher never runs a call on a descriptor the server chose,**
   because it never receives one (RFC-0020 §2).
 

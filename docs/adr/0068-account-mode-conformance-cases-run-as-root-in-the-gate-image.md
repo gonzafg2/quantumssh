@@ -40,8 +40,11 @@ The cases also need a file layout that RFC-0019 §8 accepts:
 - root-owned ancestor directories that are not group- or world-writable;
 - no symlinks.
 
-The suite's work directory sits under `/tmp`, which is world-writable,
-so it fails that check.
+ADR-0066 §1 adds the same check for the launcher's own executable. The
+suite's work directory sits under the checkout's `target/`, and the
+binary under test is built there or extracted there from a release
+artifact. Nothing makes the checkout root-owned, so neither the work
+directory nor the binary can be relied on to pass those checks.
 
 ## Decision
 
@@ -86,9 +89,16 @@ run:
   - The host key sits there too, owned by `quantumssh` with mode `0600`,
     as the operator guide installs it (ADR-0067 §4).
 
-The configuration uses the grammar of RFC-0019's implementing ADR. The
-cases start their servers as the other cases do, here as root, so each
-one gets a launcher.
+- **The binary under test,** copied with `install -D -o root -g root -m
+  0755` to `/usr/local/libexec/quantumssh-interop/quantumssh`. That path
+  passes ADR-0066 §1's check of the launcher's executable, and the
+  account cases run that copy. The systemd gate copies the binary to
+  `/usr/local/bin` for the same reason.
+
+The configuration's exact keys are those that RFC-0019's implementing
+ADR fixes. That ADR is not written yet (TBD), so the first account case
+lands after it. The cases start their servers as the other cases do,
+here as root, so each one gets a launcher.
 
 ### 3. The cases
 
@@ -100,7 +110,7 @@ Each line names its document first, as ADR-0062 §2 requires.
 | `account_login_shell` | RFC-0020 §4: `shell` on a PTY runs the account's login shell as a login shell, so `$0` is `-bash` |
 | `account_pty_owner` | RFC-0020 §4, ADR-0064 §2: the session's terminal is owned by the account, with mode `0600` |
 | `account_session_privileges` | RFC-0020 §8, ADR-0065 §2: in a session, `NoNewPrivs` is 0, and `CapPrm`, `CapEff` and `CapInh` are 0 |
-| `account_audit_records` | RFC-0019 §6: `server.started` carries `identity_mode` `account`; `exec.started` carries `account` and the account's UID in `executing_uid` |
+| `account_audit_records` | RFC-0019 §6, ADR-0024: `server.started` carries `identity_mode` `account`; `exec.started` and `exec.finished` each carry `account`, `authenticated_identity` (the key's fingerprint) and, as a separate field, the account's UID in `executing_uid` |
 | `account_exit_status` | ADR-0064 §3, ADR-0038 §8: `exit 3` reports 3, and `kill -TERM $$` reports `exit-signal`, through the launcher |
 | `account_client_gone_kills` | ADR-0064 §4: when the client goes away, the session's process group is killed |
 | `account_sftp_ownership` | RFC-0020's Guide: a file put over SFTP belongs to the account and its primary group |

@@ -71,11 +71,16 @@ else. Each failure stops the start.
 1. **RFC-0019's configuration rules and its §8 file checks:** the
    configuration file, the CA file, every account key file,
    `/etc/passwd` and `/etc/group`.
-2. **The service account.** The account named `quantumssh` must resolve
-   in `/etc/passwd`, with a UID that is not 0. It must not be one of the
-   listed accounts. A session running as the server's own UID could
-   signal the server, and could read its memory wherever the kernel's
-   ptrace policy allows it.
+2. **The service account.**
+   - The account named `quantumssh` must resolve in `/etc/passwd`, with
+     a UID that is not 0.
+   - The launcher records that UID.
+   - No listed account may have that UID, whatever its name. ADR-0064 §2
+     repeats the check at every session start, because `/etc/passwd` is
+     read again then.
+   - Why: a session running as the server's UID could signal the server,
+     read the host key it owns (ADR-0067 §4), and read its memory
+     wherever the kernel's ptrace policy allows it.
 3. **The launcher's own executable.** The path that `/proc/self/exe`
    resolves to must pass RFC-0019 §8's check: owned by root, not group- or
    world-writable, and every ancestor directory owned by root and not

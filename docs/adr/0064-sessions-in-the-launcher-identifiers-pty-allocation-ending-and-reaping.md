@@ -72,8 +72,11 @@ No partly started session survives the turn.
    - It must be in the list read at startup. Otherwise the launcher
      refuses with reason 1.
    - It must resolve now in `/etc/passwd` and `/etc/group`, read for this
-     session, with a UID that is not 0. Both files must pass RFC-0019 §8's
-     check. Otherwise the launcher refuses with reason 2.
+     session. Both files must pass RFC-0019 §8's check.
+   - Its UID must be neither 0 nor the service account's UID, which the
+     launcher recorded at startup (ADR-0066 §1). A session with the
+     server's UID could signal the server and read its host key.
+   - Otherwise the launcher refuses with reason 2.
 2. **Check the bound** of §1. Otherwise it refuses with reason 3.
 3. **Create the session's descriptors.**
    - **Without a PTY:** three `std::io::pipe()` pairs.
@@ -115,7 +118,8 @@ the loop. That answers RFC-0020 §12's question about such a PTY.
 - `start` carries the fields to the launcher.
 
 **What the client sees on a refusal.** Every reason gets the answer that
-ADR-0038 §2 gives to a child that cannot be spawned. The client sees exit
+ADR-0038 §2 gives to a child that cannot be spawned. So does a `started`
+whose descriptors the server could not all receive (ADR-0063 §4). The client sees exit
 status 127. The audit log gets an `exec.started`/`exec.finished` pair,
 whose `executing_uid` is the UID from the record the server read at
 authentication (RFC-0019 §4), because no session ran.
