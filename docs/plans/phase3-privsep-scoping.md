@@ -6,7 +6,8 @@
   model, and RFC-0020 (Accepted 2026-11-24), privilege separation: a
   root launcher, an unprivileged network server, and a single-threaded
   helper per session, closest to option C below. RFC-0020's implementing
-  decisions are ADR-0063 to ADR-0069 (Proposed, drafted 2026-11-24).
+  decisions are ADR-0063 to ADR-0069, and RFC-0019's are ADR-0068 and
+  ADR-0070 to ADR-0072 (all Proposed, drafted 2026-11-24).
   The note is kept as the record of the constraint and the options the
   RFC weighed.
 -->

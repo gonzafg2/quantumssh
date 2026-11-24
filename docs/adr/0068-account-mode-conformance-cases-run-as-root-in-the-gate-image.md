@@ -95,10 +95,10 @@ run:
   account cases run that copy. The systemd gate copies the binary to
   `/usr/local/bin` for the same reason.
 
-The configuration's exact keys are those that RFC-0019's implementing
-ADR fixes. That ADR is not written yet (TBD), so the first account case
-lands after it. The cases start their servers as the other cases do,
-here as root, so each one gets a launcher.
+The configuration uses the `[[account]]` grammar of
+[ADR-0070](0070-account-sections-grammar-and-startup-errors.md). The
+cases start their servers as the other cases do, here as root, so each
+one gets a launcher.
 
 ### 3. The cases
 
