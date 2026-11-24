@@ -6,8 +6,9 @@
 //! a record may do: UID 0, for one, is theirs to refuse.
 
 use std::ffi::OsStr;
+use std::io::Read;
 use std::os::unix::ffi::OsStrExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// The largest `/etc/passwd` or `/etc/group` a caller may read (ADR-0071
 /// §1). Over it, the file is unusable: the caller's read fails.
@@ -30,6 +31,172 @@ const DEFAULT_SHELL: &str = "/bin/sh";
 /// The highest ID a record may carry. `(uid_t)-1`, one above it, means
 /// "leave unchanged" to setresuid(2) and setresgid(2) (ADR-0071 §2).
 const MAX_ID: u32 = u32::MAX - 1;
+
+/// The files an account's record comes from (RFC-0019 §4).
+pub const PASSWD: &str = "/etc/passwd";
+/// See [`PASSWD`].
+pub const GROUP: &str = "/etc/group";
+
+/// Group- or world-writable bits.
+const WRITE_OTHERS: u32 = 0o022;
+
+/// Why a file that grants access to an account cannot be used
+/// (RFC-0019 §8). The two kinds map onto ADR-0070 §3's classes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FileCheck {
+    /// The check could not run, or the file could not be read:
+    /// `file_unavailable`.
+    Unavailable(String),
+    /// The check ran and the file fails it: `insecure_permissions`.
+    Insecure(String),
+}
+
+impl std::fmt::Display for FileCheck {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Unavailable(d) | Self::Insecure(d) => f.write_str(d),
+        }
+    }
+}
+
+/// RFC-0019 §8's account-mode check of a file that grants access to an
+/// account.
+///
+/// `path` must already be its canonical path, absolute with no symlink in
+/// any component. It must be owned by root and not group- or
+/// world-writable, and so must every ancestor directory up to `/`.
+///
+/// Stat-based and best-effort against a race with the read that follows,
+/// as ADR-0029's check is. Every directory on the way is root's, so only
+/// root could change the file in between.
+///
+/// # Errors
+///
+/// [`FileCheck::Unavailable`] when the path cannot be canonicalised or a
+/// component cannot be stat'ed; [`FileCheck::Insecure`] naming the path
+/// and the predicate it fails.
+pub fn check_root_file(path: &Path) -> Result<(), FileCheck> {
+    let canon = std::fs::canonicalize(path).map_err(|e| {
+        FileCheck::Unavailable(format!("{}: cannot canonicalise: {e}", path.display()))
+    })?;
+    // Byte for byte: `Path` equality skips `.` components.
+    if canon.as_os_str() != path.as_os_str() {
+        return Err(FileCheck::Insecure(format!(
+            "{}: not a canonical path, resolves to {} (account mode)",
+            path.display(),
+            canon.display()
+        )));
+    }
+    let st = stat(path)?;
+    if st.st_uid != 0 {
+        return Err(FileCheck::Insecure(format!(
+            "{}: not owned by root (account mode)",
+            path.display()
+        )));
+    }
+    if mode_of(&st) & WRITE_OTHERS != 0 {
+        return Err(FileCheck::Insecure(format!(
+            "{}: group/world-writable (mode {:04o})",
+            path.display(),
+            mode_of(&st) & 0o7777
+        )));
+    }
+    for dir in path.ancestors().skip(1) {
+        let st = stat(dir)?;
+        if st.st_uid != 0 {
+            return Err(FileCheck::Insecure(format!(
+                "{}: ancestor directory {} not owned by root (account mode)",
+                path.display(),
+                dir.display()
+            )));
+        }
+        if mode_of(&st) & WRITE_OTHERS != 0 {
+            return Err(FileCheck::Insecure(format!(
+                "{}: group/world-writable ancestor directory (mode {:04o}) at {}",
+                path.display(),
+                mode_of(&st) & 0o7777,
+                dir.display()
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn stat(path: &Path) -> Result<rustix::fs::Stat, FileCheck> {
+    rustix::fs::stat(path)
+        .map_err(|e| FileCheck::Unavailable(format!("{}: cannot stat: {e}", path.display())))
+}
+
+/// A `stat` mode as `u32`: `st_mode` is `u16` on the libc (macOS)
+/// backend and `u32` on `linux_raw`.
+#[must_use]
+pub fn mode_of(st: &rustix::fs::Stat) -> u32 {
+    #[allow(clippy::useless_conversion)]
+    u32::from(st.st_mode)
+}
+
+/// Checks `path` with [`check_root_file`], then reads it whole, refusing
+/// one over [`MAX_FILE`] (ADR-0071 §1).
+///
+/// # Errors
+///
+/// The check's [`FileCheck`], or [`FileCheck::Unavailable`] when the read
+/// fails or the file is over its bound.
+pub fn read_root_file(path: &Path) -> Result<Vec<u8>, FileCheck> {
+    check_root_file(path)?;
+    let unavailable =
+        |e: std::io::Error| FileCheck::Unavailable(format!("{}: cannot read: {e}", path.display()));
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)
+        .map_err(unavailable)?
+        .take(MAX_FILE as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(unavailable)?;
+    if bytes.len() > MAX_FILE {
+        return Err(FileCheck::Unavailable(format!(
+            "{}: over its bound of {MAX_FILE} bytes",
+            path.display()
+        )));
+    }
+    Ok(bytes)
+}
+
+/// Why an account could not be resolved from the files.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResolveError {
+    /// A file failed its check or its read.
+    File(FileCheck),
+    /// The files hold no usable record for the account.
+    Unresolved(Unresolved),
+}
+
+/// Resolves `name` from the system's files, [`PASSWD`] and [`GROUP`].
+///
+/// Both pass RFC-0019 §8's check, are read within ADR-0071 §1's bound,
+/// and are looked up as ADR-0071 says. This is the read RFC-0019 §4 and
+/// ADR-0064 §2 make, at authentication and at each session start.
+///
+/// # Errors
+///
+/// [`ResolveError`].
+pub fn resolve(name: &str) -> Result<AccountRecord, ResolveError> {
+    resolve_from(Path::new(PASSWD), Path::new(GROUP), name)
+}
+
+/// [`resolve`] over other paths, for tests.
+///
+/// # Errors
+///
+/// [`ResolveError`].
+pub fn resolve_from(
+    passwd: &Path,
+    group: &Path,
+    name: &str,
+) -> Result<AccountRecord, ResolveError> {
+    let passwd = read_root_file(passwd).map_err(ResolveError::File)?;
+    let group = read_root_file(group).map_err(ResolveError::File)?;
+    lookup(&passwd, &group, name).map_err(ResolveError::Unresolved)
+}
 
 /// What a session runs as (RFC-0019 §4).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -442,6 +609,76 @@ docker:x:999:alice\n";
             lookup(PASSWD, &group, "alice"),
             Err(Unresolved::TooManyGroups)
         );
+    }
+
+    /// A directory under the workspace's `target/`: owned by the user
+    /// running the tests, so never root's.
+    fn scratch(name: &str) -> PathBuf {
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/account-tests")
+            .join(name);
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::canonicalize(dir).unwrap()
+    }
+
+    #[test]
+    fn a_file_owned_by_another_user_fails_the_root_check() {
+        if rustix::process::geteuid().is_root() {
+            return; // Root owns what it creates.
+        }
+        let file = scratch("owner").join("keys");
+        std::fs::write(&file, b"").unwrap();
+        let err = check_root_file(&file).unwrap_err();
+        assert!(
+            matches!(&err, FileCheck::Insecure(d) if d.ends_with("not owned by root (account mode)")),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn a_path_that_is_not_canonical_fails_the_root_check() {
+        let dir = scratch("canonical");
+        std::fs::write(dir.join("keys"), b"").unwrap();
+        let link = dir.join("link");
+        std::os::unix::fs::symlink(dir.join("keys"), &link).unwrap();
+        for path in [
+            link,
+            dir.join(".").join("keys"),
+            PathBuf::from("relative/keys"),
+        ] {
+            let err = check_root_file(&path).unwrap_err();
+            assert!(
+                matches!(&err, FileCheck::Insecure(d) if d.contains("not a canonical path"))
+                    || matches!(&err, FileCheck::Unavailable(_)),
+                "{}: {err}",
+                path.display()
+            );
+        }
+        let err = check_root_file(&dir.join("link")).unwrap_err();
+        assert!(matches!(err, FileCheck::Insecure(d) if d.contains("not a canonical path")));
+    }
+
+    #[test]
+    fn a_missing_file_is_unavailable() {
+        let err = check_root_file(Path::new("/nonexistent/quantumssh/keys")).unwrap_err();
+        assert!(matches!(err, FileCheck::Unavailable(_)), "{err}");
+    }
+
+    #[test]
+    fn a_root_owned_file_in_root_owned_directories_passes() {
+        // Root-owned on Linux and macOS, with root-owned, unwritable
+        // ancestors: /usr/bin, /usr, /.
+        assert_eq!(check_root_file(Path::new("/usr/bin/true")), Ok(()));
+        assert!(read_root_file(Path::new("/usr/bin/true")).is_ok());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn root_resolves_from_the_systems_files() {
+        let root = resolve("root").expect("root resolves on Linux");
+        assert_eq!(root.uid, 0);
+        assert!(root.groups.contains(&root.gid));
     }
 
     #[test]
