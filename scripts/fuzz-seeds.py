@@ -139,10 +139,10 @@ def main():
         bytes([SSH_MSG_SERVICE_REQUEST]) + string(b"ssh-userauth"),
     )
 
-    def userauth(method, tail=b""):
+    def userauth(method, tail=b"", user=b"alice"):
         return (
             bytes([SSH_MSG_USERAUTH_REQUEST])
-            + string(b"alice")
+            + string(user)
             + string(b"ssh-connection")
             + string(method)
             + tail
@@ -158,6 +158,10 @@ def main():
     write(seeds / "userauth_request/probe", userauth(b"publickey", probe))
     write(seeds / "userauth_request/signed", userauth(b"publickey", signed))
     write(seeds / "userauth_request/none", userauth(b"none"))
+    # RFC-0019 §2: a refused method under the bound user goes on; a probe
+    # under another user ends where the connection would.
+    write(seeds / "userauth_request/password", userauth(b"password", boolean(False) + string(b"x")))
+    write(seeds / "userauth_request/other_user", userauth(b"publickey", probe, user=b"bob"))
 
     # A structurally valid user certificate from the fixture CA, with a
     # signature of the right length that does not verify.

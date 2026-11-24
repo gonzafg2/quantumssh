@@ -697,14 +697,13 @@ where
             // `input_userauth_request` does ("Change of username or service
             // not allowed"). It spends no attempt and emits no `auth.failed`,
             // like the other protocol errors above.
-            match bound_user.as_deref() {
-                None => bound_user = Some(request.user().to_owned()),
-                Some(bound) if bound != request.user() => {
-                    return Err(self
-                        .reject_sealed(protocol_error("user-name-changed"))
-                        .await);
-                }
-                Some(_) => {}
+            if !auth::same_user(bound_user.as_deref(), request.user()) {
+                return Err(self
+                    .reject_sealed(protocol_error("user-name-changed"))
+                    .await);
+            }
+            if bound_user.is_none() {
+                bound_user = Some(request.user().to_owned());
             }
 
             let (user_name, key_algorithm, key_blob, signature) = match request {

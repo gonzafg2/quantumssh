@@ -463,6 +463,13 @@ impl UserauthRequest<'_> {
     }
 }
 
+/// RFC-0019 §2: whether a request naming `user` may go on, on a
+/// connection whose first request fixed `bound`. The first request fixes
+/// it (`bound` is `None`), and every later one must name the same user.
+pub(crate) fn same_user(bound: Option<&str>, user: &str) -> bool {
+    bound.is_none_or(|bound| bound == user)
+}
+
 /// The signature part of a signed `publickey` request.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Signed<'a> {
@@ -1116,6 +1123,15 @@ mod tests {
         w.put_string(KEY_ALGORITHM.as_bytes());
         w.put_string(raw);
         w.into_bytes()
+    }
+
+    #[test]
+    fn the_first_request_fixes_the_user_name() {
+        assert!(same_user(None, "alice"));
+        assert!(same_user(Some("alice"), "alice"));
+        assert!(!same_user(Some("alice"), "root"));
+        assert!(!same_user(Some("alice"), "Alice"));
+        assert!(!same_user(Some("alice"), ""));
     }
 
     #[test]
