@@ -10,6 +10,11 @@ all-features = false
 # https://embarkstudios.github.io/cargo-deny/checks/advisories/cfg.html
 version             = 2
 yanked              = "warn"
+# Unmaintained-crate advisories fail the check anywhere in the graph,
+# transitive dependencies included. cargo-deny 0.22.0 changed the default
+# to "workspace", which checks only direct dependencies; this keeps the
+# coverage threat model §6.4 states.
+unmaintained        = "all"
 # Add entries here only with justification, and remove each one with the
 # change that makes it unnecessary.
 ignore              = []
