@@ -13,6 +13,7 @@
 //! machine, authentication, channels) land milestone by milestone;
 //! only functional code is merged — the project forbids stubs.
 
+pub mod account;
 pub mod admission;
 pub mod auth;
 pub mod cert;

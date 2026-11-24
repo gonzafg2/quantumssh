@@ -90,8 +90,11 @@ of a large host. The file bound leaves room for many such lines.
 **`/etc/group`:**
 
 - **GID:** the passwd rule above.
-- **user list:** split on `,`, with empty items ignored. Each item is
-  compared byte for byte with the account's name.
+- **user list:** split on `,`, with empty items ignored. Each item
+  loses its leading ASCII whitespace, as glibc's `parse_list` does ("Skip
+  leading white space", `nss/nss_files/files-parse.c:264` at
+  `04e750e75b73`), so `bob, alice` lists `alice`. It is then compared
+  byte for byte with the account's name.
 - **The group name and password** are not read.
 
 **Both files:**
@@ -148,11 +151,14 @@ more groups than §1 allows, is an account that does not resolve:
 
 ### 4. Where it lives, and how it is tested
 
-- **The code.** A module in `quantumssh-core`, built on Linux only like
-  account mode.
-- **One pure function per file,** over a byte slice and a name. They do
-  no I/O and allocate only the record they return. The reads and
-  RFC-0019 §8's check sit outside them, in the callers.
+- **The code.** A module, `account`, in `quantumssh-core`. It is pure,
+  so it builds and is tested on every platform the crate builds on.
+  Account mode itself stays Linux only (ADR-0070 §3).
+- **One pure function, `lookup`,** over the bytes of both files and a
+  name. It does no I/O, and allocates only the record it returns.
+- **What sits outside it, in the callers:** the reads, their bound of
+  §1, and RFC-0019 §8's check.
+- **ADR-0070 §2's name rule** lives beside it, as `valid_name`.
 - **Unit tests** cover:
   - each bound;
   - each field rule;
