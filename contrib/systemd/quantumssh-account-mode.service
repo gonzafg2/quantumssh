@@ -1,0 +1,36 @@
+# QuantumSSH systemd unit for account mode (ADR-0067). It replaces
+# quantumssh.service, under the same name: install it as
+# /etc/systemd/system/quantumssh.service when the configuration lists
+# [[account]] entries. Installation and file ownership: the "Account
+# mode" section of docs/deployment.md.
+#
+# systemd starts the launcher as root. The launcher starts the network
+# server as the service account `quantumssh`, and each session as its
+# account (ADR-0066). Every session runs inside this unit, so any
+# sandboxing directive added here also confines every session.
+
+[Unit]
+Description=QuantumSSH server (account mode)
+Documentation=https://github.com/gonzafg2/quantumssh/blob/main/docs/deployment.md
+After=network.target
+
+[Service]
+# The launcher sends READY=1 once the server accepts connections, and
+# STOPPING=1 with a stop timeout that covers the server's drain.
+Type=notify
+# Load-bearing: only the launcher may notify systemd, never the server
+# or a session.
+NotifyAccess=main
+# --require-account-mode: a unit that starts as root refuses a
+# configuration that lists no account, rather than serve as root.
+ExecStart=/usr/local/bin/quantumssh --config /etc/quantumssh/config.toml --require-account-mode
+# No User= or Group=: the launcher must start as root. No
+# NoNewPrivileges=: it would reach every session and stop `sudo` there
+# (RFC-0020 §8); an operator may still add it, at that cost.
+# SIGTERM to the launcher alone, which forwards it to the server's drain;
+# SIGKILL to whatever is left once the launcher exits.
+KillMode=mixed
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

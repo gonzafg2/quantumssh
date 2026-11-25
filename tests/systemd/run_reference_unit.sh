@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
-# Reference-unit check (ADR-0043 §7): the server under a real systemd.
+# Reference-unit check (ADR-0043 §7): the server under a real systemd,
+# then account mode under its own unit (ADR-0067 §5).
 #
 # Runs as root inside a disposable container of the gate image
 # (tests/gate-image/, ADR-0059), whose PID 1 is systemd. It installs
 # QuantumSSH the way docs/deployment.md describes — a system account,
-# /etc/quantumssh, /usr/local/bin and contrib/systemd/quantumssh.service —
+# /etc/quantumssh, /usr/local/bin and contrib/systemd/quantumssh.service,
+# then test accounts and contrib/systemd/quantumssh-account-mode.service —
 # so never run it on a real host. CI, the release workflow and a local run
 # all drive it through tests/systemd/run_in_docker.sh, from the repository
 # root.
@@ -120,5 +122,124 @@ finished=$(grep -c '"exec.finished"' <<<"$log" || true)
 [ "$started" -eq 4 ] && [ "$finished" -eq 4 ] \
     || fail "exec.started=$started exec.finished=$finished, want 4 and 4"
 echo "ok: systemd_stop_drain (${elapsed}s)"
+
+# ---------------------------------------------------------------------
+# Account mode (ADR-0067 §5): the account-mode unit, installed under the
+# same name in place of the reference unit, with the same drop-in.
+install -m 0644 "$SRC/contrib/systemd/quantumssh-account-mode.service" \
+    /etc/systemd/system/quantumssh.service
+systemctl daemon-reload
+
+# 5. The service-account configuration, which lists no account, fails
+# the start under this unit, and the journal names the flag.
+since="$(date '+%Y-%m-%d %H:%M:%S')"
+if systemctl start quantumssh 2>/dev/null; then
+    fail "the account-mode unit started a configuration without accounts"
+fi
+systemctl stop quantumssh 2>/dev/null || true
+systemctl reset-failed quantumssh 2>/dev/null || true
+journalctl -u quantumssh --since "$since" --no-pager -o cat | grep -qF -- '--require-account-mode' \
+    || fail "the refusal does not name --require-account-mode"
+echo "ok: systemd_account_mode_requires_accounts"
+
+# The accounts, their key files, and a configuration that lists them,
+# all owned by root (RFC-0019 §8).
+groupadd qssh-team
+useradd --create-home --shell /bin/bash --groups qssh-team qssh-alice
+useradd --create-home --shell /bin/sh qssh-bob
+install -d -m 0755 /etc/quantumssh/keys
+for name in alice bob; do
+    ssh-keygen -q -t ed25519 -N "" -f "$WORK/$name"
+    install -m 0644 "$WORK/$name.pub" "/etc/quantumssh/keys/qssh-$name"
+done
+cat > /etc/quantumssh/config.toml <<EOF
+schema_version = 1
+
+[server]
+listen        = "127.0.0.1:$PORT"
+host_key      = "/etc/quantumssh/ssh_host_mldsa44_ed25519_key"
+drain_timeout = $DRAIN
+
+[[account]]
+name            = "qssh-alice"
+authorized_keys = "/etc/quantumssh/keys/qssh-alice"
+
+[[account]]
+name            = "qssh-bob"
+authorized_keys = "/etc/quantumssh/keys/qssh-bob"
+EOF
+chmod 0644 /etc/quantumssh/config.toml
+ALICE=(ssh -i "$WORK/alice" -p "$PORT"
+    -o StrictHostKeyChecking=no
+    -o UserKnownHostsFile=/dev/null
+    -o IdentitiesOnly=yes
+    -o BatchMode=yes
+    -o ConnectTimeout=10
+    -o LogLevel=ERROR)
+
+# 6. The unit runs, and a session runs as its account, in its home.
+systemctl start quantumssh || fail "account mode: start"
+[ "$(systemctl is-active quantumssh)" = active ] || fail "account mode: not active after start"
+invocation="$(systemctl show -p InvocationID --value quantumssh)"
+out="$("${ALICE[@]}" qssh-alice@127.0.0.1 'id -un; pwd -P')" || fail "account mode: ssh exited $?"
+[ "$out" = "qssh-alice
+/home/qssh-alice" ] || fail "account mode: session ran as/in '$out', want qssh-alice in /home/qssh-alice"
+echo "ok: systemd_account_session"
+
+# 7. The three processes: the launcher, the unit's main process, is
+# root; the server is the service account with no_new_privs; a session
+# has no no_new_privs.
+main="$(systemctl show -p MainPID --value quantumssh)"
+[ "$(stat -c %u /proc/"$main")" = 0 ] || fail "the main process is not root"
+server="$(pgrep -o -f -- '--quantumssh-internal-network-server' || true)"
+[ -n "$server" ] || fail "no network server process"
+[ "$(stat -c %U /proc/"$server")" = quantumssh ] || fail "the server is not quantumssh"
+grep -qP '^NoNewPrivs:\t1$' /proc/"$server"/status || fail "the server has no no_new_privs"
+nnp="$("${ALICE[@]}" qssh-alice@127.0.0.1 'grep NoNewPrivs /proc/self/status')"
+case "$nnp" in
+    *0) ;;
+    *) fail "NoNewPrivs set in an account session: '$nnp'" ;;
+esac
+echo "ok: systemd_account_processes"
+
+# 8. Reload is refused here too.
+if systemctl reload quantumssh 2>/dev/null; then
+    fail "account mode: reload was accepted"
+fi
+echo "ok: systemd_account_no_reload"
+
+# 9. Stop, as in 4: a session runs, and another left a process outside
+# its process group.
+"${ALICE[@]}" qssh-alice@127.0.0.1 'setsid sleep 303 </dev/null >/dev/null 2>&1 &' \
+    || fail "account mode: ssh (escape) exited $?"
+"${ALICE[@]}" qssh-alice@127.0.0.1 'sleep 302' &
+session=$!
+for _ in $(seq 1 100); do
+    pgrep -u qssh-alice -fx 'sleep 302' >/dev/null && break
+    sleep 0.1
+done
+pgrep -u qssh-alice -fx 'sleep 302' >/dev/null || fail "account mode: the session's sleep never started"
+pgrep -u qssh-alice -fx 'sleep 303' >/dev/null || fail "account mode: the escaped sleep is not running"
+
+start=$(date +%s)
+systemctl stop quantumssh
+elapsed=$(( $(date +%s) - start ))
+wait "$session" || true
+result="$(systemctl show -p Result --value quantumssh)"
+status="$(systemctl show -p ExecMainStatus --value quantumssh)"
+[ "$result" = success ] || fail "account mode: stop result '$result', want success"
+[ "$status" = 0 ] || fail "account mode: exit status $status, want 0"
+[ "$elapsed" -ge "$DRAIN" ] || fail "account mode: stopped after ${elapsed}s, before the ${DRAIN}s drain"
+for user in qssh-alice qssh-bob quantumssh; do
+    if pgrep -u "$user" >/dev/null; then
+        fail "processes of $user survived the stop: $(pgrep -u "$user" -a)"
+    fi
+done
+log="$(journalctl _SYSTEMD_INVOCATION_ID="$invocation" --no-pager -o cat)"
+started=$(grep -c '"exec.started"' <<<"$log" || true)
+finished=$(grep -c '"exec.finished"' <<<"$log" || true)
+[ "$started" -eq 4 ] && [ "$finished" -eq 4 ] \
+    || fail "account mode: exec.started=$started exec.finished=$finished, want 4 and 4"
+echo "ok: systemd_account_stop_drain (${elapsed}s)"
 
 echo "SYSTEMD PASS"

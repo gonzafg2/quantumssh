@@ -72,7 +72,7 @@ pgrep -u qssh-alice -x sleep >/dev/null || fail "the session never started"
 
 # 1. The launcher is root; the network server is the service account,
 #    with no_new_privs, no supplementary group and no capability.
-server="$(pgrep -f -- '--quantumssh-internal-network-server' | head -1)"
+server="$(pgrep -o -f -- '--quantumssh-internal-network-server' || true)"
 [ -n "$server" ] || fail "no network server process"
 [ "$(stat -c %U /proc/"$launcher")" = root ] || fail "launcher not root"
 [ "$(stat -c %U /proc/"$server")" = quantumssh ] || fail "server not quantumssh"
