@@ -317,15 +317,18 @@ and login shell
      account, or a name with no account.
    - An entry with no key file needs `[auth] trusted_user_ca_keys`.
 
-5. **Install the account-mode unit** in place of the reference unit,
-   under the same name:
+5. **Install the account-mode unit** at step 5, in place of the
+   reference unit's command, under the same name:
 
    ```sh
    sudo install -m 0644 contrib/systemd/quantumssh-account-mode.service \
        /etc/systemd/system/quantumssh.service
    sudo systemctl daemon-reload
-   sudo systemctl restart quantumssh
+   sudo systemctl enable --now quantumssh
    ```
+
+   On a host that already runs in service-account mode, use
+   `sudo systemctl restart quantumssh` in place of the last command.
 
    The unit
    ([ADR-0067](adr/0067-account-mode-systemd-unit.md)) differs from
@@ -389,7 +392,11 @@ others (ADR-0065 §4). Do not keep keys in the session keyring until
 
 ## 5. Install and start the unit
 
-From the checkout, or from the extracted tarball of step 1:
+From the checkout, or from the extracted tarball of step 1. In account
+mode, run the account-mode unit's commands instead (§4, "Account mode",
+step 5): installing the reference unit over it would make the next
+start fail with `account mode must start as root`. The notes below hold
+for both units.
 
 ```sh
 sudo install -m 0644 contrib/systemd/quantumssh.service /etc/systemd/system/
