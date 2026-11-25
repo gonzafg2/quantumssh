@@ -191,7 +191,7 @@ echo "ok: systemd_account_session"
 # has no no_new_privs.
 main="$(systemctl show -p MainPID --value quantumssh)"
 [ "$(stat -c %u /proc/"$main")" = 0 ] || fail "the main process is not root"
-server="$(pgrep -f -- '--quantumssh-internal-network-server' | head -1)"
+server="$(pgrep -o -f -- '--quantumssh-internal-network-server' || true)"
 [ -n "$server" ] || fail "no network server process"
 [ "$(stat -c %U /proc/"$server")" = quantumssh ] || fail "the server is not quantumssh"
 grep -qP '^NoNewPrivs:\t1$' /proc/"$server"/status || fail "the server has no no_new_privs"
