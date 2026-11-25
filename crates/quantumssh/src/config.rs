@@ -419,7 +419,8 @@ mod tests {
     fn mode_error(body: &str) -> String {
         match rules_of(body) {
             Err(ConfigError::AccountMode(d)) => d,
-            other => panic!("{body}: {other:?}"),
+            Ok(()) => panic!("{body}: accepted"),
+            Err(_) => panic!("{body}: refused, but not as account_mode"),
         }
     }
 
