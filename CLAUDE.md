@@ -36,8 +36,14 @@ publickey Ed25519 authentication → one `session` channel running one
 — and interoperate with a stock OpenSSH 10.x client
 (the `interop` CI gate, [ADR-0020](docs/adr/0020-phase-1-ci-openssh-interop-gate.md),
 grown into the conformance suite of [ADR-0062](docs/adr/0062-conformance-suite-driven-by-the-stock-openssh-client.md)).
-It is **not** hardened for production: there is no per-user privilege
-separation until Phase 3 (threat model §8.12).
+It is **not** hardened for production: it has had no security audit.
+Per-user privilege separation is account mode, on Linux
+([RFC-0019](docs/rfcs/0019-identity-model-ssh-user-name-to-os-account.md),
+[RFC-0020](docs/rfcs/0020-privilege-separation-root-launcher-and-session-helper.md),
+[#43](https://github.com/gonzafg2/quantumssh/issues/43)): a root
+launcher, the network server as the service account, and each session
+as its listed account. Service-account mode keeps threat model §8.12's
+posture.
 
 The Phase-1 ADRs (0016–0024, 0026) are **Accepted** — flipped from `Proposed`
 in the [#86](https://github.com/gonzafg2/quantumssh/issues/86) governance sweep

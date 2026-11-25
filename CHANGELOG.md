@@ -132,6 +132,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Documentation: the threat model covers account mode
+  ([ADR-0069](docs/adr/0069-threat-model-text-for-account-mode.md),
+  [ADR-0072](docs/adr/0072-account-mode-documents-and-superseded-decisions.md)).
+  - **§2.5 and §8.12:** a session runs as its listed account in account
+    mode, and §8.12 now describes service-account mode only.
+  - **§4.2:** a second boundary, between the network server and the
+    launcher, says what the launcher trusts, what it checks, and what a
+    compromised server reaches.
+  - **§6.3:** a certificate logs in only to the account its principals
+    name, and a new account-binding control.
+  - **§7:** two residuals: a compromised network server, and the shared
+    session keyring.
+  - **§2.7, §3.2.1, §3.2.4 and §5.4.5** are scoped to the two modes.
+  - **Status notes:** ADR-0016, 0029, 0038, 0041, 0043 and 0050 each
+    gain the note that ADR-0072 §3 gives them.
+  - **`README.md` and `CLAUDE.md`** stop describing §8.12 as open in
+    every mode.
 - The OpenSSH 10.6p1 interop gate and the systemd test, on pull requests
   and in the release workflow, run in a published gate image instead of
   installing their client from snapshot.debian.org on every run
