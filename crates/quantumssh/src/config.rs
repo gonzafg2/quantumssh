@@ -31,6 +31,9 @@ pub enum ConfigError {
     VersionUnsupported(String),
     /// A `StrictModes` predicate failed (`insecure_permissions`).
     InsecurePermissions(String),
+    /// An account-mode rule beyond the deserializer failed
+    /// (`account_mode`, ADR-0070 §3).
+    AccountMode(String),
 }
 
 impl ConfigError {
@@ -41,6 +44,7 @@ impl ConfigError {
             Self::SchemaError(_) => "schema_error",
             Self::VersionUnsupported(_) => "version_unsupported",
             Self::InsecurePermissions(_) => "insecure_permissions",
+            Self::AccountMode(_) => "account_mode",
         }
     }
 
@@ -51,7 +55,8 @@ impl ConfigError {
             Self::FileUnavailable(d)
             | Self::SchemaError(d)
             | Self::VersionUnsupported(d)
-            | Self::InsecurePermissions(d) => d,
+            | Self::InsecurePermissions(d)
+            | Self::AccountMode(d) => d,
         }
     }
 }
@@ -63,6 +68,7 @@ impl std::fmt::Display for ConfigError {
             Self::SchemaError(d) => write!(f, "schema_error: {d}"),
             Self::VersionUnsupported(d) => write!(f, "version_unsupported: {d}"),
             Self::InsecurePermissions(d) => write!(f, "insecure_permissions: {d}"),
+            Self::AccountMode(d) => write!(f, "account_mode: {d}"),
         }
     }
 }
@@ -97,6 +103,66 @@ pub struct ConfigFile {
     /// `[limits]` — admission control (ADR-0028).
     #[serde(default)]
     pub limits: LimitsSection,
+    /// `[[account]]` — the listed accounts; their presence selects account
+    /// mode (RFC-0019 §1, ADR-0070).
+    pub account: Option<Vec<AccountEntry>>,
+}
+
+/// One `[[account]]` entry (ADR-0070 §1).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AccountEntry {
+    /// The account's name, under ADR-0070 §2's rule.
+    pub name: String,
+    /// The account's key file; may hold no key (RFC-0019 §5).
+    pub authorized_keys: Option<String>,
+}
+
+impl ConfigFile {
+    /// ADR-0070 §3's account-mode rules that need only the file. The
+    /// rules that read `/etc/passwd`, the platform or the starting UID run
+    /// where those are known.
+    ///
+    /// # Errors
+    ///
+    /// [`ConfigError::AccountMode`] naming the entry and the rule.
+    pub fn check_accounts(&self) -> Result<(), ConfigError> {
+        let Some(accounts) = &self.account else {
+            return Ok(());
+        };
+        if accounts.is_empty() {
+            return Err(ConfigError::AccountMode(
+                "account: an empty list selects no account; remove it for service-account mode"
+                    .to_string(),
+            ));
+        }
+        for (i, entry) in accounts.iter().enumerate() {
+            let here = format!("account #{} ({:?})", i + 1, entry.name);
+            if !quantumssh_core::account::valid_name(&entry.name) {
+                return Err(ConfigError::AccountMode(format!(
+                    "{here}: not a valid account name (RFC-0019 §3)"
+                )));
+            }
+            if let Some(first) = accounts[..i].iter().position(|e| e.name == entry.name) {
+                return Err(ConfigError::AccountMode(format!(
+                    "{here}: listed twice, first as account #{}",
+                    first + 1
+                )));
+            }
+            if entry.authorized_keys.is_none() && self.auth.trusted_user_ca_keys.is_none() {
+                return Err(ConfigError::AccountMode(format!(
+                    "{here}: no authorized_keys and no trusted_user_ca_keys, so nothing could log in to it"
+                )));
+            }
+        }
+        if self.auth.authorized_keys.is_some() {
+            return Err(ConfigError::AccountMode(
+                "auth.authorized_keys: not allowed in account mode; each [[account]] names its own key file"
+                    .to_string(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// `[server]`.
@@ -345,6 +411,97 @@ mod tests {
     use super::*;
 
     // ---- schema ----
+
+    fn rules_of(body: &str) -> Result<(), ConfigError> {
+        parse(&format!("schema_version = 1\n{body}"), "test").and_then(|f| f.check_accounts())
+    }
+
+    fn mode_error(body: &str) -> String {
+        let Err(ConfigError::AccountMode(d)) = rules_of(body) else {
+            panic!("{body}: not refused as account_mode");
+        };
+        d
+    }
+
+    #[test]
+    fn the_account_grammar_parses() {
+        let file = parse(
+            "schema_version = 1\n[[account]]\nname = \"alice\"\nauthorized_keys = \"/k/alice\"\n[[account]]\nname = \"deploy\"\nauthorized_keys = \"/k/deploy\"\n",
+            "test",
+        )
+        .unwrap();
+        assert!(file.account.is_some());
+        let names: Vec<&str> = file
+            .account
+            .as_ref()
+            .unwrap()
+            .iter()
+            .map(|a| a.name.as_str())
+            .collect();
+        assert_eq!(names, ["alice", "deploy"]);
+        assert!(file.check_accounts().is_ok());
+        assert!(
+            parse(
+                "schema_version = 1
+",
+                "test"
+            )
+            .unwrap()
+            .account
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn deserializer_errors_stay_schema_errors() {
+        for body in [
+            "[[account]]\nname = \"alice\"\nshell = \"/bin/sh\"",
+            "[[account]]\nauthorized_keys = \"/k\"",
+            "[[account]]\nname = 5",
+            "account = \"alice\"",
+        ] {
+            assert!(
+                matches!(rules_of(body), Err(ConfigError::SchemaError(_))),
+                "{body}"
+            );
+        }
+    }
+
+    #[test]
+    fn account_mode_rules_name_the_entry() {
+        assert_eq!(
+            mode_error("account = []"),
+            "account: an empty list selects no account; remove it for service-account mode"
+        );
+        assert_eq!(
+            mode_error("[[account]]\nname = \"Al ice\"\nauthorized_keys = \"/k\""),
+            "account #1 (\"Al ice\"): not a valid account name (RFC-0019 §3)"
+        );
+        assert_eq!(
+            mode_error(
+                "[[account]]\nname = \"alice\"\nauthorized_keys = \"/k\"\n[[account]]\nname = \"bob\"\nauthorized_keys = \"/k\"\n[[account]]\nname = \"alice\"\nauthorized_keys = \"/k\""
+            ),
+            "account #3 (\"alice\"): listed twice, first as account #1"
+        );
+        assert_eq!(
+            mode_error("[[account]]\nname = \"deploy\""),
+            "account #1 (\"deploy\"): no authorized_keys and no trusted_user_ca_keys, so nothing could log in to it"
+        );
+        assert!(
+            rules_of("[auth]\ntrusted_user_ca_keys = \"/ca\"\n[[account]]\nname = \"deploy\"")
+                .is_ok()
+        );
+        assert_eq!(
+            mode_error(
+                "[auth]\nauthorized_keys = \"/ak\"\n[[account]]\nname = \"alice\"\nauthorized_keys = \"/k\""
+            ),
+            "auth.authorized_keys: not allowed in account mode; each [[account]] names its own key file"
+        );
+        assert_eq!(
+            ConfigError::AccountMode(String::new()).class(),
+            "account_mode"
+        );
+    }
 
     #[test]
     fn parses_full_valid_config() {

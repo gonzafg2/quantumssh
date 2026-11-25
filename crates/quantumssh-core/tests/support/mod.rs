@@ -215,6 +215,83 @@ pub async fn start_server_full(
     start_server_configured(handshake_timeout, rekey, limits, None, None).await
 }
 
+/// A server in account mode (RFC-0019): each listed account with the
+/// keys of its key file, and `resolve` in place of `/etc/passwd`.
+pub async fn start_server_accounts(
+    accounts: &[(&str, &[&SigningKey])],
+    resolve: auth::AccountResolver,
+) -> (SocketAddr, Arc<HostKey>) {
+    let host_key = Arc::new(HostKey::from_seeds(&HOST_KEY_SEEDS));
+    let mut keys = auth::AccountKeys::default();
+    for (name, signers) in accounts {
+        let mut lines = String::new();
+        for s in *signers {
+            let blob = auth_test_blob(&s.verifying_key());
+            lines.push_str("ssh-ed25519 ");
+            lines.push_str(&quantumssh_core::host_key::base64_encode_nopad(&blob));
+            lines.push('\n');
+        }
+        let path = temp_file("account", &lines);
+        keys.insert(
+            (*name).to_string(),
+            AuthorizedKeys::load_account(&path).expect("load account keys"),
+        );
+    }
+    let budget = Duration::from_secs(30);
+    let config = Config {
+        listen: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+        handshake_timeout: budget,
+        host_key: Arc::clone(&host_key),
+        credentials: auth::Credentials::Accounts(Arc::new(auth::AccountMode { keys, resolve })),
+        trusted_user_ca_keys: None,
+        rekey: RekeyThresholds::bsi_defaults(budget),
+        limits: Limits::default(),
+        helper: None,
+        launcher: None,
+    };
+    let server = Server::bind(&config).await.expect("bind ephemeral port");
+    let addr = server.local_addr().expect("local addr");
+    let (tx, loop_rx) = broadcast::channel(4);
+    tokio::spawn(async move {
+        let _keep = tx.clone();
+        server.serve(tx, loop_rx).await
+    });
+    (addr, host_key)
+}
+
+/// Opens a connection up to `ssh-userauth` and sends one `publickey`
+/// request for `user` with `signing`'s key, signed or as a probe.
+/// Returns the reply's message type.
+pub async fn userauth_reply_as(
+    addr: SocketAddr,
+    host_key: &HostKey,
+    user: &[u8],
+    signing: &SigningKey,
+    signed: bool,
+) -> u8 {
+    let key_blob = auth_test_blob(&signing.verifying_key());
+    let mut stream = connect(addr).await;
+    let (mut client, session_id, _server_id) = establish(
+        &mut stream,
+        host_key,
+        OPENSSH_KEX_PLAIN,
+        "chacha20-poly1305@openssh.com",
+        "chacha20-poly1305@openssh.com",
+    )
+    .await;
+    client
+        .write_sealed(&mut stream, &service_request_payload())
+        .await;
+    assert_eq!(client.read_sealed(&mut stream).await.first(), Some(&6));
+    let request = if signed {
+        signed_auth_request_as(user, signing, &session_id, b"ssh-ed25519", &key_blob)
+    } else {
+        probe_auth_request_as(user, b"ssh-ed25519", &key_blob)
+    };
+    client.write_sealed(&mut stream, &request).await;
+    client.read_sealed(&mut stream).await[0]
+}
+
 /// A server whose PTY children re-execute `helper` (ADR-0038 §5).
 pub async fn start_server_with_helper(helper: std::path::PathBuf) -> (SocketAddr, Arc<HostKey>) {
     let budget = Duration::from_secs(30);
@@ -269,11 +346,12 @@ pub async fn start_server_configured(
         listen: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
         handshake_timeout,
         host_key: Arc::clone(&host_key),
-        authorized_keys,
+        credentials: auth::Credentials::Service(authorized_keys),
         trusted_user_ca_keys,
         rekey,
         limits,
         helper,
+        launcher: None,
     };
     let server = Server::bind(&config).await.expect("bind ephemeral port");
     let addr = server.local_addr().expect("local addr");
@@ -608,9 +686,20 @@ pub fn signed_auth_request_for(
     algorithm: &[u8],
     key_blob: &[u8],
 ) -> Vec<u8> {
+    signed_auth_request_as(b"testuser", signing, session_id, algorithm, key_blob)
+}
+
+/// [`signed_auth_request_for`] under the user name `user`.
+pub fn signed_auth_request_as(
+    user: &[u8],
+    signing: &SigningKey,
+    session_id: &[u8; 32],
+    algorithm: &[u8],
+    key_blob: &[u8],
+) -> Vec<u8> {
     let mut w = Writer::new();
     w.put_byte(auth::SSH_MSG_USERAUTH_REQUEST);
-    w.put_string(b"testuser");
+    w.put_string(user);
     w.put_string(b"ssh-connection");
     w.put_string(b"publickey");
     w.put_boolean(true);
@@ -639,9 +728,14 @@ pub fn probe_auth_request(key_blob: &[u8]) -> Vec<u8> {
 
 /// [`probe_auth_request`] for a key `algorithm`.
 pub fn probe_auth_request_for(algorithm: &[u8], key_blob: &[u8]) -> Vec<u8> {
+    probe_auth_request_as(b"testuser", algorithm, key_blob)
+}
+
+/// [`probe_auth_request_for`] under the user name `user`.
+pub fn probe_auth_request_as(user: &[u8], algorithm: &[u8], key_blob: &[u8]) -> Vec<u8> {
     let mut w = Writer::new();
     w.put_byte(auth::SSH_MSG_USERAUTH_REQUEST);
-    w.put_string(b"testuser");
+    w.put_string(user);
     w.put_string(b"ssh-connection");
     w.put_string(b"publickey");
     w.put_boolean(false);

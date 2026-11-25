@@ -76,6 +76,10 @@ jobs:
     # 10.6p1 (ADR-0048).
     container:
       image: ghcr.io/gonzafg2/quantumssh-gate@sha256:88a4c0e68037c080d0430f88f63847b9fd7c5c1f369798a9c5233a0b6c903b1e
+    # ADR-0068 §1: the job runs as root in a disposable container, so the
+    # account cases run here and none of them may skip.
+    env:
+      INTEROP_ACCOUNT_MODE: "1"
     steps:
       - name: Gate image client
         run: |

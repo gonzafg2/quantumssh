@@ -38,10 +38,11 @@ use tokio::time::Instant;
 use tracing::{Instrument, Span, debug, info, info_span, warn};
 
 use crate::admission::{Admission, ConnectionGuard, Limits};
-use crate::auth::AuthorizedKeys;
+use crate::auth::Credentials;
 use crate::cert::TrustedUserCaKeys;
 use crate::exec::ChildScope;
 use crate::host_key::HostKey;
+use crate::launcher::client::Client;
 use crate::transport::{self, RekeyThresholds, TransportError};
 
 /// Cooperative connections cancel themselves at the drain deadline;
@@ -103,8 +104,9 @@ pub struct Config {
     pub handshake_timeout: Duration,
     /// The Ed25519 host key (ADR-0021: `ssh-ed25519` only).
     pub host_key: Arc<HostKey>,
-    /// The parsed `authorized_keys` file (publickey auth).
-    pub authorized_keys: Arc<AuthorizedKeys>,
+    /// Who may authenticate: one `authorized_keys` file, or the listed
+    /// accounts (RFC-0019 §1).
+    pub credentials: Credentials,
     /// The CAs `[auth] trusted_user_ca_keys` lists; `None` accepts no
     /// certificate (ADR-0050 §3).
     pub trusted_user_ca_keys: Option<Arc<TrustedUserCaKeys>>,
@@ -117,6 +119,9 @@ pub struct Config {
     /// [`crate::sftp::run_server_if_requested`]. `None` refuses every
     /// `pty-req` and `subsystem` (ADR-0038 §5, ADR-0041 §2).
     pub helper: Option<PathBuf>,
+    /// Account mode: the launcher that starts every session (ADR-0064).
+    /// `None` in service-account mode, where the server spawns them.
+    pub launcher: Option<Client>,
 }
 
 /// A bound, not-yet-serving server.
@@ -125,11 +130,12 @@ pub struct Server {
     listener: TcpListener,
     handshake_timeout: Duration,
     host_key: Arc<HostKey>,
-    authorized_keys: Arc<AuthorizedKeys>,
+    credentials: Credentials,
     trusted_user_ca_keys: Option<Arc<TrustedUserCaKeys>>,
     rekey: RekeyThresholds,
     limits: Limits,
     helper: Option<Arc<Path>>,
+    launcher: Option<Client>,
 }
 
 impl Server {
@@ -141,17 +147,38 @@ impl Server {
     /// Returns the underlying I/O error when the address cannot be
     /// bound (in use, permission denied, …).
     pub async fn bind(config: &Config) -> io::Result<Self> {
-        let listener = TcpListener::bind(config.listen).await?;
-        Ok(Self {
+        Ok(Self::with_listener(
+            TcpListener::bind(config.listen).await?,
+            config,
+        ))
+    }
+
+    /// A server on a listener bound elsewhere: account mode's launcher
+    /// binds it as root and passes it (ADR-0066 §2).
+    ///
+    /// # Errors
+    ///
+    /// The listener cannot be registered with the runtime.
+    pub fn from_std(listener: std::net::TcpListener, config: &Config) -> io::Result<Self> {
+        listener.set_nonblocking(true)?;
+        Ok(Self::with_listener(
+            TcpListener::from_std(listener)?,
+            config,
+        ))
+    }
+
+    fn with_listener(listener: TcpListener, config: &Config) -> Self {
+        Self {
             listener,
             handshake_timeout: config.handshake_timeout,
             host_key: Arc::clone(&config.host_key),
-            authorized_keys: Arc::clone(&config.authorized_keys),
+            credentials: config.credentials.clone(),
             trusted_user_ca_keys: config.trusted_user_ca_keys.clone(),
             rekey: config.rekey,
             limits: config.limits,
             helper: config.helper.as_deref().map(Arc::from),
-        })
+            launcher: config.launcher.clone(),
+        }
     }
 
     /// The address the listener is actually bound to.
@@ -244,22 +271,24 @@ impl Server {
                         }
                         Ok(guard) => {
                             let host_key = Arc::clone(&self.host_key);
-                            let authorized_keys = Arc::clone(&self.authorized_keys);
+                            let credentials = self.credentials.clone();
                             let trusted_cas = self.trusted_user_ca_keys.clone();
                             let helper = self.helper.clone();
+                            let launcher = self.launcher.clone();
                             let conn_rx = shutdown.subscribe();
                             let connection = async move {
                                 info!(target: "audit", "connection.accepted");
                                 handle(
                                     stream,
                                     host_key,
-                                    authorized_keys,
+                                    credentials,
                                     trusted_cas,
                                     budget,
                                     rekey,
                                     guard,
                                     conn_rx,
                                     helper,
+                                    launcher,
                                 )
                                 .await;
                             };
@@ -364,18 +393,19 @@ async fn next_shutdown(rx: &mut broadcast::Receiver<Instant>) -> Instant {
 async fn handle(
     mut stream: TcpStream,
     host_key: Arc<HostKey>,
-    authorized_keys: Arc<AuthorizedKeys>,
+    credentials: Credentials,
     trusted_cas: Option<Arc<TrustedUserCaKeys>>,
     budget: Duration,
     rekey: RekeyThresholds,
     guard: ConnectionGuard,
     mut shutdown: broadcast::Receiver<Instant>,
     helper: Option<Arc<Path>>,
+    launcher: Option<Client>,
 ) {
     // Outlives the connection future: a deadline that cancels the future
     // leaves the children's teardown running, and an abort of this task
     // runs the scope's synchronous kill guard (ADR-0038 §6).
-    let children = ChildScope::new(helper);
+    let children = ChildScope::new(helper, launcher);
     // The block scopes the (possibly cancelled) connection future: at
     // its end the `&mut stream` borrow is released and the channel
     // driver's drop-side effects (child kill, owed `exec.finished`)
@@ -384,7 +414,7 @@ async fn handle(
         let conn = run_connection(
             &mut stream,
             host_key,
-            &authorized_keys,
+            &credentials,
             trusted_cas.as_deref(),
             budget,
             rekey,
@@ -439,7 +469,7 @@ async fn handle(
 async fn run_connection(
     stream: &mut TcpStream,
     host_key: Arc<HostKey>,
-    authorized_keys: &AuthorizedKeys,
+    credentials: &Credentials,
     trusted_cas: Option<&TrustedUserCaKeys>,
     budget: Duration,
     rekey: RekeyThresholds,
@@ -467,7 +497,7 @@ async fn run_connection(
         let (service, responder) = t.read_service_request().await?;
         if service.as_str() == "ssh-userauth" {
             let t = responder.accept().await?;
-            Ok::<_, TransportError>(Some(t.authenticate(authorized_keys, trusted_cas).await?))
+            Ok::<_, TransportError>(Some(t.authenticate(credentials, trusted_cas).await?))
         } else {
             info!(service = %service, "service denied (only ssh-userauth supported)");
             Err(responder.deny().await)

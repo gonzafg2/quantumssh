@@ -32,6 +32,7 @@ use tracing::info;
 
 use crate::auth::Authenticated;
 use crate::exec::{self, ChildChunk, ChildIo, ChildScope, Program};
+use crate::launcher;
 use crate::pty::{self, PtyPair, Size};
 use crate::transport::{Expect, RekeyStep, Session, TransportError};
 use crate::wire::{Reader, Writer};
@@ -217,6 +218,8 @@ struct Driver<'a> {
     bytes_received: u64,
     /// Channel payload bytes of the child's output sent to the client.
     bytes_sent: u64,
+    /// `exec.started` has been emitted (emit exactly once).
+    started_emitted: bool,
     /// `exec.finished` has been emitted (emit exactly once).
     finished_emitted: bool,
     /// Reply-generating inbound messages buffered during a re-key's
@@ -244,8 +247,11 @@ impl<'a> Driver<'a> {
         Self {
             children,
             pty: None,
+            uid: authenticated
+                .account
+                .as_ref()
+                .map_or_else(exec::executing_uid, |a| a.uid),
             authenticated,
-            uid: exec::executing_uid(),
             state: ChannelState::BeforeOpen,
             peer_chan: 0,
             out_window: 0,
@@ -266,6 +272,7 @@ impl<'a> Driver<'a> {
             on_pty: false,
             bytes_received: 0,
             bytes_sent: 0,
+            started_emitted: false,
             finished_emitted: false,
             deferred: Vec::new(),
             child: None,
@@ -602,11 +609,42 @@ impl Driver<'_> {
         Ok(())
     }
 
-    /// Emits `exec.finished` exactly once, if an `exec` was started.
+    /// Emits `exec.started` exactly once, for the command `start` set.
+    fn emit_started(&mut self) {
+        let Some(command) = self.command.as_deref() else {
+            return;
+        };
+        if self.started_emitted {
+            return;
+        }
+        self.started_emitted = true;
+        let cert = self.authenticated.certificate.as_ref();
+        info!(
+            target: "audit",
+            authenticated_identity = %self.authenticated.fingerprint,
+            executing_uid = self.uid,
+            command = %command,
+            request_type = self.request_type,
+            pty = self.on_pty,
+            cert_key_id = cert.map(|c| c.key_id.as_str()),
+            cert_serial = cert.map(|c| c.serial.as_str()),
+            cert_ca_fingerprint = cert.map(|c| c.ca_fingerprint.as_str()),
+            cert_principal = cert.map(|c| c.principal.as_str()),
+            account = self.authenticated.account.as_ref().map(|a| a.name.as_str()),
+            "exec.started"
+        );
+    }
+
+    /// Emits `exec.finished` exactly once, if an `exec` was started. A
+    /// start cancelled while it waited for the launcher, at the drain
+    /// deadline, never wrote `exec.started`: it is written first, with the
+    /// UID read at authentication, as for a refused start (ADR-0064 §2),
+    /// so the records stay a pair.
     fn emit_finished(&mut self) {
         if let Some(command) = self.command.clone()
             && !self.finished_emitted
         {
+            self.emit_started();
             self.finished_emitted = true;
             // Credits still queued when the channel closes are bytes the
             // child received before it did: count them (ADR-0042).
@@ -631,6 +669,7 @@ impl Driver<'_> {
                 cert_serial = cert.map(|c| c.serial.as_str()),
                 cert_ca_fingerprint = cert.map(|c| c.ca_fingerprint.as_str()),
                 cert_principal = cert.map(|c| c.principal.as_str()),
+                account = self.authenticated.account.as_ref().map(|a| a.name.as_str()),
                 "exec.finished"
             );
         }
@@ -842,21 +881,33 @@ impl Driver<'_> {
     where
         S: AsyncRead + AsyncWrite + Unpin + Send,
     {
-        let PtyRequest { term, size, modes } = match parse_pty_req(r) {
+        let PtyRequest {
+            term,
+            size,
+            modes,
+            blob,
+        } = match parse_pty_req(r) {
             Ok(request) => request,
             Err(reason) => return Err(session.protocol_disconnect(reason).await),
         };
         let allowed = self.authenticated.pty_permitted
             && self.state == ChannelState::Idle
             && self.pty.is_none()
-            && self.children.helper().is_some()
+            && (self.children.helper().is_some() || self.children.launcher().is_some())
             && pty::valid_term(term);
         // `valid_term` admits ASCII only, so the conversion cannot fail.
         let pending = allowed
             .then(|| {
                 let term = std::str::from_utf8(term).ok()?.to_string();
-                let pair = pty::allocate(&modes, size).ok()?;
-                Some(PendingPty { pair, term })
+                let alloc = if self.children.launcher().is_some() {
+                    PtyAlloc::Remote {
+                        size,
+                        modes: blob.to_vec(),
+                    }
+                } else {
+                    PtyAlloc::Local(pty::allocate(&modes, size).ok()?)
+                };
+                Some(PendingPty { alloc, term })
             })
             .flatten();
         // A refusal leaves an already granted PTY in place.
@@ -897,7 +948,7 @@ impl Driver<'_> {
     /// `window-change` (RFC 4254 §6.7): applied to the master while a PTY
     /// is allocated, with `pty-req`'s dimension rule; refused otherwise.
     async fn on_window_change<S>(
-        &self,
+        &mut self,
         session: &mut Expect<S, Session>,
         r: &mut Reader<'_>,
         want_reply: bool,
@@ -909,8 +960,21 @@ impl Driver<'_> {
             Ok(size) => size,
             Err(reason) => return Err(session.protocol_disconnect(reason).await),
         };
-        let applied = match (&self.pty, &self.child) {
-            (Some(pending), _) => pty::resize(&pending.pair.master, size).is_ok(),
+        let applied = match (&mut self.pty, &self.child) {
+            (Some(pending), _) => match &mut pending.alloc {
+                PtyAlloc::Local(pair) => pty::resize(&pair.master, size).is_ok(),
+                PtyAlloc::Remote { size: kept, .. } => {
+                    // Zero dimensions keep their value (ADR-0038 §2).
+                    let keep = |new: u32, old: u32| if new == 0 { old } else { new };
+                    *kept = Size {
+                        cols: keep(size.cols, kept.cols),
+                        rows: keep(size.rows, kept.rows),
+                        width_px: keep(size.width_px, kept.width_px),
+                        height_px: keep(size.height_px, kept.height_px),
+                    };
+                    true
+                }
+            },
             (None, Some(child)) if self.on_pty => child.resize(size).is_ok(),
             _ => false,
         };
@@ -934,32 +998,40 @@ impl Driver<'_> {
             Start::Program(Program::Shell) => ("", "shell"),
             Start::Sftp => ("sftp", "subsystem"),
         };
-        let pending = self.pty.take();
+        let mut pending = self.pty.take();
         self.command = Some(command.to_string());
         self.request_type = request_type;
         self.on_pty = pending.is_some();
-        let cert = self.authenticated.certificate.as_ref();
-        info!(
-            target: "audit",
-            authenticated_identity = %self.authenticated.fingerprint,
-            executing_uid = self.uid,
-            command = %command,
-            request_type,
-            pty = self.on_pty,
-            cert_key_id = cert.map(|c| c.key_id.as_str()),
-            cert_serial = cert.map(|c| c.serial.as_str()),
-            cert_ca_fingerprint = cert.map(|c| c.ca_fingerprint.as_str()),
-            cert_principal = cert.map(|c| c.principal.as_str()),
-            "exec.started"
-        );
-        self.reply(session, want_reply, true).await?;
-        let spawned = match (start, pending) {
-            // `on_subsystem` refuses SFTP while a PTY is pending.
-            (Start::Sftp, _) => exec::spawn_sftp(self.children),
-            (Start::Program(program), Some(pending)) => {
-                exec::spawn_pty(program, pending.pair, &pending.term, self.children)
+        // Account mode: the launcher starts the session first, so that
+        // `exec.started` carries the UID it actually runs under, from the
+        // launcher's own read of the account (ADR-0064 §2). A refusal keeps
+        // the UID read at authentication.
+        let remote = match self.authenticated.account.as_ref().map(|a| a.name.clone()) {
+            Some(name) => {
+                let spawned = remote_start(&name, start, pending.take(), self.children).await;
+                Some(spawned.map(|(child, uid)| {
+                    self.uid = uid;
+                    child
+                }))
             }
-            (Start::Program(program), None) => exec::spawn(program, self.children),
+            None => None,
+        };
+        self.emit_started();
+        self.reply(session, want_reply, true).await?;
+        let spawned = match (remote, start, pending) {
+            // Account mode: the launcher started it (ADR-0064).
+            (Some(spawned), _, _) => spawned,
+            // `on_subsystem` refuses SFTP while a PTY is pending.
+            (None, Start::Sftp, _) => exec::spawn_sftp(self.children),
+            (
+                None,
+                Start::Program(program),
+                Some(PendingPty {
+                    alloc: PtyAlloc::Local(pair),
+                    term,
+                }),
+            ) => exec::spawn_pty(program, pair, &term, self.children),
+            (None, Start::Program(program), _) => exec::spawn(program, self.children),
         };
         if let Ok(child) = spawned {
             self.child = Some(child);
@@ -1114,8 +1186,53 @@ enum Start<'a> {
 /// A pair allocated by `pty-req`, with its validated `TERM` (empty means
 /// no `TERM` in the child's environment).
 struct PendingPty {
-    pair: PtyPair,
+    alloc: PtyAlloc,
     term: String,
+}
+
+/// Where a pending PTY lives until the session starts.
+enum PtyAlloc {
+    /// Service-account mode: the pair `pty-req` allocated.
+    Local(PtyPair),
+    /// Account mode: the launcher allocates the pair at the start
+    /// (ADR-0064 §2); until then the server keeps the fields.
+    Remote { size: Size, modes: Vec<u8> },
+}
+
+/// Account mode's start: the session's kind and PTY fields go to the
+/// launcher, which allocates and starts it (ADR-0063 §2, ADR-0064 §2).
+async fn remote_start(
+    account: &str,
+    start: Start<'_>,
+    pending: Option<PendingPty>,
+    children: &ChildScope,
+) -> std::io::Result<(ChildIo, u32)> {
+    let (size, modes, term) = match pending {
+        Some(PendingPty {
+            alloc: PtyAlloc::Remote { size, modes },
+            term,
+        }) => (Some(size), modes, term),
+        _ => (None, Vec::new(), String::new()),
+    };
+    let pty = size.map(|size| launcher::PtyRequest {
+        term: term.as_bytes(),
+        size: launcher::WindowSize {
+            cols: size.cols,
+            rows: size.rows,
+            width_px: size.width_px,
+            height_px: size.height_px,
+        },
+        modes: &modes,
+    });
+    let session = match start {
+        Start::Sftp => launcher::Session::Sftp,
+        Start::Program(Program::Shell) => launcher::Session::Shell { pty },
+        Start::Program(Program::Exec(command)) => launcher::Session::Exec {
+            command: command.as_bytes(),
+            pty,
+        },
+    };
+    exec::spawn_remote(account, session, children).await
 }
 
 // ---- pure frame builders (unit-tested) ----
@@ -1279,6 +1396,9 @@ pub(crate) struct PtyRequest<'a> {
     pub(crate) term: &'a [u8],
     pub(crate) size: Size,
     pub(crate) modes: pty::Modes,
+    /// The encoded modes as sent, which account mode passes to the
+    /// launcher (ADR-0063 §2).
+    pub(crate) blob: &'a [u8],
 }
 
 /// Parses a `pty-req` request. Every field is bounded.
@@ -1305,6 +1425,7 @@ pub(crate) fn parse_pty_req<'a>(r: &mut Reader<'a>) -> Result<PtyRequest<'a>, &'
             height_px,
         },
         modes,
+        blob,
     })
 }
 
@@ -1404,6 +1525,7 @@ mod tests {
             fingerprint: "SHA256:test".to_string(),
             certificate: None,
             pty_permitted: true,
+            account: None,
         }
     }
 
@@ -1967,6 +2089,21 @@ mod tests {
             drop(d);
         });
         assert_eq!(finished_count(&seen), 1);
+    }
+
+    /// A start cancelled while it waited for the launcher (ADR-0064 §2):
+    /// the drop writes the missing `exec.started` before `exec.finished`.
+    #[test]
+    fn a_cancelled_start_still_writes_the_pair() {
+        let scope = ChildScope::default();
+        let capture = Capture::default();
+        let seen = capture.0.clone();
+        tracing::subscriber::with_default(capture, || {
+            let mut d = Driver::new(bare_key(), &scope);
+            d.command = Some("true".to_string());
+            drop(d);
+        });
+        assert_eq!(*seen.lock().unwrap(), ["exec.started", "exec.finished"]);
     }
 
     #[test]

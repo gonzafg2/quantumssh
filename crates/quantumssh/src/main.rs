@@ -6,6 +6,7 @@
 
 use std::io::IsTerminal;
 use std::net::SocketAddr;
+use std::os::fd::AsFd;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Duration;
@@ -13,7 +14,7 @@ use std::time::Duration;
 use std::sync::Arc;
 
 use quantumssh_core::admission::Limits;
-use quantumssh_core::auth::{AuthError, AuthorizedKeys};
+use quantumssh_core::auth::{AuthError, AuthorizedKeys, Credentials};
 use quantumssh_core::cert::TrustedUserCaKeys;
 use quantumssh_core::host_key::HostKey;
 use quantumssh_core::server::{Config, Server};
@@ -28,6 +29,8 @@ use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{EnvFilter, Layer};
 use zeroize::Zeroizing;
 
+#[cfg(target_os = "linux")]
+mod account_mode;
 mod config;
 mod keygen;
 mod log_fields;
@@ -75,6 +78,9 @@ OPTIONS:
                                   completion (default: 30; ADR-0022)
     --log-format <FORMAT>         'json' or 'human' (default: json when
                                   stderr is not a TTY, human when it is)
+    --require-account-mode        Refuse a configuration that lists no
+                                  [[account]] (the account-mode unit
+                                  passes it; ADR-0066 §1)
     --help                        Print this help
     --version                     Print version
 ";
@@ -91,6 +97,8 @@ struct Cli {
     authorized_keys_path: Option<String>,
     handshake_timeout: Option<Duration>,
     log_format: Option<LogFormat>,
+    /// ADR-0066 §1: refuse a configuration without accounts.
+    require_account_mode: bool,
 }
 
 enum CliOutcome {
@@ -155,6 +163,7 @@ fn parse_cli(args: &[String]) -> Result<CliOutcome, String> {
                     other => return Err(format!("invalid --log-format '{other}'")),
                 });
             }
+            "--require-account-mode" => cli.require_account_mode = true,
             "--help" => {
                 print!("{USAGE}");
                 return Ok(CliOutcome::Exit(ExitCode::SUCCESS));
@@ -189,6 +198,15 @@ struct Resolved {
     /// Keys, as TOML paths, where an explicit flag overrode a set config
     /// value: each becomes a `server.config_override` event (RFC-0014 §3).
     overrides: Vec<&'static str>,
+    /// `[[account]]`: `Some` selects account mode (RFC-0019 §1).
+    accounts: Option<Vec<config::AccountEntry>>,
+    /// `--authorized-keys` was given, which account mode refuses.
+    authorized_keys_flag: bool,
+    /// `--require-account-mode` (ADR-0066 §1).
+    require_account_mode: bool,
+    /// `--config`, which account mode needs for its file checks.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    config_path: Option<String>,
 }
 
 /// One key's merge: flag wins, then config, then default; a flag
@@ -226,6 +244,9 @@ fn resolve(
     tty_default: LogFormat,
 ) -> Resolved {
     let server = file.map(|f| &f.server);
+    let authorized_keys_flag = cli.authorized_keys_path.is_some();
+    let require_account_mode = cli.require_account_mode;
+    let config_path = cli.config_path.clone();
     let mut overrides = Vec::new();
     let listen = pick(
         cli.listen,
@@ -292,6 +313,10 @@ fn resolve(
         limits,
         drain_timeout,
         overrides,
+        accounts: file.and_then(|f| f.account.clone()),
+        authorized_keys_flag,
+        require_account_mode,
+        config_path,
     }
 }
 
@@ -471,7 +496,27 @@ fn main() -> ExitCode {
     quantumssh_core::session_helper::run_if_requested();
     quantumssh_core::pty::run_helper_if_requested();
     quantumssh_core::sftp::run_server_if_requested();
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    // Only Linux has account mode, and so the launcher's argument.
+    #[cfg_attr(not(target_os = "linux"), allow(unused_mut))]
+    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    // ADR-0066 §2: the network server under account mode's launcher. Its
+    // first steps run here, before any thread exists.
+    #[cfg(target_os = "linux")]
+    let under_launcher =
+        if args.first().map(String::as_str) == Some(quantumssh_core::launcher::SERVER_ARG) {
+            args.remove(0);
+            match account_mode::server_preflight() {
+                Ok(listener) => Some(listener),
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    return ExitCode::FAILURE;
+                }
+            }
+        } else {
+            None
+        };
+    #[cfg(not(target_os = "linux"))]
+    let under_launcher: Option<std::net::TcpListener> = None;
     let cli = match parse_cli(&args) {
         Ok(CliOutcome::Run(cli)) => cli,
         // Before any configuration, logging or runtime (ADR-0058 §1).
@@ -507,11 +552,29 @@ fn main() -> ExitCode {
             config_error(e.class(), e.detail(), &config_file);
             return ExitCode::FAILURE;
         }
-        Ok(file) => resolve(cli, file.as_ref(), default_listen, tty_default),
+        Ok(file) => {
+            // ADR-0070 §3: the account-mode rules that need only the file.
+            if let Some(Err(e)) = file.as_ref().map(config::ConfigFile::check_accounts) {
+                init_logging(cli.log_format.unwrap_or(tty_default));
+                config_error(e.class(), e.detail(), &config_file);
+                return ExitCode::FAILURE;
+            }
+            resolve(cli, file.as_ref(), default_listen, tty_default)
+        }
     };
     init_logging(resolved.log_format);
     for &key in &resolved.overrides {
         info!(target: AUDIT_TARGET, key, "server.config_override");
+    }
+    if let Err(e) = check_mode(&resolved, under_launcher.is_some()) {
+        config_error("account_mode", &e, &config_file);
+        return ExitCode::FAILURE;
+    }
+    // Account mode, started as root: this process is the launcher
+    // (ADR-0066 §1).
+    #[cfg(target_os = "linux")]
+    if resolved.accounts.is_some() && under_launcher.is_none() {
+        return launcher_main(&resolved, &config_file);
     }
 
     // The binary constructs the runtime (ADR-0022), sized per
@@ -535,7 +598,87 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    runtime.block_on(run(resolved, config_file))
+    runtime.block_on(run(resolved, config_file, under_launcher))
+}
+
+/// ADR-0066 §1's mode table and ADR-0070 §3's rules that need the flags,
+/// the platform or the starting UID.
+fn check_mode(resolved: &Resolved, under_launcher: bool) -> Result<(), String> {
+    match &resolved.accounts {
+        None if resolved.require_account_mode => {
+            Err("--require-account-mode: the configuration lists no account".to_string())
+        }
+        None if under_launcher => {
+            Err("the network server was started without an account-mode configuration".to_string())
+        }
+        Some(_) if resolved.authorized_keys_flag => Err(
+            "--authorized-keys: not allowed in account mode; each [[account]] names its own key file"
+                .to_string(),
+        ),
+        Some(_) if !cfg!(target_os = "linux") => {
+            Err("account mode exists on Linux only".to_string())
+        }
+        Some(_) if !under_launcher && !rustix::process::geteuid().is_root() => {
+            Err("account mode must start as root".to_string())
+        }
+        None | Some(_) => Ok(()),
+    }
+}
+
+/// The launcher (ADR-0066): its checks as root, the listening socket, then
+/// the runtime that starts the server and every session.
+#[cfg(target_os = "linux")]
+fn launcher_main(resolved: &Resolved, config_file: &str) -> ExitCode {
+    use quantumssh_core::launcher::runtime::{self, Notice};
+    let entries = resolved.accounts.as_deref().unwrap_or_default();
+    let Some(config_path) = resolved.config_path.as_deref() else {
+        config_error(
+            "account_mode",
+            "account mode needs its configuration file (--config)",
+            config_file,
+        );
+        return ExitCode::FAILURE;
+    };
+    let checked = match account_mode::check_as_root(
+        std::path::Path::new(config_path),
+        resolved.trusted_user_ca_keys_path.as_deref(),
+        entries,
+    ) {
+        Ok(checked) => checked,
+        Err(e) => {
+            config_error(e.class(), e.detail(), config_file);
+            return ExitCode::FAILURE;
+        }
+    };
+    let listener = match std::net::TcpListener::bind(resolved.listen) {
+        Ok(listener) => listener,
+        Err(e) => {
+            config_error(
+                "bind_failed",
+                &format!("cannot bind {}: {e}", resolved.listen),
+                config_file,
+            );
+            return ExitCode::FAILURE;
+        }
+    };
+    let options = runtime::Options {
+        listener,
+        server_args: std::env::args_os().skip(1).collect(),
+        service_uid: checked.service.0,
+        service_gid: checked.service.1,
+        accounts: checked.accounts,
+        max_sessions: resolved.limits.max_connections,
+        drain: resolved.drain_timeout,
+        notify: Box::new(|notice| match notice {
+            Notice::Ready => notify::notify(notify::READY),
+            Notice::Stopping(drain) => notify::notify(&notify::stopping(drain)),
+        }),
+    };
+    if runtime::run(options) == 0 {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
 }
 
 /// This binary, re-executed for PTY and SFTP children (ADR-0038 §5,
@@ -589,7 +732,12 @@ fn drain_deadline(now: Instant, drain: Duration) -> Instant {
     now.checked_add(drain).unwrap_or_else(|| now + FAR_FUTURE)
 }
 
-async fn run(resolved: Resolved, config_file: String) -> ExitCode {
+#[allow(clippy::too_many_lines)]
+async fn run(
+    resolved: Resolved,
+    config_file: String,
+    under_launcher: Option<std::net::TcpListener>,
+) -> ExitCode {
     let Some(host_key_path) = resolved.host_key_path else {
         config_error(
             "missing_setting",
@@ -601,21 +749,43 @@ async fn run(resolved: Resolved, config_file: String) -> ExitCode {
     let Some(host_key) = load_host_key(&host_key_path, &config_file) else {
         return ExitCode::FAILURE;
     };
-    let Some(authorized_keys_path) = resolved.authorized_keys_path else {
-        config_error(
-            "missing_setting",
-            "authorized_keys is required (--authorized-keys or [auth].authorized_keys)",
+    let credentials = if let Some(entries) = &resolved.accounts {
+        #[cfg(target_os = "linux")]
+        match account_mode::credentials(entries, resolved.trusted_user_ca_keys_path.is_some()) {
+            Ok(mode) => Credentials::Accounts(Arc::new(mode)),
+            Err(detail) => {
+                config_error("invalid_authorized_keys", &detail, &config_file);
+                return ExitCode::FAILURE;
+            }
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = entries;
+            config_error(
+                "account_mode",
+                "account mode exists on Linux only",
+                &config_file,
+            );
+            return ExitCode::FAILURE;
+        }
+    } else {
+        let Some(authorized_keys_path) = resolved.authorized_keys_path else {
+            config_error(
+                "missing_setting",
+                "authorized_keys is required (--authorized-keys or [auth].authorized_keys)",
+                &config_file,
+            );
+            return ExitCode::FAILURE;
+        };
+        let Some(authorized_keys) = load_key_file(
+            &authorized_keys_path,
+            "authorized_keys",
+            AuthorizedKeys::load,
             &config_file,
-        );
-        return ExitCode::FAILURE;
-    };
-    let Some(authorized_keys) = load_key_file(
-        &authorized_keys_path,
-        "authorized_keys",
-        AuthorizedKeys::load,
-        &config_file,
-    ) else {
-        return ExitCode::FAILURE;
+        ) else {
+            return ExitCode::FAILURE;
+        };
+        Credentials::Service(authorized_keys)
     };
     let trusted_user_ca_keys = match resolved.trusted_user_ca_keys_path {
         None => None,
@@ -632,21 +802,48 @@ async fn run(resolved: Resolved, config_file: String) -> ExitCode {
         }
     };
 
+    // Account mode: the launcher's socket is stdin (ADR-0066 §2), and one
+    // task owns it (ADR-0063 §2).
+    let (launcher, launcher_fault) = match &under_launcher {
+        Some(_) => {
+            let socket = std::io::stdin().as_fd().try_clone_to_owned();
+            match socket.and_then(quantumssh_core::launcher::client::Client::spawn) {
+                Ok((client, fault)) => (Some(client), Some(fault)),
+                Err(e) => {
+                    config_error(
+                        "runtime_failed",
+                        &format!("cannot reach the launcher: {e}"),
+                        &config_file,
+                    );
+                    return ExitCode::FAILURE;
+                }
+            }
+        }
+        None => (None, None),
+    };
+    let identity_mode = if resolved.accounts.is_some() {
+        "account"
+    } else {
+        "service_account"
+    };
     let config = Config {
         listen: resolved.listen,
         handshake_timeout: resolved.handshake_timeout,
         host_key,
-        authorized_keys,
+        credentials,
         trusted_user_ca_keys,
         // ADR-0026 BSI defaults (1 GiB / 1 h); the re-key completion budget
         // mirrors the handshake budget.
         rekey: RekeyThresholds::bsi_defaults(resolved.handshake_timeout),
         limits: resolved.limits,
         helper: helper(),
+        launcher: launcher.clone(),
     };
-    let bound = Server::bind(&config)
-        .await
-        .and_then(|server| server.local_addr().map(|addr| (server, addr)));
+    let bound = match under_launcher {
+        Some(listener) => Server::from_std(listener, &config),
+        None => Server::bind(&config).await,
+    }
+    .and_then(|server| server.local_addr().map(|addr| (server, addr)));
     let (server, listen_addr) = match bound {
         Ok(bound) => bound,
         Err(e) => {
@@ -663,6 +860,7 @@ async fn run(resolved: Resolved, config_file: String) -> ExitCode {
         listen_addr = %listen_addr,
         host_key_fingerprint = %config.host_key.fingerprint_sha256(),
         config_file = config_file.as_str(),
+        identity_mode,
         "server.started"
     );
 
@@ -675,9 +873,26 @@ async fn run(resolved: Resolved, config_file: String) -> ExitCode {
     let (shutdown_tx, loop_rx) = broadcast::channel(4);
     spawn_signal_listener(shutdown_tx.clone(), resolved.drain_timeout);
     // ADR-0043: under systemd, startup is finished — the port accepts
-    // and a stop request drains.
-    notify::notify(notify::READY);
-    match server.serve(shutdown_tx, loop_rx).await {
+    // and a stop request drains. Under the launcher, the launcher is the
+    // one that tells systemd (ADR-0066 §3).
+    match &launcher {
+        Some(client) => client.ready(),
+        None => notify::notify(notify::READY),
+    }
+    let outcome = match launcher_fault {
+        // ADR-0066 §5: without the launcher, no session can start or end,
+        // so the server stops at once.
+        Some(fault) => tokio::select! {
+            result = server.serve(shutdown_tx, loop_rx) => result,
+            fault = fault => {
+                let detail = fault.map_or_else(|e| e.to_string(), |f| f.to_string());
+                config_error("listener_failed", &detail, &config_file);
+                return ExitCode::FAILURE;
+            }
+        },
+        None => server.serve(shutdown_tx, loop_rx).await,
+    };
+    match outcome {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             config_error(

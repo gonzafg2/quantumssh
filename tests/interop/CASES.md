@@ -23,9 +23,14 @@ behaviour that a document of this project states.
   server's disconnect code and reason.
 - "May skip" is `never`, or the one thing a client may lack. A leg skips a
   case only when the workflow that runs it also names the case in
-  `INTEROP_ALLOW_SKIP`. Today only the macOS release leg does, because its
-  client is built without OpenSSL and without zlib (ADR-0055 §3). It skips
-  four cases.
+  `INTEROP_ALLOW_SKIP`. Today only the macOS release leg does. Its client
+  is built without OpenSSL and without zlib (ADR-0055 §3), and account
+  mode does not exist on macOS (ADR-0068 §1). It skips those four cases
+  and every account case.
+- An account case runs only on Linux, as root, with
+  `INTEROP_ACCOUNT_MODE=1`: it creates accounts and writes under `/etc`
+  (ADR-0068). `openssh-interop` sets the variable in its container. To run
+  the suite locally with them, run it in the gate image.
 
 ## Cases
 
@@ -74,6 +79,18 @@ behaviour that a document of this project states.
 | sftp_unsupported_extensions | ADR-0041 §6: `statvfs`, `hardlink` and `copy-data` are not supported | never |
 | keygen_read_by_ssh_keygen | RFC-0018 §6, ADR-0058 §4: `ssh-keygen` reads the key that `quantumssh keygen` wrote | never |
 | keygen_host_key_serves | RFC-0018 §6, ADR-0058 §4: a server started with that key serves the stock client | never |
+| account_session_identity | RFC-0020 §4, §5: `id -u`, `id -g`, `id -G`, `pwd -P`, `HOME`, `USER`, `LOGNAME`, `SHELL` and `PATH` match the account's record, its groups and ADR-0065 §3's `PATH` | where account mode cannot run (ADR-0068 §1) |
+| account_login_shell | RFC-0020 §4: `shell` on a PTY runs the account's login shell as a login shell, so `$0` is `-bash` | where account mode cannot run (ADR-0068 §1) |
+| account_pty_owner | RFC-0020 §4, ADR-0064 §2: the session's terminal is owned by the account, with mode `0600` | where account mode cannot run (ADR-0068 §1) |
+| account_session_privileges | RFC-0020 §8, ADR-0065 §2: in a session, `NoNewPrivs` is 0, and `CapPrm`, `CapEff` and `CapInh` are empty | where account mode cannot run (ADR-0068 §1) |
+| account_audit_records | RFC-0019 §6, ADR-0024: `server.started` carries `identity_mode` `account`; `exec.started` and `exec.finished` carry `account`, the key's fingerprint and, apart, the account's UID | where account mode cannot run (ADR-0068 §1) |
+| account_exit_status | ADR-0064 §3, ADR-0038 §8: `exit 3` reports 3, and `kill -TERM $$` reports `exit-signal`, through the launcher | where account mode cannot run (ADR-0068 §1) |
+| account_client_gone_kills | ADR-0064 §4: when the client goes away, the session's process group is killed | where account mode cannot run (ADR-0068 §1) |
+| account_sftp_ownership | RFC-0020's Guide: a file put over SFTP belongs to the account and its primary group | where account mode cannot run (ADR-0068 §1) |
+| account_nologin | RFC-0020 §5: for an account whose shell is `nologin`, `exec` fails as `nologin` makes it fail, and an `sftp` batch works | where account mode cannot run (ADR-0068 §1) |
+| account_unlisted_refused | RFC-0019 §3: `root`, an unlisted account and a name with no entry each get `Permission denied (publickey).`, as a wrong key does | where account mode cannot run (ADR-0068 §1) |
+| account_key_bound_to_account | RFC-0019 §5: one account's key does not log in to another listed account | where account mode cannot run (ADR-0068 §1) |
+| account_certificate_principal | RFC-0019 §5: a certificate logs in to the account its principal names, and not to another | where account mode cannot run (ADR-0068 §1) |
 
 ## What is not here
 

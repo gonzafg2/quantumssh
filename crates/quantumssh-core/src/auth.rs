@@ -16,12 +16,15 @@
 //!   no option is enforced, so loading it would drop the restriction.
 //!   `trusted_user_ca_keys` is read under the same rules (ADR-0050 §3).
 
+use std::collections::HashMap;
 use std::fmt;
 use std::path::Path;
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use zeroize::Zeroizing;
 
+use crate::account::{AccountRecord, ResolveError};
 use crate::cert::{self, CertIdentity, TrustedUserCaKeys};
 use crate::host_key;
 use crate::wire::{Reader, Writer};
@@ -215,10 +218,131 @@ impl AuthorizedKeys {
         }
     }
 
+    /// An account with no key file: only a certificate reaches it
+    /// (RFC-0019 §5).
+    #[must_use]
+    pub const fn none() -> Self {
+        Self { keys: Vec::new() }
+    }
+
     /// Whether the file holds no key.
     #[must_use]
     pub const fn is_empty(&self) -> bool {
         self.keys.is_empty()
+    }
+}
+
+/// Account mode's key files (RFC-0019 §5): one per listed account, by
+/// name.
+#[derive(Debug, Default)]
+pub struct AccountKeys {
+    by_name: HashMap<String, AuthorizedKeys>,
+}
+
+impl AccountKeys {
+    /// Lists `name` with its key file, which may hold no key.
+    pub fn insert(&mut self, name: String, keys: AuthorizedKeys) {
+        self.by_name.insert(name, keys);
+    }
+
+    /// Whether `name` is listed.
+    #[must_use]
+    pub fn is_listed(&self, name: &str) -> bool {
+        self.by_name.contains_key(name)
+    }
+}
+
+/// Resolves a `publickey` request in account mode (RFC-0019 §3, §5): the
+/// user name selects the listed account, a bare key must be in that
+/// account's file, and a certificate must name the account among its
+/// principals.
+///
+/// An unlisted name does the same work as a listed one, against an empty
+/// key set, and the certificate is verified all the same. It then fails
+/// as a wrong key does. Its reply and its timing therefore do not tell it
+/// apart from a listed name whose credential fails (RFC-0019 §3).
+pub(crate) fn resolve_account(
+    key_algorithm: &str,
+    key_blob: &[u8],
+    user: &str,
+    accounts: &AccountKeys,
+    trusted_cas: Option<&TrustedUserCaKeys>,
+) -> Option<Candidate> {
+    static NO_KEYS: AuthorizedKeys = AuthorizedKeys { keys: Vec::new() };
+    let listed = accounts.by_name.get(user);
+    let candidate = resolve(
+        key_algorithm,
+        key_blob,
+        user,
+        listed.unwrap_or(&NO_KEYS),
+        trusted_cas,
+    )?;
+    listed.is_some().then_some(candidate)
+}
+
+/// The read of an account's record at authentication (RFC-0019 §4):
+/// [`crate::account::resolve`] in the binary, a fixture in tests.
+pub type AccountResolver = Arc<dyn Fn(&str) -> Result<AccountRecord, ResolveError> + Send + Sync>;
+
+/// Account mode's authentication inputs (RFC-0019 §1): the key files and
+/// the record read.
+pub struct AccountMode {
+    /// One key file per listed account.
+    pub keys: AccountKeys,
+    /// Reads the account's record once a credential has verified.
+    pub resolve: AccountResolver,
+}
+
+impl fmt::Debug for AccountMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AccountMode")
+            .field("keys", &self.keys)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Who may authenticate, by mode (RFC-0019 §1).
+#[derive(Debug, Clone)]
+pub enum Credentials {
+    /// Service-account mode: one `authorized_keys` file.
+    Service(Arc<AuthorizedKeys>),
+    /// Account mode.
+    Accounts(Arc<AccountMode>),
+}
+
+/// Resolves a `publickey` request under the mode's credentials: one
+/// `authorized_keys` file, or the listed accounts (RFC-0019 §3, §5).
+pub(crate) fn resolve_for(
+    credentials: &Credentials,
+    key_algorithm: &str,
+    key_blob: &[u8],
+    user: &str,
+    trusted_cas: Option<&TrustedUserCaKeys>,
+) -> Option<Candidate> {
+    match credentials {
+        Credentials::Service(keys) => resolve(key_algorithm, key_blob, user, keys, trusted_cas),
+        Credentials::Accounts(mode) => {
+            resolve_account(key_algorithm, key_blob, user, &mode.keys, trusted_cas)
+        }
+    }
+}
+
+/// RFC-0019 §4's read of the account's record, once a credential for it
+/// has verified and before `SSH_MSG_USERAUTH_SUCCESS`. It runs on the
+/// blocking pool, since it reads two files. The error is the fixed reason
+/// of the diagnostic record that a refusal leaves.
+pub(crate) async fn read_account(
+    mode: &AccountMode,
+    user: &str,
+) -> Result<AccountRecord, &'static str> {
+    let resolve = Arc::clone(&mode.resolve);
+    let user = user.to_owned();
+    match tokio::task::spawn_blocking(move || resolve(&user)).await {
+        Ok(Ok(record)) if record.uid != 0 => Ok(record),
+        Ok(Ok(_)) => Err("uid_0"),
+        Ok(Err(ResolveError::Unresolved(reason))) => Err(reason.as_str()),
+        Ok(Err(ResolveError::File(_))) => Err("file_check_failed"),
+        Err(_) => Err("lookup_failed"),
     }
 }
 
@@ -386,6 +510,9 @@ pub(crate) struct Authenticated {
     /// A bare key may allocate a PTY; a certificate only with
     /// `permit-pty`.
     pub(crate) pty_permitted: bool,
+    /// Account mode: the record read once the credential verified
+    /// (RFC-0019 §4). `None` in service-account mode.
+    pub(crate) account: Option<AccountRecord>,
 }
 
 /// A key a `publickey` request may authenticate with, once its
@@ -415,6 +542,7 @@ pub(crate) fn resolve(
                 fingerprint: ak.fingerprint.clone(),
                 certificate: None,
                 pty_permitted: true,
+                account: None,
             },
         });
     }
@@ -432,6 +560,7 @@ pub(crate) fn resolve(
                 fingerprint: c.fingerprint,
                 certificate: Some(c.identity),
                 pty_permitted: c.permit_pty,
+                account: None,
             },
         }),
         Err(refusal) => {

@@ -1460,3 +1460,103 @@ async fn shutdown_drains_an_authenticated_session_at_the_deadline() {
         .expect("join serve");
     result.expect("clean shutdown");
 }
+
+// ---- RFC-0019: account mode's authentication ----
+
+fn record(name: &str, uid: u32) -> quantumssh_core::account::AccountRecord {
+    quantumssh_core::account::AccountRecord {
+        name: name.to_string(),
+        uid,
+        gid: uid,
+        home: std::path::PathBuf::from(format!("/home/{name}")),
+        shell: std::path::PathBuf::from("/bin/sh"),
+        groups: vec![uid],
+    }
+}
+
+/// `alice` (UID 1001) with key 1, `deploy` (UID 1002) with key 2, `toor`
+/// (UID 0) with key 3; any other name has no record.
+async fn account_server() -> (
+    std::net::SocketAddr,
+    std::sync::Arc<quantumssh_core::host_key::HostKey>,
+    [SigningKey; 3],
+) {
+    let keys = [
+        SigningKey::from_bytes(&[1u8; 32]),
+        SigningKey::from_bytes(&[2u8; 32]),
+        SigningKey::from_bytes(&[3u8; 32]),
+    ];
+    let resolve: auth::AccountResolver = std::sync::Arc::new(|name: &str| match name {
+        "alice" => Ok(record("alice", 1001)),
+        "deploy" => Ok(record("deploy", 1002)),
+        "toor" => Ok(record("toor", 0)),
+        _ => Err(quantumssh_core::account::ResolveError::Unresolved(
+            quantumssh_core::account::Unresolved::NoEntry,
+        )),
+    });
+    let (addr, host_key) = start_server_accounts(
+        &[
+            ("alice", &[&keys[0]]),
+            ("deploy", &[&keys[1]]),
+            ("toor", &[&keys[2]]),
+            ("ghost", &[&keys[0]]),
+        ],
+        resolve,
+    )
+    .await;
+    (addr, host_key, keys)
+}
+
+#[tokio::test]
+async fn account_mode_a_listed_key_logs_in_to_its_account() {
+    let (addr, host_key, keys) = account_server().await;
+    assert_eq!(
+        userauth_reply_as(addr, &host_key, b"alice", &keys[0], false).await,
+        auth::SSH_MSG_USERAUTH_PK_OK
+    );
+    assert_eq!(
+        userauth_reply_as(addr, &host_key, b"alice", &keys[0], true).await,
+        auth::SSH_MSG_USERAUTH_SUCCESS
+    );
+}
+
+#[tokio::test]
+async fn account_mode_an_unlisted_name_fails_as_a_wrong_key_does() {
+    let (addr, host_key, keys) = account_server().await;
+    for user in [&b"root"[..], b"bob", b"Alice"] {
+        for signed in [false, true] {
+            assert_eq!(
+                userauth_reply_as(addr, &host_key, user, &keys[0], signed).await,
+                auth::SSH_MSG_USERAUTH_FAILURE,
+                "{} signed={signed}",
+                String::from_utf8_lossy(user)
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn account_mode_a_key_authorizes_only_its_own_account() {
+    let (addr, host_key, keys) = account_server().await;
+    for signed in [false, true] {
+        assert_eq!(
+            userauth_reply_as(addr, &host_key, b"deploy", &keys[0], signed).await,
+            auth::SSH_MSG_USERAUTH_FAILURE
+        );
+    }
+}
+
+/// RFC-0019 §4: once the credential verifies, the record is read; a UID of
+/// 0 or a name that no longer resolves fails as a wrong key does.
+#[tokio::test]
+async fn account_mode_a_record_that_does_not_resolve_fails_the_login() {
+    let (addr, host_key, keys) = account_server().await;
+    assert_eq!(
+        userauth_reply_as(addr, &host_key, b"toor", &keys[2], true).await,
+        auth::SSH_MSG_USERAUTH_FAILURE
+    );
+    assert_eq!(
+        userauth_reply_as(addr, &host_key, b"ghost", &keys[0], true).await,
+        auth::SSH_MSG_USERAUTH_FAILURE
+    );
+}

@@ -316,6 +316,18 @@ pub(crate) struct PtyPair {
 /// slave whose owner or mode is not as set, or applying the modes or the
 /// size. Every descriptor opened so far is closed on return.
 pub(crate) fn allocate(modes: &Modes, size: Size) -> io::Result<PtyPair> {
+    allocate_for(modes, size, None)
+}
+
+/// [`allocate`], with the slave given to `owner` while the pair is still
+/// locked: account mode's launcher allocates as root for the account
+/// (ADR-0064 §2, ADR-0038 §10's first way). `None` keeps the caller's own
+/// UID, as [`allocate`] does.
+///
+/// # Errors
+///
+/// Those of [`allocate`], and a failed `chown`.
+pub(crate) fn allocate_for(modes: &Modes, size: Size, owner: Option<u32>) -> io::Result<PtyPair> {
     // Close-on-exec at open, on every platform: a concurrent spawn must
     // never inherit the master, or closing it would not hang up.
     let master = rustix::fs::open(
@@ -327,7 +339,17 @@ pub(crate) fn allocate(modes: &Modes, size: Size) -> io::Result<PtyPair> {
     // Owner and mode while the pair is locked and nobody can open the
     // slave: do not rely on the `devpts` mount options.
     let name = rustix::pty::ptsname(&master, Vec::new())?;
-    let uid = rustix::process::getuid().as_raw();
+    let uid = match owner {
+        Some(owner) => {
+            rustix::fs::chown(
+                name.as_c_str(),
+                Some(rustix::fs::Uid::from_raw(owner)),
+                None,
+            )?;
+            owner
+        }
+        None => rustix::process::getuid().as_raw(),
+    };
     if rustix::fs::stat(name.as_c_str())?.st_uid != uid {
         return Err(io::Error::other("pty slave is not owned by the server"));
     }

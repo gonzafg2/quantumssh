@@ -16,15 +16,21 @@
 # It needs bash (3.2 or later), coreutils, script(1), pgrep and the
 # OpenSSH client set, 10.6 or later: ssh, ssh-keygen, ssh-keyscan,
 # ssh-agent, sftp and scp. Nothing else, and no toolchain: the release
-# gates run it on the artifacts (ADR-0055).
+# gates run it on the artifacts (ADR-0055). The account cases (ADR-0068)
+# also need root, useradd, groupadd and getent.
 #
 # Env overrides:
 #   QUANTUMSSH_BIN       the binary under test (default
 #                        ./target/release/quantumssh)
-#   QUANTUMSSH_PORT      the first of four consecutive ports (default 2222)
+#   QUANTUMSSH_PORT      the first of five consecutive ports (default 2222)
 #   INTEROP_ALLOW_SKIP   the cases this leg may skip, space-separated. A
 #                        skip that is not named here fails the run. The PR
 #                        gate and the Linux release legs set none.
+#   INTEROP_ACCOUNT_MODE 1 states that the run is inside a disposable
+#                        container, where the account cases may create
+#                        accounts and write under /etc (ADR-0068 §1).
+#                        Without it, or off Linux, or not as root, they
+#                        skip. Locally, run them through the gate image.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -171,6 +177,83 @@ COMMON=(-F /dev/null
 SSH_OPTS=(-i "$WORK/clientkey" -p "$PORT" "${COMMON[@]}")
 COPY_OPTS=(-i "$WORK/clientkey" -P "$PORT" "${COMMON[@]}")
 
+# ---------------------------------------------------------------------
+# Account mode (ADR-0068): a second server, started as root, so it is a
+# launcher. It is set up once, before the first account case, and serves
+# every account case on its own port.
+ACCT_DIR=/etc/quantumssh-interop
+ACCT_BIN=/usr/local/libexec/quantumssh-interop/quantumssh
+ACCT_PORT=$((10#$PORT + 4))
+ACCT_LOG="$WORK/account-server.log"
+ACCT_READY=0
+
+# add_account <name> <login shell> [useradd options…]
+add_account() {
+    local name=$1 shell=$2
+    shift 2
+    getent passwd "$name" >/dev/null || useradd --create-home --shell "$shell" "$@" "$name"
+}
+
+# ADR-0068 §2: the service account, the test accounts, and the run's
+# files under a root-owned directory that RFC-0019 §8 accepts.
+account_setup() {
+    install -D -o root -g root -m 0755 "$BIN" "$ACCT_BIN"
+    getent passwd quantumssh >/dev/null \
+        || useradd --system --no-create-home --shell /usr/sbin/nologin quantumssh
+    getent group qssh-team >/dev/null || groupadd qssh-team
+    add_account qssh-alice /bin/bash --groups qssh-team
+    add_account qssh-deploy /bin/sh
+    add_account qssh-nologin /usr/sbin/nologin
+    add_account qssh-unlisted /bin/sh
+    rm -rf "$ACCT_DIR"
+    install -d -o root -g root -m 0755 "$ACCT_DIR" "$ACCT_DIR/keys"
+    install -o quantumssh -g quantumssh -m 0600 "$WORK/hostkey" "$ACCT_DIR/host_key"
+    install -o root -g root -m 0644 "$WORK/ca.pub" "$ACCT_DIR/trusted_user_ca_keys"
+    local name
+    for name in alice deploy nologin; do
+        ssh-keygen -t ed25519 -N "" -f "$WORK/acct_$name" -q
+        install -o root -g root -m 0644 "$WORK/acct_$name.pub" "$ACCT_DIR/keys/qssh-$name"
+    done
+    {
+        printf 'schema_version = 1\n\n[server]\nlisten = "127.0.0.1:%s"\n' "$ACCT_PORT"
+        printf 'host_key = "%s/host_key"\n\n' "$ACCT_DIR"
+        printf '[auth]\ntrusted_user_ca_keys = "%s/trusted_user_ca_keys"\n\n' "$ACCT_DIR"
+        printf '[limits]\naccept_burst = 256\n'
+        for name in alice deploy nologin; do
+            printf '\n[[account]]\nname = "qssh-%s"\nauthorized_keys = "%s/keys/qssh-%s"\n' \
+                "$name" "$ACCT_DIR" "$name"
+        done
+    } >"$ACCT_DIR/config.toml"
+    chmod 0644 "$ACCT_DIR/config.toml"
+    LOG=$ACCT_LOG
+    "$ACCT_BIN" --config "$ACCT_DIR/config.toml" --log-format json --require-account-mode \
+        >"$ACCT_LOG" 2>&1 &
+    wait_for 10 port_open "$ACCT_PORT" || fail "the account-mode server never listened on port $ACCT_PORT"
+}
+
+# account_mode: an account case's first call. It skips the case where
+# account mode cannot run (ADR-0068 §1) and returns 1; otherwise it sets
+# the run's accounts up once, and points LOG at the account-mode server.
+account_mode() {
+    if [ "$(uname -s)" != Linux ] || [ "$(id -u)" -ne 0 ] || [ "${INTEROP_ACCOUNT_MODE:-}" != 1 ]; then
+        skip "account mode needs Linux, root and INTEROP_ACCOUNT_MODE=1"
+        return 1
+    fi
+    if [ "$ACCT_READY" -eq 0 ]; then
+        account_setup
+        ACCT_READY=1
+    fi
+    LOG=$ACCT_LOG
+}
+
+# acct_ssh <key> [ssh arguments…]: the stock client against the
+# account-mode server, with that test account's key.
+acct_ssh() {
+    local key=$1
+    shift
+    ssh -i "$WORK/acct_$key" -p "$ACCT_PORT" "${COMMON[@]}" "$@"
+}
+
 # shellcheck source=tests/interop/cases.sh
 . "$HERE/cases.sh"
 
@@ -226,6 +309,8 @@ while [ "$i" -lt "${#NAMES[@]}" ]; do
     mkdir -p "$CASE_DIR"
     # Called as a plain statement, so `set -e` holds inside the case.
     "case_$CASE"
+    # An account case points LOG at its own server.
+    LOG="$WORK/server.log"
     if [ -n "$CASE_SKIP" ]; then
         [ "${MAY_SKIP[$i]}" != never ] \
             || fail "skipped ($CASE_SKIP), and its catalogue line says never"

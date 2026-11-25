@@ -10,6 +10,14 @@
 use crate::wire::{self, Reader, Writer};
 use crate::{auth, pty};
 
+pub mod client;
+#[cfg(target_os = "linux")]
+pub mod runtime;
+
+/// The reserved first argument that runs the network server under the
+/// launcher (ADR-0066 §2).
+pub const SERVER_ARG: &str = "--quantumssh-internal-network-server";
+
 /// The largest record: the sum of the bounds below, rounded up
 /// (ADR-0063 §3).
 pub const MAX_RECORD: usize = 36 * 1024;

@@ -297,11 +297,14 @@ jobs:
 
       # The client is built without OpenSSL and without zlib (above), so it
       # has no AES-GCM, no RSA or ECDSA keys and no compression. These are
-      # the cases that need one of them; any other skip fails the run
-      # (ADR-0062 §6).
+      # the cases that need one of them, then the account cases, since
+      # account mode does not exist on macOS (ADR-0068 §1); any other skip
+      # fails the run (ADR-0062 §6).
       - name: OpenSSH interop gate
         env:
-          INTEROP_ALLOW_SKIP: openssh_aes_gcm compression_none rekey_server_initiated legacy_user_keys_refused
+          INTEROP_ALLOW_SKIP: >-
+            openssh_aes_gcm compression_none rekey_server_initiated legacy_user_keys_refused
+            account_session_identity account_login_shell account_pty_owner account_session_privileges account_audit_records account_exit_status account_client_gone_kills account_sftp_ownership account_nologin account_unlisted_refused account_key_bound_to_account account_certificate_principal
         run: bash tests/interop/run_openssh_client.sh
 
       - name: Record the gated tarball's digest

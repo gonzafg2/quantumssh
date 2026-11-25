@@ -9,6 +9,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Account mode, on Linux**
+  ([RFC-0019](docs/rfcs/0019-identity-model-ssh-user-name-to-os-account.md),
+  [RFC-0020](docs/rfcs/0020-privilege-separation-root-launcher-and-session-helper.md);
+  #43).
+  - **Selecting it.** A configuration that lists `[[account]]` entries
+    selects account mode (ADR-0070). Each connection's user name then
+    selects a listed account, and its session runs as that account.
+  - **Authentication.**
+    - A bare key authorizes only the accounts whose key files list it.
+    - A certificate authorizes only the account its principals name.
+    - An unlisted name fails as a wrong key does.
+    - Once a credential verifies, the account's record is read from
+      `/etc/passwd` and `/etc/group`. UID 0, or a record that no longer
+      resolves, fails the login.
+  - **Processes.**
+    - The binary, started as root, is a single-threaded launcher that
+      never reads the network (ADR-0066).
+    - The network server runs as the service account `quantumssh`, with
+      no supplementary groups, no capabilities and `no_new_privs`.
+    - The launcher starts each session through the session helper.
+  - **Audit.** `server.started` gains `identity_mode`. `auth.succeeded`,
+    `exec.started` and `exec.finished` gain `account` in account mode.
+  - **Configuration.** `--require-account-mode` refuses a configuration
+    that lists no account. Account-mode errors have their own
+    `server.config_error` class, `account_mode`.
+  - **Tests.** The conformance suite gains twelve account cases
+    (ADR-0068). They run as root in the gate image on every PR, and skip
+    on the macOS release leg. They check:
+    - the session's identity, login shell, terminal and privileges;
+    - the audit fields and the exit status;
+    - the kill when the client goes away;
+    - SFTP ownership and a `nologin` account;
+    - the refusals.
+
+    CI also checks, as root, that the launcher stays root, that the
+    server runs without privileges, and that a stop leaves nothing
+    behind.
 - The session helper of account mode
   ([ADR-0065](docs/adr/0065-session-helper-identity-change-checks-and-environment.md)),
   ahead of the launcher that starts it (#43).
