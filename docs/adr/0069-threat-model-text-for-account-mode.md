@@ -70,10 +70,11 @@ this file.
 
 §3.2.1:
 
-> A remote compromise of the process that reads the network must not be
-> a root compromise. In account mode that process runs as the
+> A remote compromise of the process that reads the network must not
+> directly yield UID 0. In account mode that process runs as the
 > unprivileged service account, and reaches the listed accounts only
-> through the launcher (§4.2).
+> through the launcher (§4.2). A listed account's own way to root, such
+> as `sudo` or the `docker` group, stays within reach (§4.2, §7).
 
 §3.2.4:
 
