@@ -1,6 +1,6 @@
 # ADR 0038: Phase 2 interactive sessions — PTY allocation through a safe re-exec helper, and `tokio::process` for every channel child
 
-- **Status:** Accepted; §1's refusal of `subsystem` and §9's `request_type` values are partially superseded by [ADR-0041](0041-sftp-v3-server-in-a-re-exec-helper.md), which honours `subsystem "sftp"` and adds `"subsystem"`
+- **Status:** Accepted; §1's refusal of `subsystem` and §9's `request_type` values are partially superseded by [ADR-0041](0041-sftp-v3-server-in-a-re-exec-helper.md), which honours `subsystem "sftp"` and adds `"subsystem"`; in account mode, §4's allocation and §5's helper run from the launcher ([ADR-0064](0064-sessions-in-the-launcher-identifiers-pty-allocation-ending-and-reaping.md), [ADR-0065](0065-session-helper-identity-change-checks-and-environment.md)), and the slave belongs to the account, which settles §10's Phase-3 question
 - **Date:** 2026-10-12 (accepted with the implementing PR [#193](https://github.com/gonzafg2/quantumssh/pull/193); drafted 2026-10-12)
 - **Deciders:** Project lead
 - **Related:** Extends [ADR-0023](0023-phase-1-channel-layer-scope.md)
