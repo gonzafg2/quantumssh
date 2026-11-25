@@ -1,7 +1,7 @@
 # ADR 0063: The launcher protocol: one `SOCK_SEQPACKET` socket pair, SSH wire encoding, explicit bounds and a fuzz target
 
-- **Status:** Proposed
-- **Date:** — (set on acceptance; drafted 2026-11-24)
+- **Status:** Accepted
+- **Date:** 2026-11-25 (accepted with the implementing PRs [#303](https://github.com/gonzafg2/quantumssh/pull/303) and [#306](https://github.com/gonzafg2/quantumssh/pull/306); drafted 2026-11-24)
 - **Deciders:** Project lead
 - **Related:**
   - Implements [RFC-0020](../rfcs/0020-privilege-separation-root-launcher-and-session-helper.md) §2. It is the first item of RFC-0020 §12: "the launcher protocol's encoding and bounds, and its fuzz target".

@@ -1,7 +1,7 @@
 # ADR 0068: Account-mode conformance cases, run as root in the gate image
 
-- **Status:** Proposed
-- **Date:** — (set on acceptance; drafted 2026-11-24)
+- **Status:** Accepted
+- **Date:** 2026-11-25 (accepted with the implementing PR [#306](https://github.com/gonzafg2/quantumssh/pull/306); drafted 2026-11-24)
 - **Deciders:** Project lead
 - **Related:**
   - It is the sixth item of [RFC-0020](../rfcs/0020-privilege-separation-root-launcher-and-session-helper.md) §12: "the conformance cases (ADR-0062 §8): the session's UID, groups, home and shell; file ownership over SFTP; and the refusals of RFC-0019".

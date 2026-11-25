@@ -1,7 +1,7 @@
 # ADR 0072: The documents account mode changes, and the accepted decisions it supersedes in part
 
-- **Status:** Proposed
-- **Date:** — (set on acceptance; drafted 2026-11-24)
+- **Status:** Accepted
+- **Date:** 2026-11-25 (accepted with the implementing PRs [#307](https://github.com/gonzafg2/quantumssh/pull/307) and [#308](https://github.com/gonzafg2/quantumssh/pull/308); drafted 2026-11-24)
 - **Deciders:** Project lead
 - **Related:**
   - It is the last item of [RFC-0019](../rfcs/0019-identity-model-ssh-user-name-to-os-account.md) §9, "how the documents change". It covers the documents RFC-0019 §9 lists, except threat model §2.5, whose text [ADR-0069](0069-threat-model-text-for-account-mode.md) §1 already fixes.

@@ -1,7 +1,7 @@
 # ADR 0073: The release tarball ships the account-mode unit
 
-- **Status:** Proposed
-- **Date:** — (set on acceptance; drafted 2026-11-25)
+- **Status:** Accepted
+- **Date:** 2026-11-25 (accepted with the implementing PR [#307](https://github.com/gonzafg2/quantumssh/pull/307); drafted 2026-11-25)
 - **Deciders:** Project lead
 - **Related:**
   - Refines [RFC-0017](../rfcs/0017-alpha-distribution.md) §3, which lists what each release tarball holds, `contrib/systemd/quantumssh.service` among them.

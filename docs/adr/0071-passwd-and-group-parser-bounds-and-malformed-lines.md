@@ -1,7 +1,7 @@
 # ADR 0071: The `/etc/passwd` and `/etc/group` parser: bounds, and what a malformed line does
 
-- **Status:** Proposed
-- **Date:** — (set on acceptance; drafted 2026-11-24)
+- **Status:** Accepted
+- **Date:** 2026-11-25 (accepted with the implementing PRs [#302](https://github.com/gonzafg2/quantumssh/pull/302) and [#305](https://github.com/gonzafg2/quantumssh/pull/305); drafted 2026-11-24)
 - **Deciders:** Project lead
 - **Related:**
   - Implements [RFC-0019](../rfcs/0019-identity-model-ssh-user-name-to-os-account.md) §4. It is the second item of RFC-0019 §9: "the parser's bounds, and how it treats a malformed line it does not need".
@@ -105,10 +105,10 @@ of a large host. The file bound leaves room for many such lines.
   empty after that is skipped.
 - **Comment and NIS lines are then skipped, before any other rule.** A
   line whose first byte, after the whitespace, is `#`, `+` or `-` is
-  never read as an entry, a membership or a malformed line. In `/etc/group` this matters: a
-  commented-out `#wheel:x:10:alice` splits into four valid fields. Read
-  as an entry, it would give `alice` the GID 10 that the operator took
-  away. There is therefore no NIS either.
+  never read as an entry, a membership or a malformed line. In
+  `/etc/group` this matters: a commented-out `#wheel:x:10:alice` splits
+  into four valid fields. Read as an entry, it would give `alice` the
+  GID 10 that the operator took away. There is therefore no NIS either.
 - A NUL byte anywhere in a line makes the line malformed.
 
 ### 3. Malformed lines

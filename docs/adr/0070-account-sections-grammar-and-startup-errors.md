@@ -1,7 +1,7 @@
 # ADR 0070: The `[[account]]` grammar, and the errors account mode reports at startup
 
-- **Status:** Proposed
-- **Date:** — (set on acceptance; drafted 2026-11-24)
+- **Status:** Accepted
+- **Date:** 2026-11-25 (accepted with the implementing PR [#306](https://github.com/gonzafg2/quantumssh/pull/306); drafted 2026-11-24)
 - **Deciders:** Project lead
 - **Related:**
   - Implements [RFC-0019](../rfcs/0019-identity-model-ssh-user-name-to-os-account.md) §1, §3, §5 and §8. It is the first item of RFC-0019 §9: "the exact grammar of `[[account]]` and its error messages".
@@ -87,9 +87,11 @@ applies (`auth.rs`, `USER_NAME_BOUND`). It must also be:
   a name, such as `john.doe` (`lib/chkname.c`, the pattern
   `[a-zA-Z0-9_.][a-zA-Z0-9_.-]*$\?`).
 - **Such an account cannot be listed.** The startup error names it.
-  Accepting `.` would be a change to RFC-0019 §3. The rule is checked byte by byte on the TOML
-string. Nothing is normalized: `Alice` and `alice` are two names, as
-they are in `/etc/passwd`.
+  Accepting `.` would be a change to RFC-0019 §3.
+
+The rule is checked byte by byte on the TOML string. Nothing is
+normalized: `Alice` and `alice` are two names, as they are in
+`/etc/passwd`.
 
 ### 3. The errors
 
