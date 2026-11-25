@@ -178,13 +178,17 @@ authenticity (the user the host believes is executing the command is
 the user who authenticated). Confinement *beyond* what the host OS
 provides for that user is **not** a QuantumSSH-side goal; see §8.
 
-**Phase-bounded reality.** The authority described above is the
-Phase-3 target. During Phase 1 the server runs commands as the OS
-identity of the QuantumSSH service account itself, not as the
-authenticated user. The Phase-1 posture is documented as a temporary
-non-goal in §8.12; per-user UID isolation is part of the
-privilege-separation work scheduled for Phase 3 and gated by its own
-RFC.
+**Phase-bounded reality.** The authority described above holds in
+account mode, which a configuration selects by listing accounts
+(RFC-0019). Each connection logs in to one listed account, and its
+session runs as that account, with its UID, its primary group and its
+supplementary groups. A single-threaded helper sets them; the root
+launcher starts it, and it checks that root cannot be regained before it
+runs anything (RFC-0020; ADR-0064, ADR-0065). Service-account mode, which
+a configuration with no `[[account]]` entry selects and which macOS
+always uses, runs every command as the OS identity of the QuantumSSH
+service account, not as the authenticated user. §8.12 describes that
+posture.
 
 ### 2.6 Configuration and policy
 
@@ -206,14 +210,16 @@ embedded.
 
 **What.** The structured log records produced via `tracing`: connection
 acceptance, authentication outcomes (success and failure), session
-lifecycle events, command-execution boundaries, configuration load,
-and protocol errors significant enough to indicate attack. Each
+lifecycle events, command-execution boundaries, configuration load, and
+protocol errors significant enough to indicate attack. Each
 command-execution boundary record includes the *authenticated identity*
 (`authenticated_identity` field — the key fingerprint that
 authenticated) and the *executing UID* (`executing_uid` field — the
 OS-level numeric UID under which the command actually runs) as separate
-fields, so that the gap documented in §8.12 is visible to anyone
-reviewing server logs.
+fields. In service-account mode they make the gap documented in §8.12
+visible to anyone reviewing server logs. In account mode `executing_uid`
+is the listed account's UID, and the `account` field names it (RFC-0019
+§6).
 
 **Where.** Standard logging sinks under operator control (stderr,
 journald, files, log shippers).
@@ -307,6 +313,10 @@ fingerprinted server versions (`T1190`).
 **Implication for design.** Defaults must close these vectors
 without operator action: no password authentication, no exposure of
 detailed server-version banners, no debug verbosity to the wire.
+A remote compromise of the process that reads the network must not be
+a root compromise. In account mode that process runs as the
+unprivileged service account, and reaches the listed accounts only
+through the launcher (§4.2).
 
 #### 3.2.2 Authenticated peer (Low – Moderate)
 
@@ -391,6 +401,9 @@ audited internal `unsafe`, per ADR-0018's carve-out). Logging must be a one-way 
 attacker cannot reach from inside the server process. Every
 post-authentication action must be attributable to the
 authenticated user.
+In account mode, an intruder who compromises the network server can
+start sessions as any listed account, so the operator's list bounds
+what that compromise reaches (§4.2, §7).
 
 #### 3.2.5 Nation-state with HNDL capability (Very High)
 
@@ -576,6 +589,48 @@ it; that no QuantumSSH-side mechanism *expands* that envelope.
 Confinement of *the authenticated user* is the OS's job; QuantumSSH
 will not implement its own sandboxing layer over what the OS
 provides.
+
+**In account mode, a second boundary: network server ↔ launcher**
+(RFC-0020; ADR-0063 to ADR-0067).
+
+- *Trusted by the launcher from the server:* nothing.
+  - Every message is bounded and read by a fuzzed parser, and a
+    malformed message ends the service (ADR-0063).
+  - No descriptor, path or program crosses from the server.
+  - The values that do cross are the account's name, the session's
+    kind, the `exec` command and, with a PTY, `TERM`, the window size
+    and the terminal modes. Each has a bound (ADR-0063 §3).
+  - `TERM` must match ADR-0038 §2's pattern, and is the only variable
+    of the session's environment that comes from the server
+    (ADR-0065 §3).
+  - The modes go through the parser the server already uses and
+    fuzzes.
+  - Only the account's shell interprets the command.
+- *Checked by the launcher before each session:*
+  - the account is listed;
+  - it resolves now, in files that pass RFC-0019 §8's check;
+  - its UID is neither 0 nor the network server's (ADR-0064).
+
+  The launcher does not check that the connection authenticated as
+  that account.
+- *Reached by a compromised network server:* a session as any listed
+  account, and through it whatever that account can reach.
+  - That includes root, if the account has a way there such as `sudo`
+    or the `docker` group (ADR-0067).
+  - It never includes UID 0 directly, an unlisted account, or a
+    program the launcher did not choose.
+  - The host key, which the network server holds, is exposed as in
+    service-account mode.
+  - So is the audit log. The network server writes every audit
+    record, `authenticated_identity` and `executing_uid` included
+    (ADR-0024, ADR-0066). A compromised server can write false records
+    for the sessions it starts, or none. The launcher knows which
+    accounts got sessions, but writes no record of them: it shares the
+    server's stderr, so the server could imitate any record it wrote
+    there.
+- *Held by the network server:* the service account's UID, no
+  supplementary groups, no capabilities, and `no_new_privs`
+  (ADR-0066).
 
 ### 4.3 Key-material boundary — disk ↔ memory
 
@@ -1113,14 +1168,16 @@ paths (`..`, symlinks, `~`) to reach files outside the directory the
 operator expected.
 
 **Assets at risk.** Service availability (§2.8), the integrity of the
-SFTP helper process, and the files the service account can reach,
-which QuantumSSH does not protect from that account in Phase 2 (§8.12).
+SFTP helper process, and the files that the session's account can reach:
+the service account's in service-account mode (§8.12), the listed
+account's in account mode.
 
 **Actors.** Authenticated peer upward.
 
 **ATT&CK reference.** `T1210` (Exploitation of Remote Services) for a
 parser or handler defect. Path tricks map to no technique, because
-Phase 2 grants no confinement to escape.
+neither mode confines the helper beyond its account's own permissions,
+so there is no confinement to escape.
 
 **Test handle.**
 
@@ -1135,10 +1192,12 @@ Phase 2 grants no confinement to escape.
   confine absolute paths, `..` or symlinks, so the handlers are fuzzed
   only once OS-level confinement exists
   ([#270](https://github.com/gonzafg2/quantumssh/issues/270)).
-- The helper runs as the service account with no confinement in
-  Phase 2. Any path the service account can reach is reachable, which
-  is the access a `shell` session already has (§8.12). Confinement and
-  per-user identity are Phase 3.
+- The helper runs as the service account in service-account mode. In
+  account mode it runs as the listed account, after ADR-0065's
+  identity change. In both modes nothing confines it beyond that
+  account: any path the account can reach is reachable, which is the
+  access a `shell` session already has. Confinement is
+  [#270](https://github.com/gonzafg2/quantumssh/issues/270)'s.
 
 ### 5.5 Server lifecycle and operations
 
@@ -1399,9 +1458,25 @@ repeating it.
   lifetimes narrow §5.3.2's window, because expiry is the only
   revocation. The certificate parser runs before authentication on
   bounded input, and a certificate that carries any critical option is
-  refused until that option is enforced. Until Phase 3 maps principals
-  to accounts, the CA file is the access boundary: every certificate a
-  trusted CA issued gets in, whatever its principal.
+  refused until that option is enforced.
+  In service-account mode the CA file is the access boundary: every
+  certificate a trusted CA issued gets in, whatever its principal. In
+  account mode a certificate logs in only to the listed account that its
+  principals name, so the operator's list bounds what a trusted CA can
+  reach (RFC-0019 §5).
+- **Account binding (account mode).** RFC-0019 §2, §3, §5 and §8.
+  Defends §5.3.1 and §5.3.3.
+  - **The user name is fixed at the first request.** The first
+    `SSH_MSG_USERAUTH_REQUEST` fixes it, and a later request with
+    another name ends the connection.
+  - **The name selects one operator-listed account.** A key
+    authorizes only the accounts whose key files list it, and a
+    certificate only the account its principals name.
+  - **An unlisted name fails as a wrong key does,** in its reply and
+    in its timing, so the list is not an enumeration oracle.
+  - **Every file that grants access to an account** is owned by root,
+    with root-owned ancestors and no symlink. The server never reads
+    a user's home.
 - **No `authorized_keys` writes from the server.** Defends §5.3.3
   in-band.
 - **Per-key restrictions (planned).** `from=`, `command=`, forwarding
@@ -1508,6 +1583,30 @@ operators must account for. The principal items, by category, are:
 - **Compromise of the host or operator account** (§5.5.4, §8.1)
   defeats QuantumSSH by hypothesis; host-level controls are the
   operator's responsibility.
+- **Compromise of the network server in account mode** (§4.2).
+  - **What it yields:** a remote code-execution bug in the process
+    that reads the network yields a session as every listed account,
+    and whatever those accounts can reach, including root through
+    `sudo` or a group such as `docker`.
+  - **What it does not yield:** UID 0 directly, or an unlisted
+    account.
+  - **What it can falsify:** the audit records of the sessions it
+    starts. No second process writes an independent record (§4.2).
+  - **The bound** is the operator's list. OpenSSH's monitor verifies
+    authentication itself and bounds the same compromise more tightly
+    (RFC-0020, Alternative 3).
+  - **In service-account mode,** the same compromise yields the
+    service account, which every session already runs as.
+- **One kernel session keyring for every account-mode session**
+  (ADR-0065 §4).
+  - **Who shares it.** Under systemd's default `KeyringMode=private`,
+    the unit's processes share one session keyring: every session of
+    every listed account, and the network server.
+  - **What follows.** A key that one session links into that keyring
+    is within reach of the others, and of a compromised network
+    server.
+  - **The advice.** Until each session gets its own keyring, keep no
+    secret in the session keyring of an account-mode session.
 - **Cryptographic primitives might be broken** (ML-KEM, X25519,
   Ed25519, AES-GCM, ChaCha20-Poly1305, SHA-2 family). The hybrid
   posture means *both* asymmetric primitives must fall for the
@@ -1688,34 +1787,36 @@ endpoint defences rely on the project's transparency posture — public
 source, signed commits, reproducible builds when landed — rather than
 on this document's coverage of the maintainer's endpoint.
 
-### 8.12 Per-user UID isolation until Phase 3
+### 8.12 Per-user UID isolation in service-account mode
 
-Until the privilege-separation work scheduled for Phase 3 lands,
-QuantumSSH executes the authenticated user's command under the
-operating system identity of the QuantumSSH service account (the same
-account that owns the listening process), **not** under the OS
-identity of the authenticated user. Two consequences follow.
+In service-account mode, QuantumSSH executes the authenticated user's
+command under the operating system identity of the QuantumSSH service
+account (the account that owns the listening process), **not** under
+the OS identity of the authenticated user. A configuration with no
+`[[account]]` entry selects this mode, and it is the only mode on macOS
+(RFC-0019 §1). Two consequences follow.
 
-First, operators must deploy Phase 1 with the assumption that any key
-in `authorized_keys` is operationally equivalent to a key for the
-service account; multi-tenant deployments are not in scope for Phase 1.
-The supported posture is single-user: one operator, one set of keys,
-one account.
+First, operators must deploy service-account mode with the assumption
+that any key in `authorized_keys` is operationally equivalent to a key
+for the service account. Its supported posture is single-user: one
+operator, one set of keys, one account. Multi-user deployments use
+account mode.
 
-Second, file system and process accesses performed by commands run
-through QuantumSSH inherit the service account's authority, not the
-authenticated user's. Auditors reading server logs must read
-`executing_uid = <service account UID>` on every command-execution
-record rather than a per-user UID; the §2.7 audit record includes
-`executing_uid` as a first-class field precisely so this gap is
-visible to anyone reviewing logs.
+Second, file system and process accesses performed by commands run in
+this mode inherit the service account's authority, not the
+authenticated user's. Every command-execution record of this mode
+carries `executing_uid = <service account UID>`, and `server.started`
+carries `identity_mode` `service_account` (RFC-0019 §6), so the mode is
+visible in the log.
 
-The closure condition for this non-goal is Phase 3 privilege-separation
-being implemented and a follow-up RFC superseding this entry and
-removing §8.12. Until both happen, this remains a deliberate temporary
-non-goal. See [RFC-0002](rfcs/0002-threat-model-phase1-uid-model-and-non-goal.md)
-and [ADR-0016](adr/0016-phase-1-service-account-uid-model.md) for the
-full rationale and operational counterpart.
+Account mode closes this non-goal: each session runs as its listed
+account (§2.5, §4.2). RFC-0020 is the follow-up RFC that the original
+closure condition named. See
+[RFC-0002](rfcs/0002-threat-model-phase1-uid-model-and-non-goal.md) and
+[ADR-0016](adr/0016-phase-1-service-account-uid-model.md) for the
+original rationale, and
+[RFC-0020](rfcs/0020-privilege-separation-root-launcher-and-session-helper.md)
+for its closure.
 
 ---
 
