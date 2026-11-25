@@ -6,7 +6,7 @@
 //! nothing from the network and trusts nothing the server sends
 //! (ADR-0063 §3).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::ffi::OsString;
 use std::io::{self, IoSlice, IoSliceMut};
 use std::os::fd::{AsFd, OwnedFd};
@@ -21,7 +21,7 @@ use rustix::net::{
 };
 use rustix::process::{Pid, Signal};
 use tokio::io::Interest;
-use tokio::io::unix::AsyncFd;
+use tokio::io::unix::{AsyncFd, AsyncFdReadyGuard};
 use tokio::signal::unix::{SignalKind, signal};
 use tokio::task::JoinSet;
 use tracing::{error, warn};
@@ -131,22 +131,37 @@ async fn serve(options: Options) -> i32 {
     tokio::pin!(server_exit);
     let mut reading = true;
     let mut stopping = false;
+    // Replies wait here until the socket takes them, so the loop keeps
+    // reaping and handling signals while it waits to write. ADR-0063 §2:
+    // the next request is read only once every reply has gone, so this
+    // holds at most one reply, plus one `exited` per session.
+    let mut out = Outbox::new();
     loop {
         tokio::select! {
             () = &mut server_exit => break,
             _ = term.recv() => launcher.stop(server_pid, &mut stopping),
             _ = int.recv() => launcher.stop(server_pid, &mut stopping),
             Some(Ok(id)) = exits.join_next(), if !exits.is_empty() => {
-                launcher.leader_exited(id, &socket, reading).await;
+                launcher.leader_exited(id, reading.then_some(&mut out));
             }
             Some(Ok(id)) = graces.join_next(), if !graces.is_empty() => {
                 launcher.grace_over(id);
             }
-            received = recv(&socket), if reading => {
+            ready = socket.writable(), if reading && !out.is_empty() => {
+                if let Err(e) = ready.and_then(|mut guard| flush(&mut guard, &mut out)) {
+                    // A reply that cannot be sent would pair the server's
+                    // next answer with the wrong start (ADR-0063 §2), so
+                    // the service ends, as for a malformed record (§3).
+                    error!(error = %e, "launcher cannot answer the network server");
+                    let _ = rustix::process::kill_process(server_pid, Signal::KILL);
+                    reading = false;
+                    out.clear();
+                }
+            }
+            received = recv(&socket), if reading && out.is_empty() => {
                 let malformed = match received {
                     Ok(Received::Record(record)) => launcher
-                        .request(&record, &socket, &mut exits, &mut graces)
-                        .await
+                        .request(&record, &mut out, &mut exits, &mut graces)
                         .err(),
                     Ok(Received::Broken(rule)) => Some(Malformed(rule)),
                     // ADR-0063 §1: an end of file or an empty record. Stop
@@ -179,6 +194,10 @@ async fn serve(options: Options) -> i32 {
     }
 }
 
+/// Replies to the server, each with its descriptors, waiting for the
+/// socket.
+type Outbox = VecDeque<(Vec<u8>, Vec<OwnedFd>)>;
+
 struct Launcher {
     options: Options,
     sessions: HashMap<u64, LiveSession>,
@@ -197,10 +216,10 @@ impl Launcher {
         let _ = rustix::process::kill_process(server, Signal::TERM);
     }
 
-    async fn request(
+    fn request(
         &mut self,
         record: &[u8],
-        socket: &AsyncFd<OwnedFd>,
+        out: &mut Outbox,
         exits: &mut JoinSet<u64>,
         graces: &mut JoinSet<u64>,
     ) -> Result<(), Malformed> {
@@ -223,9 +242,7 @@ impl Launcher {
                     }
                     Err(refusal) => (Reply::Refused(refusal), Vec::new()),
                 };
-                if let Err(e) = send(socket, &encode_reply(&reply), &fds).await {
-                    warn!(error = %e, "launcher cannot answer a start");
-                }
+                out.push_back((encode_reply(&reply), fds));
             }
             Request::End { session } => self.end(session, graces),
         }
@@ -332,7 +349,8 @@ impl Launcher {
 
     /// ADR-0064 §3: the group kill if a hang-up is in progress, then the
     /// reap, then `exited`.
-    async fn leader_exited(&mut self, id: u64, socket: &AsyncFd<OwnedFd>, reading: bool) {
+    /// `out` is `None` once the server's socket is no longer read.
+    fn leader_exited(&mut self, id: u64, out: Option<&mut Outbox>) {
         let Some(mut session) = self.sessions.remove(&id) else {
             return;
         };
@@ -340,11 +358,11 @@ impl Launcher {
             kill_group(session.pid);
         }
         let exit = session.leader.wait().map_or(Exit::Code(127), exit_of);
-        if reading {
-            let record = encode_reply(&Reply::Exited { session: id, exit });
-            if let Err(e) = send(socket, &record, &[]).await {
-                warn!(error = %e, "launcher cannot report an exit");
-            }
+        if let Some(out) = out {
+            out.push_back((
+                encode_reply(&Reply::Exited { session: id, exit }),
+                Vec::new(),
+            ));
         }
     }
 
@@ -483,12 +501,14 @@ impl<'fd> Ancillary<'fd> {
     }
 }
 
-async fn send(socket: &AsyncFd<OwnedFd>, record: &[u8], fds: &[OwnedFd]) -> io::Result<()> {
-    let borrowed: Vec<_> = fds.iter().map(AsFd::as_fd).collect();
-    loop {
-        let mut guard = socket.writable().await?;
+/// Sends the queued replies until the socket would block. Each one, with
+/// its descriptors, leaves the queue only once it is sent; the launcher's
+/// copies close then (ADR-0064 §2).
+fn flush(guard: &mut AsyncFdReadyGuard<'_, OwnedFd>, out: &mut Outbox) -> io::Result<()> {
+    while let Some((record, fds)) = out.front() {
+        let borrowed: Vec<_> = fds.iter().map(AsFd::as_fd).collect();
         let mut control = ancillary(&borrowed);
-        match guard.try_io(|fd| {
+        let sent = guard.try_io(|fd| {
             rustix::net::sendmsg(
                 fd.get_ref(),
                 &[IoSlice::new(record)],
@@ -496,11 +516,16 @@ async fn send(socket: &AsyncFd<OwnedFd>, record: &[u8], fds: &[OwnedFd]) -> io::
                 SendFlags::NOSIGNAL,
             )
             .map_err(io::Error::from)
-        }) {
-            Ok(result) => return result.map(drop),
-            Err(_would_block) => {}
+        });
+        match sent {
+            Ok(result) => {
+                result?;
+                out.pop_front();
+            }
+            Err(_would_block) => return Ok(()),
         }
     }
+    Ok(())
 }
 
 /// What one read from the server's socket brought.
@@ -541,5 +566,67 @@ async fn recv(socket: &AsyncFd<OwnedFd>) -> io::Result<Received> {
             Ok(Err(e)) => return Err(e),
             Err(_would_block) => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rustix::net::{AddressFamily, SocketFlags, SocketType};
+
+    use super::*;
+
+    fn dev_null() -> OwnedFd {
+        std::fs::File::open("/dev/null").expect("/dev/null").into()
+    }
+
+    /// The replies leave in order, each with its descriptors, and one that
+    /// cannot be sent is an error that stays queued: the caller then ends
+    /// the service (ADR-0063 §2).
+    #[tokio::test]
+    async fn flush_sends_in_order_and_fails_on_a_closed_peer() {
+        let (ours, theirs) = rustix::net::socketpair(
+            AddressFamily::UNIX,
+            SocketType::SEQPACKET,
+            SocketFlags::CLOEXEC,
+            None,
+        )
+        .expect("socketpair");
+        rustix::io::ioctl_fionbio(&ours, true).expect("nonblocking");
+        #[allow(deprecated)]
+        let socket = AsyncFd::with_interest(ours, Interest::READABLE | Interest::WRITABLE)
+            .expect("register");
+        let mut out = Outbox::from([
+            (b"first".to_vec(), vec![dev_null()]),
+            (b"second".to_vec(), Vec::new()),
+        ]);
+        let mut guard = socket.writable().await.expect("writable");
+        flush(&mut guard, &mut out).expect("flush");
+        assert!(out.is_empty());
+        let mut buf = [0u8; 16];
+        let mut space = [std::mem::MaybeUninit::uninit(); rustix::cmsg_space!(ScmRights(1))];
+        let mut control = RecvAncillaryBuffer::new(&mut space);
+        let msg = rustix::net::recvmsg(
+            &theirs,
+            &mut [IoSliceMut::new(&mut buf)],
+            &mut control,
+            RecvFlags::empty(),
+        )
+        .expect("recvmsg");
+        assert_eq!(&buf[..msg.bytes], b"first");
+        assert_eq!(
+            control
+                .drain()
+                .filter(|m| matches!(m, rustix::net::RecvAncillaryMessage::ScmRights(_)))
+                .count(),
+            1
+        );
+        let (n, _) = rustix::net::recv(&theirs, &mut buf, RecvFlags::empty()).expect("recv");
+        assert_eq!(&buf[..n], b"second");
+
+        drop(theirs);
+        out.push_back((b"third".to_vec(), Vec::new()));
+        let mut guard = socket.writable().await.expect("writable");
+        assert!(flush(&mut guard, &mut out).is_err());
+        assert_eq!(out.len(), 1);
     }
 }

@@ -1003,8 +1003,11 @@ pub(crate) async fn spawn_remote(
         uid,
         fds,
         exited,
+        mut guard,
     } = started;
+    // The scope's guard ends it from here on.
     lock(&scope.remote).push(id);
+    guard.disarm();
     let (out_tx, out_rx) = mpsc::channel::<ChildChunk>(OUT_QUEUE);
     let (consumed_tx, consumed_rx) = mpsc::unbounded_channel::<u32>();
     let (stdin_tx, stdin_rx) = mpsc::channel::<Vec<u8>>(STDIN_QUEUE);

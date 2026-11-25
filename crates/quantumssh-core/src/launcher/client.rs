@@ -4,7 +4,10 @@
 //! One task owns the socket. It sends every message, keeps a FIFO of the
 //! `start`s that wait for an answer, and hands each `started` or
 //! `refused` to the oldest (ADR-0063 §2). Connection tasks never touch
-//! the socket.
+//! the socket. Outgoing records wait in a queue until the socket takes
+//! them, so the task never stops reading while it waits to write: the
+//! launcher, which answers before it reads again, could otherwise block
+//! on a full queue in each direction.
 
 use std::collections::{HashMap, VecDeque};
 use std::io::{self, IoSlice, IoSliceMut};
@@ -16,7 +19,7 @@ use rustix::net::{
     SendFlags,
 };
 use tokio::io::Interest;
-use tokio::io::unix::AsyncFd;
+use tokio::io::unix::{AsyncFd, AsyncFdReadyGuard};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tracing::error;
@@ -48,6 +51,31 @@ pub(crate) struct Started {
     pub(crate) fds: Vec<OwnedFd>,
     /// How it ended, once the launcher has reaped it.
     pub(crate) exited: oneshot::Receiver<Exit>,
+    /// Ends the session unless the connection takes it.
+    pub(crate) guard: EndGuard,
+}
+
+/// Sends `end` for a session when dropped armed (ADR-0064 §4). A
+/// `started` whose connection was cancelled while it waited, at the drain
+/// deadline, is dropped unread, and the session still ends.
+pub(crate) struct EndGuard {
+    ops: mpsc::WeakUnboundedSender<Op>,
+    session: Option<u64>,
+}
+
+impl EndGuard {
+    /// The connection owns the session now, and ends it itself.
+    pub(crate) const fn disarm(&mut self) {
+        self.session = None;
+    }
+}
+
+impl Drop for EndGuard {
+    fn drop(&mut self) {
+        if let (Some(session), Some(ops)) = (self.session, self.ops.upgrade()) {
+            let _ = ops.send(Op::Send(encode_request(&Request::End { session })));
+        }
+    }
 }
 
 /// Why a start did not give a session.
@@ -118,7 +146,8 @@ impl Client {
         #[allow(deprecated)]
         let socket = AsyncFd::with_interest(socket, Interest::READABLE | Interest::WRITABLE)?;
         let (ops, rx) = mpsc::unbounded_channel();
-        Ok((Self { ops }, tokio::spawn(run(socket, rx))))
+        let weak = ops.downgrade();
+        Ok((Self { ops }, tokio::spawn(run(socket, rx, weak))))
     }
 
     /// Asks for a session as `account` and waits for the answer.
@@ -153,10 +182,17 @@ impl Client {
     }
 }
 
-async fn run(socket: AsyncFd<OwnedFd>, mut ops: mpsc::UnboundedReceiver<Op>) -> Fault {
+async fn run(
+    socket: AsyncFd<OwnedFd>,
+    mut ops: mpsc::UnboundedReceiver<Op>,
+    weak: mpsc::WeakUnboundedSender<Op>,
+) -> Fault {
     let mut pending: VecDeque<(usize, oneshot::Sender<Result<Started, StartError>>)> =
         VecDeque::new();
     let mut waiters: HashMap<u64, oneshot::Sender<Exit>> = HashMap::new();
+    // ponytail: unbounded, as `ops` is; both are bounded by the
+    // connections, which max_connections bounds.
+    let mut out: VecDeque<Vec<u8>> = VecDeque::new();
     let fault = loop {
         tokio::select! {
             op = ops.recv() => {
@@ -164,14 +200,16 @@ async fn run(socket: AsyncFd<OwnedFd>, mut ops: mpsc::UnboundedReceiver<Op>) -> 
                     // Every handle is gone: the server is exiting.
                     return Fault::Closed;
                 };
-                let record = match op {
+                match op {
                     Op::Start { record, fds, reply } => {
                         pending.push_back((fds, reply));
-                        record
+                        out.push_back(record);
                     }
-                    Op::Send(record) => record,
-                };
-                if let Err(e) = send(&socket, &record).await {
+                    Op::Send(record) => out.push_back(record),
+                }
+            }
+            ready = socket.writable(), if !out.is_empty() => {
+                if let Err(e) = ready.and_then(|mut guard| flush(&mut guard, &mut out)) {
                     break Fault::Io(e);
                 }
             }
@@ -181,15 +219,10 @@ async fn run(socket: AsyncFd<OwnedFd>, mut ops: mpsc::UnboundedReceiver<Op>) -> 
                     Ok(None) => break Fault::Closed,
                     Err(e) => break Fault::Io(e),
                 };
-                match dispatch(&record, fds, truncated, &mut pending, &mut waiters) {
+                match dispatch(&record, fds, truncated, &mut pending, &mut waiters, &weak) {
                     Ok(None) => {}
                     // A session whose descriptors did not arrive ends now.
-                    Ok(Some(session)) => {
-                        let end = encode_request(&Request::End { session });
-                        if let Err(e) = send(&socket, &end).await {
-                            break Fault::Io(e);
-                        }
-                    }
+                    Ok(Some(session)) => out.push_back(encode_request(&Request::End { session })),
                     Err(fault) => break fault,
                 }
             }
@@ -207,6 +240,7 @@ fn dispatch(
     truncated: bool,
     pending: &mut VecDeque<(usize, oneshot::Sender<Result<Started, StartError>>)>,
     waiters: &mut HashMap<u64, oneshot::Sender<Exit>>,
+    weak: &mpsc::WeakUnboundedSender<Op>,
 ) -> Result<Option<u64>, Fault> {
     let reply = parse_reply(record).map_err(|Malformed(rule)| Fault::Malformed(rule))?;
     match reply {
@@ -229,11 +263,17 @@ fn dispatch(
             fds.truncate(expected);
             let (exit_tx, exited) = oneshot::channel();
             waiters.insert(session, exit_tx);
+            // A connection already gone drops this unread, and its guard
+            // ends the session.
             let _ = tx.send(Ok(Started {
                 session,
                 uid,
                 fds,
                 exited,
+                guard: EndGuard {
+                    ops: weak.clone(),
+                    session: Some(session),
+                },
             }));
         }
         Reply::Refused(refusal) => {
@@ -258,10 +298,14 @@ fn dispatch(
     Ok(None)
 }
 
-async fn send(socket: &AsyncFd<OwnedFd>, record: &[u8]) -> io::Result<()> {
-    loop {
-        let mut guard = socket.writable().await?;
-        match guard.try_io(|fd| {
+/// Sends the queued records until the socket would block, each one
+/// leaving the queue only once it is sent.
+fn flush(
+    guard: &mut AsyncFdReadyGuard<'_, OwnedFd>,
+    out: &mut VecDeque<Vec<u8>>,
+) -> io::Result<()> {
+    while let Some(record) = out.front() {
+        let sent = guard.try_io(|fd| {
             rustix::net::sendmsg(
                 fd.get_ref(),
                 &[IoSlice::new(record)],
@@ -269,11 +313,16 @@ async fn send(socket: &AsyncFd<OwnedFd>, record: &[u8]) -> io::Result<()> {
                 SEND_FLAGS,
             )
             .map_err(io::Error::from)
-        }) {
-            Ok(result) => return result.map(drop),
-            Err(_would_block) => {}
+        });
+        match sent {
+            Ok(result) => {
+                result?;
+                out.pop_front();
+            }
+            Err(_would_block) => return Ok(()),
         }
     }
+    Ok(())
 }
 
 /// One record with its descriptors; `None` for a zero-length read, an end
@@ -313,5 +362,103 @@ async fn recv(socket: &AsyncFd<OwnedFd>) -> io::Result<Option<(Vec<u8>, Vec<Owne
             Ok(Err(e)) => return Err(e),
             Err(_would_block) => {}
         }
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use std::time::Duration;
+
+    use rustix::net::{AddressFamily, SocketFlags, SocketType};
+
+    use super::super::{Exit, encode_reply};
+    use super::*;
+
+    fn dev_null() -> OwnedFd {
+        std::fs::File::open("/dev/null").expect("/dev/null").into()
+    }
+
+    /// A `started` whose connection was cancelled while it waited still
+    /// ends its session (ADR-0064 §4).
+    #[test]
+    fn a_started_nobody_takes_ends_its_session() {
+        let (ops, mut rx) = mpsc::unbounded_channel();
+        let weak = ops.downgrade();
+        let (reply, gone) = oneshot::channel();
+        drop(gone);
+        let mut pending = VecDeque::from([(MAX_FDS, reply)]);
+        let mut waiters = HashMap::new();
+        let record = encode_reply(&Reply::Started {
+            session: 7,
+            uid: 1001,
+        });
+        let fds = vec![dev_null(), dev_null(), dev_null()];
+        let applied = dispatch(&record, fds, false, &mut pending, &mut waiters, &weak);
+        assert!(matches!(applied, Ok(None)));
+        match rx.try_recv() {
+            Ok(Op::Send(end)) => assert_eq!(end, encode_request(&Request::End { session: 7 })),
+            other => panic!("no end for the session: {other:?}"),
+        }
+        drop(ops);
+    }
+
+    #[test]
+    fn a_disarmed_guard_sends_nothing() {
+        let (ops, mut rx) = mpsc::unbounded_channel::<Op>();
+        let mut guard = EndGuard {
+            ops: ops.downgrade(),
+            session: Some(7),
+        };
+        guard.disarm();
+        drop(guard);
+        assert!(rx.try_recv().is_err());
+    }
+
+    /// The socket task keeps reading while it waits to write. A peer that
+    /// sends many records before it reads, as the launcher's replies and
+    /// `exited`s can, while the server has many `end`s to send, would
+    /// otherwise leave both blocked on a full queue.
+    #[tokio::test]
+    async fn the_socket_task_reads_while_it_waits_to_write() {
+        const N: u64 = 2000;
+        let (ours, theirs) = rustix::net::socketpair(
+            AddressFamily::UNIX,
+            SocketType::SEQPACKET,
+            SocketFlags::CLOEXEC,
+            None,
+        )
+        .expect("socketpair");
+        let (client, _fault) = Client::spawn(ours).expect("spawn");
+        for session in 0..N {
+            client.end(session);
+        }
+        let launcher = std::thread::spawn(move || {
+            for session in 0..N {
+                let exited = encode_reply(&Reply::Exited {
+                    session,
+                    exit: Exit::Code(0),
+                });
+                rustix::net::send(&theirs, &exited, SendFlags::empty()).expect("send");
+            }
+            let mut buf = [0u8; 64];
+            let mut ends = 0;
+            while ends < N {
+                let (n, _) =
+                    rustix::net::recv(&theirs, &mut buf, RecvFlags::empty()).expect("recv");
+                assert_eq!(
+                    buf[..n],
+                    encode_request(&Request::End { session: ends })[..]
+                );
+                ends += 1;
+            }
+            ends
+        });
+        let joined = tokio::time::timeout(
+            Duration::from_secs(30),
+            tokio::task::spawn_blocking(move || launcher.join().expect("launcher thread")),
+        )
+        .await
+        .expect("the two sides blocked each other");
+        assert_eq!(joined.expect("join"), N);
     }
 }

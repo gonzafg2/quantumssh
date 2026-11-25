@@ -140,6 +140,16 @@ a reply to its request by order, with no request identifier.
 The launcher's order is therefore the order in which the server matches,
 however many `start`s are in flight.
 
+**Neither side stops reading while it waits to write.** Each keeps its
+outgoing records in a queue, sent as the socket takes them. The
+launcher still answers a `start` before it reads the next message, and
+the server always reads. A full queue in one direction therefore cannot
+block the other.
+
+**A reply the launcher cannot send ends its service,** as a malformed
+record does (§3). The server would otherwise pair the next reply with
+the wrong `start`.
+
 ### 3. Bounds in the launcher's parser
 
 | Item | Bound | Source |

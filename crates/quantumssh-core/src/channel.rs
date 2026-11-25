@@ -218,6 +218,8 @@ struct Driver<'a> {
     bytes_received: u64,
     /// Channel payload bytes of the child's output sent to the client.
     bytes_sent: u64,
+    /// `exec.started` has been emitted (emit exactly once).
+    started_emitted: bool,
     /// `exec.finished` has been emitted (emit exactly once).
     finished_emitted: bool,
     /// Reply-generating inbound messages buffered during a re-key's
@@ -270,6 +272,7 @@ impl<'a> Driver<'a> {
             on_pty: false,
             bytes_received: 0,
             bytes_sent: 0,
+            started_emitted: false,
             finished_emitted: false,
             deferred: Vec::new(),
             child: None,
@@ -606,11 +609,42 @@ impl Driver<'_> {
         Ok(())
     }
 
-    /// Emits `exec.finished` exactly once, if an `exec` was started.
+    /// Emits `exec.started` exactly once, for the command `start` set.
+    fn emit_started(&mut self) {
+        let Some(command) = self.command.as_deref() else {
+            return;
+        };
+        if self.started_emitted {
+            return;
+        }
+        self.started_emitted = true;
+        let cert = self.authenticated.certificate.as_ref();
+        info!(
+            target: "audit",
+            authenticated_identity = %self.authenticated.fingerprint,
+            executing_uid = self.uid,
+            command = %command,
+            request_type = self.request_type,
+            pty = self.on_pty,
+            cert_key_id = cert.map(|c| c.key_id.as_str()),
+            cert_serial = cert.map(|c| c.serial.as_str()),
+            cert_ca_fingerprint = cert.map(|c| c.ca_fingerprint.as_str()),
+            cert_principal = cert.map(|c| c.principal.as_str()),
+            account = self.authenticated.account.as_ref().map(|a| a.name.as_str()),
+            "exec.started"
+        );
+    }
+
+    /// Emits `exec.finished` exactly once, if an `exec` was started. A
+    /// start cancelled while it waited for the launcher, at the drain
+    /// deadline, never wrote `exec.started`: it is written first, with the
+    /// UID read at authentication, as for a refused start (ADR-0064 §2),
+    /// so the records stay a pair.
     fn emit_finished(&mut self) {
         if let Some(command) = self.command.clone()
             && !self.finished_emitted
         {
+            self.emit_started();
             self.finished_emitted = true;
             // Credits still queued when the channel closes are bytes the
             // child received before it did: count them (ADR-0042).
@@ -982,21 +1016,7 @@ impl Driver<'_> {
             }
             None => None,
         };
-        let cert = self.authenticated.certificate.as_ref();
-        info!(
-            target: "audit",
-            authenticated_identity = %self.authenticated.fingerprint,
-            executing_uid = self.uid,
-            command = %command,
-            request_type,
-            pty = self.on_pty,
-            cert_key_id = cert.map(|c| c.key_id.as_str()),
-            cert_serial = cert.map(|c| c.serial.as_str()),
-            cert_ca_fingerprint = cert.map(|c| c.ca_fingerprint.as_str()),
-            cert_principal = cert.map(|c| c.principal.as_str()),
-            account = self.authenticated.account.as_ref().map(|a| a.name.as_str()),
-            "exec.started"
-        );
+        self.emit_started();
         self.reply(session, want_reply, true).await?;
         let spawned = match (remote, start, pending) {
             // Account mode: the launcher started it (ADR-0064).
@@ -2069,6 +2089,21 @@ mod tests {
             drop(d);
         });
         assert_eq!(finished_count(&seen), 1);
+    }
+
+    /// A start cancelled while it waited for the launcher (ADR-0064 §2):
+    /// the drop writes the missing `exec.started` before `exec.finished`.
+    #[test]
+    fn a_cancelled_start_still_writes_the_pair() {
+        let scope = ChildScope::default();
+        let capture = Capture::default();
+        let seen = capture.0.clone();
+        tracing::subscriber::with_default(capture, || {
+            let mut d = Driver::new(bare_key(), &scope);
+            d.command = Some("true".to_string());
+            drop(d);
+        });
+        assert_eq!(*seen.lock().unwrap(), ["exec.started", "exec.finished"]);
     }
 
     #[test]
