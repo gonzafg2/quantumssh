@@ -195,6 +195,31 @@ impl AuthorizedKeys {
     pub fn lookup(&self, key_blob: &[u8]) -> Option<&AuthorizedKey> {
         lookup(&self.keys, key_blob)
     }
+
+    /// An account's key file (RFC-0019 §5): the rules of [`Self::load`],
+    /// except that a file with no key is allowed. The account then has no
+    /// bare key, and only a certificate reaches it.
+    ///
+    /// # Errors
+    ///
+    /// Those of [`Self::load`], [`AuthError::Empty`] excepted.
+    pub fn load_account(path: &Path) -> Result<Self, AuthError> {
+        Self::parse_account(&read_key_file(path)?)
+    }
+
+    /// [`Self::load_account`] without reading a file.
+    pub(crate) fn parse_account(content: &str) -> Result<Self, AuthError> {
+        match Self::parse(content) {
+            Err(AuthError::Empty) => Ok(Self { keys: Vec::new() }),
+            other => other,
+        }
+    }
+
+    /// Whether the file holds no key.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.keys.is_empty()
+    }
 }
 
 /// The entry whose blob equals `key_blob`, byte for byte.
@@ -1123,6 +1148,18 @@ mod tests {
         w.put_string(KEY_ALGORITHM.as_bytes());
         w.put_string(raw);
         w.into_bytes()
+    }
+
+    #[test]
+    fn an_account_key_file_may_hold_no_key() {
+        let empty = AuthorizedKeys::parse_account("# no keys\n\n").expect("empty is allowed");
+        assert!(empty.is_empty());
+        assert!(matches!(AuthorizedKeys::parse(""), Err(AuthError::Empty)));
+        // Every other rule still holds: an options field fails the load.
+        assert!(matches!(
+            AuthorizedKeys::parse_account("no-pty ssh-ed25519 AAAA"),
+            Err(AuthError::KeyOptions { .. })
+        ));
     }
 
     #[test]
