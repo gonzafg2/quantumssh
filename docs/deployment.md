@@ -6,17 +6,20 @@ unit [`contrib/systemd/quantumssh.service`](../contrib/systemd/quantumssh.servic
 why the unit looks the way it does. CI runs these same steps under a
 real systemd ([`tests/systemd/`](../tests/systemd/)). Clients need
 OpenSSH 10.6 or newer (§10). Windows runs the server through WSL2 (§11),
-and Homebrew offers a single-user evaluation path (§12).
+and Homebrew offers a single-user evaluation path (§12). On Linux,
+account mode runs each session as its own account instead (§4,
+"Account mode").
 
 QuantumSSH is **alpha**. Read the next section before you expose it
 to anyone.
 
 ## What a Phase-2 deployment is
 
-QuantumSSH runs as one dedicated, unprivileged account
+By default QuantumSSH runs as one dedicated, unprivileged account
 ([ADR-0016](adr/0016-phase-1-service-account-uid-model.md)), and every
-session runs as that account. Until Phase 3 there is no per-user
-identity (threat model §8.12). Concretely:
+session runs as that account. That is service-account mode. Account
+mode, on Linux, runs each session as its own account instead (§4,
+"Account mode"). In service-account mode:
 
 - Every key in `authorized_keys` carries the account's full
   authority. The supported posture is one operator, one set of keys,
@@ -236,9 +239,11 @@ ssh-keygen -s user_ca -I alice@laptop -n alice -V +8h alice_key.pub
 - **Always pass `-V`.** Without it the certificate never expires, and
   expiry is the only revocation: the server keeps no revocation list.
 - **The principal is the login name.** `ssh alice@host` needs `alice`
-  in `-n`. Every session still runs as the service account, so the
-  principal does not limit access: every certificate the CA issued, for
-  any principal, gets in. Use a CA dedicated to this server.
+  in `-n`. In service-account mode every session still runs as the
+  service account, so the principal does not limit access: every
+  certificate the CA issued, for any principal, gets in. Use a CA
+  dedicated to this server. In account mode the principal selects the
+  account (below).
 - **No critical options.** A certificate signed with `-O force-command`,
   `-O source-address` or `-O verify-required` is refused, because the
   server does not enforce them yet.
@@ -258,6 +263,129 @@ version 1: later releases only add keys and accepted forms, which an
 older binary refuses by name, and a change that would break a version-1
 file ships as `schema_version = 2`
 ([RFC-0016](rfcs/0016-config-schema-v1.md)).
+
+### Account mode
+
+On Linux, account mode runs each session as the account that the
+client's user name selects, from a list you write
+([RFC-0019](rfcs/0019-identity-model-ssh-user-name-to-os-account.md),
+[RFC-0020](rfcs/0020-privilege-separation-root-launcher-and-session-helper.md)).
+Use it when each person should log in to their own account.
+Service-account mode, above, stays the single-user path, and the only
+one on macOS.
+
+**How it runs.** systemd starts the binary as root. That process, the
+launcher, never reads the network. It starts the network server as
+`quantumssh`, with no groups, no capabilities and `no_new_privs`
+([ADR-0066](adr/0066-account-mode-start-readiness-and-stop.md)). It
+starts each session as its account, with the account's groups, home
+and login shell
+([ADR-0065](adr/0065-session-helper-identity-change-checks-and-environment.md)).
+
+**Set it up:**
+
+1. **Keep the service account** `quantumssh` of step 2. The network
+   server still runs as it, so it must exist and must not be listed.
+2. **Create the accounts,** if they do not exist yet.
+3. **Install each account's key file,** owned by root:
+
+   ```sh
+   sudo install -d -m 0755 -o root -g root /etc/quantumssh/keys
+   sudo install -m 0644 -o root -g root alice.pub /etc/quantumssh/keys/alice
+   ```
+
+4. **List the accounts** in `config.toml`, in place of
+   `[auth] authorized_keys`, which account mode refuses
+   ([ADR-0070](adr/0070-account-sections-grammar-and-startup-errors.md)):
+
+   ```toml
+   [auth]
+   trusted_user_ca_keys = "/etc/quantumssh/trusted_user_ca_keys"
+
+   [[account]]
+   name            = "alice"
+   authorized_keys = "/etc/quantumssh/keys/alice"
+
+   [[account]]
+   name = "deploy"    # no key file: only a certificate for "deploy" logs in
+   ```
+
+   - A key logs in only to the accounts whose key files list it.
+   - A certificate logs in only to the listed account its principals
+     name.
+   - Any other name fails as a wrong key does: `root`, an unlisted
+     account, or a name with no account.
+   - An entry with no key file needs `[auth] trusted_user_ca_keys`.
+
+5. **Install the account-mode unit** in place of the reference unit,
+   under the same name:
+
+   ```sh
+   sudo install -m 0644 contrib/systemd/quantumssh-account-mode.service \
+       /etc/systemd/system/quantumssh.service
+   sudo systemctl daemon-reload
+   sudo systemctl restart quantumssh
+   ```
+
+   The unit
+   ([ADR-0067](adr/0067-account-mode-systemd-unit.md)) differs from
+   the reference unit in three ways:
+   - **No `User=`,** because the launcher must start as root.
+   - **No `NoNewPrivileges=`,** which would reach every session and
+     stop `sudo` there.
+   - **`--require-account-mode`.**
+
+   Each wrong combination fails the start, and `journalctl -u
+   quantumssh` names the reason:
+   - an account-mode configuration under the reference unit gives
+     `account mode must start as root`;
+   - a configuration without accounts under this unit gives
+     `--require-account-mode: the configuration lists no account`.
+
+   The launcher binds the port as root, so port 22 needs none of §6.
+
+**File ownership** follows RFC-0019 §8, which is stricter than step 3:
+
+- **Root-owned, with nothing writable above them.** This covers the
+  configuration, the CA file and every key file. Each must be owned by
+  root and not writable by group or others. Every directory above it
+  must be root-owned and not writable by group or others, and no symlink
+  is allowed anywhere. The launcher checks the same of `/etc/passwd`,
+  `/etc/group` and its own binary. A file that fails stops the start,
+  with `insecure_permissions` or `file_unavailable`.
+- **The host key** stays owned by `quantumssh` with mode `0600`,
+  because the network server reads it.
+
+**When a change takes effect:**
+
+| Change | Takes effect |
+|---|---|
+| Remove an account from `[[account]]` | at the next restart |
+| Remove a key from an account's key file | at the next restart, because key files load at startup |
+| `userdel` the account, or give it UID 0 | at its next connection, which fails as a wrong key does |
+| Remove the account from a group | at its next session |
+| `passwd -l`, or an expiry date | never: account mode does not read `/etc/shadow`. Remove the account from `[[account]]` and restart, or remove it from `/etc/passwd`. Emptying its key file is not enough when `trusted_user_ca_keys` is set, because a certificate whose principals include the name still logs in |
+
+**What a listed account exposes.** The network server parses every
+byte a client sends, and it can start a session as any listed account.
+Every way a listed account has to become root is therefore within
+reach of a compromised server: `sudo`, the `docker` group and the
+like. List only accounts whose whole privilege, those paths included,
+you accept exposing that way (RFC-0020 §8).
+
+To keep every session from gaining privilege, add
+`NoNewPrivileges=yes` with `sudo systemctl edit quantumssh`. The cost
+is `sudo` in every session.
+
+**One kernel session keyring for the whole unit.** Every session of
+every listed account, and the network server, share one session
+keyring. A key that one of them links into it is within reach of the
+others (ADR-0065 §4). Do not keep keys in the session keyring until
+[#299](https://github.com/gonzafg2/quantumssh/issues/299) closes this.
+
+**Logs.** `server.started` carries `"identity_mode":"account"`.
+`exec.started` and `exec.finished` carry the account's name in
+`account`, and its UID in `executing_uid` (§7).
 
 ## 5. Install and start the unit
 
@@ -381,8 +509,8 @@ effect:
 | `SystemCallFilter=` | Every program a session runs is held to the allowed system calls. |
 | `MemoryDenyWriteExecute=yes` | JIT runtimes (Java, Node.js and others) fail in sessions. |
 
-Per-session confinement and per-user identity are Phase-3 work
-([#43](https://github.com/gonzafg2/quantumssh/issues/43)).
+Per-user identity is account mode (§4, "Account mode"). It confines
+no session beyond its account.
 
 ## 10. Clients: OpenSSH 10.6 or newer
 

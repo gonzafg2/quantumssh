@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The account-mode systemd unit**,
+  `contrib/systemd/quantumssh-account-mode.service`
+  ([ADR-0067](docs/adr/0067-account-mode-systemd-unit.md)).
+  - **What differs from the reference unit:** it has no `User=` and no
+    `NoNewPrivileges=`, and it passes `--require-account-mode`. It is
+    installed under the reference unit's name.
+  - **The release tarball ships it** next to the reference unit
+    ([ADR-0073](docs/adr/0073-release-tarball-ships-the-account-mode-unit.md)).
+  - **The systemd gate runs it** after the reference unit. It checks the
+    refusal of a configuration without accounts, the session's identity,
+    the three processes' identities, the refused reload, and the drained
+    stop.
+  - **`docs/deployment.md` gains an "Account mode" section:** set-up,
+    file ownership, when a change takes effect, what a listed account
+    exposes, and the shared session keyring.
 - **Account mode, on Linux**
   ([RFC-0019](docs/rfcs/0019-identity-model-ssh-user-name-to-os-account.md),
   [RFC-0020](docs/rfcs/0020-privilege-separation-root-launcher-and-session-helper.md);

@@ -3,7 +3,8 @@
 # holds one directory of the same name with:
 #   - the quantumssh binary;
 #   - LICENSE, README.md and CHANGELOG.md;
-#   - contrib/systemd/quantumssh.service;
+#   - contrib/systemd/quantumssh.service, and the account-mode unit
+#     contrib/systemd/quantumssh-account-mode.service (ADR-0073);
 #   - config.toml, the example of docs/deployment.md §4 with its
 #     /etc/quantumssh paths.
 #
@@ -21,7 +22,8 @@ root="$stage/$name"
 install -d "$root/contrib/systemd"
 install -m 0755 "$bin" "$root/quantumssh"
 install -m 0644 LICENSE README.md CHANGELOG.md "$root/"
-install -m 0644 contrib/systemd/quantumssh.service "$root/contrib/systemd/"
+install -m 0644 contrib/systemd/quantumssh.service \
+    contrib/systemd/quantumssh-account-mode.service "$root/contrib/systemd/"
 
 # The first TOML block of deployment.md §4 is the example configuration.
 awk '/^## 4\./ { s = 1 } s && /^```toml$/ { c = 1; next } c && /^```$/ { exit } c' \
