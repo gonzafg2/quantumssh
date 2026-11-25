@@ -1,7 +1,7 @@
 # ADR 0066: Account-mode start, readiness and stop: the launcher starts the network server, relays readiness, and forwards the stop
 
-- **Status:** Proposed
-- **Date:** — (set on acceptance; drafted 2026-11-24)
+- **Status:** Accepted
+- **Date:** 2026-11-25 (accepted with the implementing PR [#306](https://github.com/gonzafg2/quantumssh/pull/306); drafted 2026-11-24)
 - **Deciders:** Project lead
 - **Related:**
   - Implements [RFC-0020](../rfcs/0020-privilege-separation-root-launcher-and-session-helper.md) §1 and §8. It is the fourth item of RFC-0020 §12: "how the launcher starts and stops with the server, and how readiness and `SIGTERM` pass between them".

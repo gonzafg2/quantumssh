@@ -1,7 +1,7 @@
 # ADR 0065: The session helper: the identity change, its checks, and the session's environment
 
-- **Status:** Proposed
-- **Date:** — (set on acceptance; drafted 2026-11-24)
+- **Status:** Accepted
+- **Date:** 2026-11-25 (accepted with the implementing PRs [#304](https://github.com/gonzafg2/quantumssh/pull/304) and [#306](https://github.com/gonzafg2/quantumssh/pull/306); drafted 2026-11-24)
 - **Deciders:** Project lead
 - **Related:**
   - Implements [RFC-0020](../rfcs/0020-privilege-separation-root-launcher-and-session-helper.md) §4 and §5. It is the third item of RFC-0020 §12: "the helper's exact sequence and checks, and the default `PATH`".

@@ -1,7 +1,7 @@
 # ADR 0064: Sessions in the launcher: identifiers, PTY allocation, ending and reaping
 
-- **Status:** Proposed
-- **Date:** — (set on acceptance; drafted 2026-11-24)
+- **Status:** Accepted
+- **Date:** 2026-11-25 (accepted with the implementing PR [#306](https://github.com/gonzafg2/quantumssh/pull/306); drafted 2026-11-24)
 - **Deciders:** Project lead
 - **Related:**
   - Implements [RFC-0020](../rfcs/0020-privilege-separation-root-launcher-and-session-helper.md) §2, §3 and §6. It is the second item of RFC-0020 §12: "the session identifier's lifecycle: when the launcher allocates a PTY, when it releases one that was never started, and how it refuses a request for a session it has reaped".

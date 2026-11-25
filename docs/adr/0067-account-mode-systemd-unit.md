@@ -1,7 +1,7 @@
 # ADR 0067: The account-mode systemd unit
 
-- **Status:** Proposed
-- **Date:** — (set on acceptance; drafted 2026-11-24)
+- **Status:** Accepted
+- **Date:** 2026-11-25 (accepted with the implementing PR [#307](https://github.com/gonzafg2/quantumssh/pull/307); drafted 2026-11-24)
 - **Deciders:** Project lead
 - **Related:**
   - Implements [RFC-0020](../rfcs/0020-privilege-separation-root-launcher-and-session-helper.md) §8, and answers its unresolved question 3, the launcher's capability bounding set. It is the fifth item of RFC-0020 §12: "the account-mode unit".

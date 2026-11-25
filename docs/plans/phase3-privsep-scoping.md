@@ -1,5 +1,5 @@
 <!--
-  Governance status (2026-11-24):
+  Governance status (2026-11-25):
   Non-authoritative design note (ADR-0027). Scoped the Phase-3
   privilege-separation RFC; tracked in #43. It decides nothing.
   Authoritative decisions: RFC-0019 (Accepted 2026-11-22), the identity
@@ -7,7 +7,8 @@
   root launcher, an unprivileged network server, and a single-threaded
   helper per session, closest to option C below. RFC-0020's implementing
   decisions are ADR-0063 to ADR-0069, and RFC-0019's are ADR-0068 and
-  ADR-0070 to ADR-0072 (all Proposed, drafted 2026-11-24).
+  ADR-0070 to ADR-0072; ADR-0073 ships the account-mode unit. All are
+  Accepted (2026-11-25), implemented as account mode in #301 to #308.
   The note is kept as the record of the constraint and the options the
   RFC weighed.
 -->

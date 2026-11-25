@@ -1,7 +1,7 @@
 # ADR 0069: The threat-model text for account mode
 
-- **Status:** Proposed
-- **Date:** — (set on acceptance; drafted 2026-11-24)
+- **Status:** Accepted
+- **Date:** 2026-11-25 (accepted with the implementing PR [#308](https://github.com/gonzafg2/quantumssh/pull/308); drafted 2026-11-24)
 - **Deciders:** Project lead
 - **Related:**
   - It is the last item of [RFC-0020](../rfcs/0020-privilege-separation-root-launcher-and-session-helper.md) §12: "the final text of the threat-model changes (§9)".

@@ -1,7 +1,7 @@
 # ADR 0071: The `/etc/passwd` and `/etc/group` parser: bounds, and what a malformed line does
 
-- **Status:** Proposed
-- **Date:** — (set on acceptance; drafted 2026-11-24)
+- **Status:** Accepted
+- **Date:** 2026-11-25 (accepted with the implementing PRs [#302](https://github.com/gonzafg2/quantumssh/pull/302) and [#305](https://github.com/gonzafg2/quantumssh/pull/305); drafted 2026-11-24)
 - **Deciders:** Project lead
 - **Related:**
   - Implements [RFC-0019](../rfcs/0019-identity-model-ssh-user-name-to-os-account.md) §4. It is the second item of RFC-0019 §9: "the parser's bounds, and how it treats a malformed line it does not need".
