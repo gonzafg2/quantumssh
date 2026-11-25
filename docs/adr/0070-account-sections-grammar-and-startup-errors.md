@@ -87,9 +87,11 @@ applies (`auth.rs`, `USER_NAME_BOUND`). It must also be:
   a name, such as `john.doe` (`lib/chkname.c`, the pattern
   `[a-zA-Z0-9_.][a-zA-Z0-9_.-]*$\?`).
 - **Such an account cannot be listed.** The startup error names it.
-  Accepting `.` would be a change to RFC-0019 §3. The rule is checked byte by byte on the TOML
-string. Nothing is normalized: `Alice` and `alice` are two names, as
-they are in `/etc/passwd`.
+  Accepting `.` would be a change to RFC-0019 §3.
+
+The rule is checked byte by byte on the TOML string. Nothing is
+normalized: `Alice` and `alice` are two names, as they are in
+`/etc/passwd`.
 
 ### 3. The errors
 

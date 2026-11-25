@@ -105,10 +105,10 @@ of a large host. The file bound leaves room for many such lines.
   empty after that is skipped.
 - **Comment and NIS lines are then skipped, before any other rule.** A
   line whose first byte, after the whitespace, is `#`, `+` or `-` is
-  never read as an entry, a membership or a malformed line. In `/etc/group` this matters: a
-  commented-out `#wheel:x:10:alice` splits into four valid fields. Read
-  as an entry, it would give `alice` the GID 10 that the operator took
-  away. There is therefore no NIS either.
+  never read as an entry, a membership or a malformed line. In
+  `/etc/group` this matters: a commented-out `#wheel:x:10:alice` splits
+  into four valid fields. Read as an entry, it would give `alice` the
+  GID 10 that the operator took away. There is therefore no NIS either.
 - A NUL byte anywhere in a line makes the line malformed.
 
 ### 3. Malformed lines
