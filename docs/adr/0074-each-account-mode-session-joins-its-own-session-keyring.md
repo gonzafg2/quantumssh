@@ -6,7 +6,7 @@
 - **Related:**
   - Tracked in [#299](https://github.com/gonzafg2/quantumssh/issues/299), which the implementation PR, [#312](https://github.com/gonzafg2/quantumssh/pull/312), closes.
   - Supersedes in part [ADR-0065](0065-session-helper-identity-change-checks-and-environment.md) §4, whose bullet "It gives the session no kernel session keyring of its own" records the gap. It adds a step to ADR-0065 §2's sequence.
-  - Implements RFC-0021 (Draft, [#311](https://github.com/gonzafg2/quantumssh/pull/311)), which makes one exception to [RFC-0020](../rfcs/0020-privilege-separation-root-launcher-and-session-helper.md) §11's "No new crate" for this crate and this purpose. It waits for that RFC's acceptance.
+  - Implements [RFC-0021](../rfcs/0021-a-keyring-crate-for-the-session-helper.md) (Accepted 2026-11-26), which makes one exception to [RFC-0020](../rfcs/0020-privilege-separation-root-launcher-and-session-helper.md) §11's "No new crate" for this crate and this purpose.
   - Narrows the residual that [ADR-0069](0069-threat-model-text-for-account-mode.md) §4 adds to threat model §7, "One kernel session keyring for every account-mode session".
 
 ## Context
@@ -196,7 +196,7 @@ The implementing PR also changes three documents:
   `pam_keyinit`. A program that relies on `request_key` reaching `@u`
   through `@s` does not find its key in a session. That keeps `@u`'s
   contents away from anything that possesses the session keyring.
-  Linking it is RFC-0021's "Future possibilities".
+  Linking it is in RFC-0021's "Future possibilities".
 
 ## Alternatives considered
 
@@ -236,6 +236,6 @@ that denies only the join.
 
 ## Links
 
-- [#299](https://github.com/gonzafg2/quantumssh/issues/299); RFC-0021 ([#311](https://github.com/gonzafg2/quantumssh/pull/311)); [RFC-0020](../rfcs/0020-privilege-separation-root-launcher-and-session-helper.md) §11; [ADR-0065](0065-session-helper-identity-change-checks-and-environment.md) §2, §4; [ADR-0067](0067-account-mode-systemd-unit.md) §5; [ADR-0069](0069-threat-model-text-for-account-mode.md) §4.
+- [#299](https://github.com/gonzafg2/quantumssh/issues/299); [RFC-0021](../rfcs/0021-a-keyring-crate-for-the-session-helper.md); [RFC-0020](../rfcs/0020-privilege-separation-root-launcher-and-session-helper.md) §11; [ADR-0065](0065-session-helper-identity-change-checks-and-environment.md) §2, §4; [ADR-0067](0067-account-mode-systemd-unit.md) §5; [ADR-0069](0069-threat-model-text-for-account-mode.md) §4.
 - keyctl_join_session_keyring(3), keyrings(7), systemd.exec(5) `KeyringMode=`.
 - keyutils-raw 0.4.0, `src/functions.rs`: `keyctl_join_session_keyring`.
