@@ -4,7 +4,7 @@
 - **Date:** — (set on acceptance; drafted 2026-11-26)
 - **Deciders:** Project lead
 - **Related:**
-  - Closes [#299](https://github.com/gonzafg2/quantumssh/issues/299).
+  - Tracked in [#299](https://github.com/gonzafg2/quantumssh/issues/299), which the implementation PR, [#312](https://github.com/gonzafg2/quantumssh/pull/312), closes.
   - Supersedes in part [ADR-0065](0065-session-helper-identity-change-checks-and-environment.md) §4, whose bullet "It gives the session no kernel session keyring of its own" records the gap. It adds a step to ADR-0065 §2's sequence.
   - Implements RFC-0021 (Draft, [#311](https://github.com/gonzafg2/quantumssh/pull/311)), which makes one exception to [RFC-0020](../rfcs/0020-privilege-separation-root-launcher-and-session-helper.md) §11's "No new crate" for this crate and this purpose. It waits for that RFC's acceptance.
   - Narrows the residual that [ADR-0069](0069-threat-model-text-for-account-mode.md) §4 adds to threat model §7, "One kernel session keyring for every account-mode session".
@@ -82,15 +82,16 @@ home directory):
 
 ### 2. When the call fails
 
-- **`ENOSYS`: the helper goes on.** The kernel has no keyrings.
-- **`EPERM`: the helper probes, then decides.** `EPERM` with a NULL name
-  comes from a seccomp filter or an LSM, as in a default Docker
-  container. That alone does not say whether the inherited keyring is
-  still reachable. The helper therefore asks for its session keyring's ID
-  without creating one: `keyctl_get_keyring_id(KEY_SPEC_SESSION_KEYRING,
-  false)`.
-  - **If the probe fails with `EPERM` too,** the filter blocks `keyctl`
-    as a whole, as Docker's default profile does. It binds the session's
+- **`EPERM` or `ENOSYS`: the helper probes, then decides.** `EPERM`
+  with a NULL name comes from a seccomp filter or an LSM, as in a
+  default Docker container. `ENOSYS` comes from a kernel without
+  keyrings, or from a seccomp filter that answers with it. Neither alone
+  says whether the inherited keyring is still reachable. The helper
+  therefore asks for its session keyring's ID without creating one:
+  `keyctl_get_keyring_id(KEY_SPEC_SESSION_KEYRING, false)`.
+  - **If the probe also fails with `EPERM` or `ENOSYS`,** `keyctl` is
+    unavailable as a whole: no keyrings in the kernel, or a filter on
+    every call, as Docker's default profile is. That binds the session's
     processes too, so the helper goes on.
   - **If the probe succeeds,** only the join was denied, for example by
     a filter on that one operation or by an LSM. The inherited keyring
@@ -138,10 +139,16 @@ calls. The threat model's §7 entry is narrowed to this case.
   2. A session of `qssh-bob` searches its `@s` for that key, and does not
      find it.
   3. Read by its serial, the key cannot be read by `qssh-bob` or by the
-     service account.
+     service account. The service account's read runs outside the unit,
+     through `setpriv`, so it checks permission only. The network server
+     has no possession path either, because it never joins a session's
+     keyring.
 
   The gate image has no `keyctl` tool, so the check makes the system
   calls from `perl`, with the architecture's numbers.
+- **A unit test of §2's rule** covers each row as a pure function, the
+  fail-closed rows included: a probe that succeeds, a probe with another
+  error, and `EDQUOT`. It needs no privileges.
 - **A unit test of the helper's call** runs where keyrings are
   available. After the call, the process's `@s` is a new keyring.
 - **The conformance case `account_own_keyring`** (ADR-0062 §8) asserts
