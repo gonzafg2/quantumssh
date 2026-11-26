@@ -1,6 +1,6 @@
 # RFC 0021: A keyring crate for the session helper
 
-- **Status:** Draft
+- **Status:** Accepted (2026-11-26). The project lead shortened the 14-day comment period on [#311](https://github.com/gonzafg2/quantumssh/pull/311), with the reason stated there (`docs/rfcs/README.md`, step 5).
 - **Authors:** Gonzalo Fleming Garrido
 - **Created:** 2026-11-26
 - **Roadmap issue:** [#248](https://github.com/gonzafg2/quantumssh/issues/248) (Phase 3); tracked in [#299](https://github.com/gonzafg2/quantumssh/issues/299)
@@ -88,8 +88,9 @@ An operator changes nothing: no setting, no unit directive, no package.
   like any other pin.
 - **Its use.** Only the session helper calls it, and only the calls that
   give the session its own keyring. The implementing ADR names them. A
-  reviewer checks the confinement by searching the workspace for the
-  crate's name: it must occur only in the session helper's module.
+  reviewer checks the confinement by searching the workspace's Rust
+  source files for the crate's name: it must occur only in the session
+  helper's module.
 - **Where the call runs.** After the identity change of ADR-0065 §2, as
   the account, never as root. That rule covers the calls only.
 - **Where the code is.** The crate is linked into the one binary, so its
@@ -97,7 +98,9 @@ An operator changes nothing: no setting, no unit directive, no package.
   launcher included. The launcher never calls it. This RFC accepts that,
   with the exact pin and `cargo deny` as the controls. At the versions
   of the evidence below, none of the three crates has a build script or
-  code that runs at process start.
+  code that runs at process start. A reviewer checks that against each
+  crate's published source: no `build.rs`, and no `#[ctor]`,
+  `link_section` or `.init_array`.
 - **What it brings.** The crate and its dependencies must pass
   `cargo deny` with the repository's `deny.toml`.
 
