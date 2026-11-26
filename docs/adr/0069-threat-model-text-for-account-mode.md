@@ -1,6 +1,6 @@
 # ADR 0069: The threat-model text for account mode
 
-- **Status:** Accepted
+- **Status:** Accepted; the §7 keyring entry of §4 is narrowed by [ADR-0074](0074-each-account-mode-session-joins-its-own-session-keyring.md) §2
 - **Date:** 2026-11-25 (accepted with the implementing PR [#308](https://github.com/gonzafg2/quantumssh/pull/308); drafted 2026-11-24)
 - **Deciders:** Project lead
 - **Related:**

@@ -191,6 +191,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **Account mode: each session joins its own kernel session keyring**
+  ([ADR-0074](docs/adr/0074-each-account-mode-session-joins-its-own-session-keyring.md),
+  [#299](https://github.com/gonzafg2/quantumssh/issues/299)).
+  - **The gap it closes.** Before, every session of every listed account
+    shared the unit's keyring, and so did the network server. A key that
+    one session linked into `@s` was within reach of the others.
+  - **How.** After the identity change, the session helper calls
+    `keyctl(KEYCTL_JOIN_SESSION_KEYRING, NULL)`. Where `keyctl` is
+    blocked as a whole, as under a default Docker seccomp profile, the
+    session goes on, since it cannot reach any keyring either. Where only
+    the join is denied, the session fails.
+  - **The call** goes through the new dependency `keyutils-raw` 0.4.0,
+    which brings `log` and `uninit` with it.
+  - **The systemd gate checks the isolation.** A session of one account
+    cannot find or read another account's key, and neither can the
+    service account.
 - The first `SSH_MSG_USERAUTH_REQUEST` fixes the user name for the
   connection. A later request that names another user ends the
   connection with `SSH_DISCONNECT_PROTOCOL_ERROR`, before its method is

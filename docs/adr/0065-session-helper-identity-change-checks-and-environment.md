@@ -1,6 +1,6 @@
 # ADR 0065: The session helper: the identity change, its checks, and the session's environment
 
-- **Status:** Accepted
+- **Status:** Accepted; §4's keyring bullet is superseded by [ADR-0074](0074-each-account-mode-session-joins-its-own-session-keyring.md), which adds step 5a to §2
 - **Date:** 2026-11-25 (accepted with the implementing PRs [#304](https://github.com/gonzafg2/quantumssh/pull/304) and [#306](https://github.com/gonzafg2/quantumssh/pull/306); drafted 2026-11-24)
 - **Deciders:** Project lead
 - **Related:**

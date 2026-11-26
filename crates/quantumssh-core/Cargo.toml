@@ -50,6 +50,11 @@ subtle = { workspace = true }
 # the syscalls, keeping first-party code `unsafe`-free.
 rustix = { workspace = true }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+# ADR-0074 (#299): the session helper's own session keyring. Linux only,
+# as account mode is (RFC-0019 §4).
+keyutils-raw = { workspace = true }
+
 [dev-dependencies]
 # Integration tests construct their own runtime; the library does not.
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
