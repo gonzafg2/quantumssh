@@ -144,9 +144,14 @@ calls. The threat model's §7 entry is narrowed to this case.
   calls from `perl`, with the architecture's numbers.
 - **A unit test of the helper's call** runs where keyrings are
   available. After the call, the process's `@s` is a new keyring.
-- **The conformance suite** keeps running in the unprivileged container.
-  There the call fails with `EPERM`, and the account cases show that
-  sessions still work.
+- **The conformance case `account_own_keyring`** (ADR-0062 §8) asserts
+  both ways, so it never skips on a Linux leg:
+  - where sessions can use keyrings, the isolation check above;
+  - where `keyctl` is blocked as a whole, as in the unprivileged
+    `openssh-interop` container, that the session runs on, and that
+    `keyctl` is blocked in another session too.
+
+  The other account cases show that sessions still work there.
 
 ### 5. Documents
 
