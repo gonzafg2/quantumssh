@@ -1,7 +1,7 @@
 # ADR 0074: Each account-mode session joins its own session keyring
 
-- **Status:** Proposed
-- **Date:** — (set on acceptance; drafted 2026-11-26)
+- **Status:** Accepted
+- **Date:** 2026-11-26 (accepted with the implementing PR [#312](https://github.com/gonzafg2/quantumssh/pull/312); drafted 2026-11-26)
 - **Deciders:** Project lead
 - **Related:**
   - Tracked in [#299](https://github.com/gonzafg2/quantumssh/issues/299), which the implementation PR, [#312](https://github.com/gonzafg2/quantumssh/pull/312), closes.
