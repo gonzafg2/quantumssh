@@ -127,22 +127,24 @@ impl HelperArgs {
 /// fresh keyring, and `probe` asks for the session keyring's ID without
 /// creating one. `true` lets the session go on.
 ///
-/// - The join succeeded, or the kernel has no keyrings (`ENOSYS`).
-/// - The join got `EPERM`, and so did the probe: `keyctl` is blocked as a
-///   whole, which binds the session's processes too.
+/// - The join succeeded.
+/// - The join got `EPERM` or `ENOSYS`, and so did the probe: `keyctl` is
+///   unavailable as a whole, no keyrings in the kernel or a filter on
+///   every call, which binds the session's processes too.
 ///
-/// A probe that succeeds after an `EPERM` means only the join was denied,
-/// so the inherited keyring is still reachable and the session fails. So
-/// does any other error.
+/// A probe that succeeds after either error means only the join was
+/// denied, so the inherited keyring is still reachable and the session
+/// fails. So does any other error.
 #[cfg(any(target_os = "linux", test))]
 fn keyring_goes_on(
     join: Result<(), rustix::io::Errno>,
     probe: impl FnOnce() -> Result<(), rustix::io::Errno>,
 ) -> bool {
     use rustix::io::Errno;
+    let unavailable = |e: Errno| e == Errno::PERM || e == Errno::NOSYS;
     match join {
-        Ok(()) | Err(Errno::NOSYS) => true,
-        Err(Errno::PERM) => probe() == Err(Errno::PERM),
+        Ok(()) => true,
+        Err(e) if unavailable(e) => probe().is_err_and(unavailable),
         Err(_) => false,
     }
 }
@@ -384,11 +386,20 @@ mod tests {
         use rustix::io::Errno;
         let unreachable = || panic!("the probe ran");
         assert!(keyring_goes_on(Ok(()), unreachable));
-        assert!(keyring_goes_on(Err(Errno::NOSYS), unreachable));
-        assert!(keyring_goes_on(Err(Errno::PERM), || Err(Errno::PERM)));
-        // Only the join was denied: the inherited keyring is reachable.
-        assert!(!keyring_goes_on(Err(Errno::PERM), || Ok(())));
-        assert!(!keyring_goes_on(Err(Errno::PERM), || Err(Errno::ACCESS)));
+        for join in [Errno::PERM, Errno::NOSYS] {
+            assert!(keyring_goes_on(Err(join), || Err(Errno::PERM)), "{join:?}");
+            assert!(keyring_goes_on(Err(join), || Err(Errno::NOSYS)), "{join:?}");
+            // Only the join was denied: the inherited keyring is reachable.
+            assert!(!keyring_goes_on(Err(join), || Ok(())), "{join:?}");
+            assert!(
+                !keyring_goes_on(Err(join), || Err(Errno::ACCESS)),
+                "{join:?}"
+            );
+            assert!(
+                !keyring_goes_on(Err(join), || Err(Errno::INVAL)),
+                "{join:?}"
+            );
+        }
         assert!(!keyring_goes_on(Err(Errno::DQUOT), unreachable));
         assert!(!keyring_goes_on(Err(Errno::NOMEM), unreachable));
     }

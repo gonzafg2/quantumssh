@@ -234,6 +234,9 @@ case "$serial" in
 esac
 search="$("${BOB[@]}" qssh-bob@127.0.0.1 "perl /usr/local/share/keyring_probe.pl $nrs search")"
 read_bob="$("${BOB[@]}" qssh-bob@127.0.0.1 "perl /usr/local/share/keyring_probe.pl $nrs read $serial")"
+# From outside the unit, so this checks permission only. The network
+# server has no possession path either: it never joins a session's
+# keyring (ADR-0074 §4).
 # shellcheck disable=SC2086 # $nrs is two arguments
 read_service="$(setpriv --reuid quantumssh --regid quantumssh --clear-groups \
     perl /usr/local/share/keyring_probe.pl $nrs read "$serial")"
