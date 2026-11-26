@@ -765,3 +765,49 @@ case_account_certificate_principal() {
         || fail "the client never offered the certificate: $out"
     grep -qF "Permission denied (publickey)." <<<"$out" || fail "refused for another reason: $out"
 }
+
+# ADR-0074 §2, §4: each session joins a session keyring of its own. Where
+# a session can use keyrings, a key that qssh-alice links into her @s is
+# neither found nor read by a session of qssh-bob. Where keyctl is
+# blocked as a whole, as by a container's default seccomp profile, the
+# session runs on without one, and keyctl is blocked inside it too.
+case_account_own_keyring() {
+    account_mode || return 0
+    local nrs probe=/etc/quantumssh-interop/keyring_probe.pl serial holder search read_bob n
+    case "$(uname -m)" in
+        x86_64) nrs="248 250" ;;
+        aarch64) nrs="217 219" ;;
+        *) fail "no keyring system call numbers for $(uname -m)" ;;
+    esac
+    install -m 0644 "$HERE/../systemd/keyring_probe.pl" "$probe"
+    # shellcheck disable=SC2029 # the probe's arguments expand here
+    # The probe's own errors come back on stdout, apart from the client's.
+    acct_ssh alice qssh-alice@127.0.0.1 "perl $probe $nrs add 2>&1" \
+        >"$CASE_DIR/alice" 2>"$CASE_DIR/alice.err" &
+    holder=$!
+    disown "$holder"
+    wait_for 10 test -s "$CASE_DIR/alice" || { kill "$holder" 2>/dev/null; fail "the probe printed nothing"; }
+    serial="$(head -1 "$CASE_DIR/alice")"
+    # shellcheck disable=SC2029
+    search="$(acct_ssh deploy qssh-deploy@127.0.0.1 "perl $probe $nrs search")"
+    case "$serial" in
+        'add_key: Operation not permitted')
+            kill "$holder" 2>/dev/null || true
+            [ "$search" = "errno 1" ] || fail "keyctl is blocked for one session but gave '$search' in another"
+            ;;
+        '' | *[!0-9]*)
+            kill "$holder" 2>/dev/null || true
+            fail "the probe could not add a key: $(cat "$CASE_DIR/alice")"
+            ;;
+        *)
+            # shellcheck disable=SC2029
+            read_bob="$(acct_ssh deploy qssh-deploy@127.0.0.1 "perl $probe $nrs read $serial")"
+            kill "$holder" 2>/dev/null || true
+            [ "$search" = "errno 126" ] || fail "another account's search found the key: '$search'"
+            [ "$read_bob" = "errno 13" ] || fail "another account read the key: '$read_bob'"
+            ;;
+    esac
+    n=0
+    while kill -0 "$holder" 2>/dev/null && [ "$n" -lt 50 ]; do sleep 0.1; n=$((n + 1)); done
+}
+

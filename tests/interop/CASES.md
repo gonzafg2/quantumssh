@@ -91,6 +91,7 @@ behaviour that a document of this project states.
 | account_unlisted_refused | RFC-0019 §3: `root`, an unlisted account and a name with no entry each get `Permission denied (publickey).`, as a wrong key does | where account mode cannot run (ADR-0068 §1) |
 | account_key_bound_to_account | RFC-0019 §5: one account's key does not log in to another listed account | where account mode cannot run (ADR-0068 §1) |
 | account_certificate_principal | RFC-0019 §5: a certificate logs in to the account its principal names, and not to another | where account mode cannot run (ADR-0068 §1) |
+| account_own_keyring | ADR-0074 §2, §4: where sessions can use keyrings, a key that one account's session links into `@s` is neither found nor read by another account's session; where `keyctl` is blocked as a whole, sessions run on without one | where account mode cannot run (ADR-0068 §1) |
 
 ## What is not here
 
