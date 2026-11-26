@@ -1598,16 +1598,22 @@ operators must account for. The principal items, by category, are:
     (RFC-0020, Alternative 3).
   - **In service-account mode,** the same compromise yields the
     service account, which every session already runs as.
-- **One kernel session keyring for every account-mode session**
-  (ADR-0065 §4).
-  - **Who shares it.** Under systemd's default `KeyringMode=private`,
-    the unit's processes share one session keyring: every session of
-    every listed account, and the network server.
-  - **What follows.** A key that one session links into that keyring
-    is within reach of the others, and of a compromised network
-    server.
-  - **The advice.** Until each session gets its own keyring, keep no
-    secret in the session keyring of an account-mode session.
+- **Session keyrings under a filter that denies the join but not every
+  keyring call** (ADR-0074 §2).
+  - **What is in place.** Each account-mode session joins a session
+    keyring of its own after the identity change. A key that one
+    session links into its `@s` is out of reach of the other sessions
+    and of the network server.
+  - **What is left.** Where the join is denied, the helper probes its
+    session keyring's ID. It lets the session go on only when the probe
+    is denied too, as when `keyctl` is blocked as a whole; otherwise the
+    session fails. A filter may still deny both calls but allow another
+    keyring call: another `keyctl` operation, `add_key` or
+    `request_key`. The session then keeps the keyring the unit's
+    processes share, and a key it adds there is within reach of the
+    others. Docker's default profile denies all three system calls.
+  - **The advice.** Under such a filter, keep no secret in the session
+    keyring of an account-mode session.
 - **Cryptographic primitives might be broken** (ML-KEM, X25519,
   Ed25519, AES-GCM, ChaCha20-Poly1305, SHA-2 family). The hybrid
   posture means *both* asymmetric primitives must fall for the

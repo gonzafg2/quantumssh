@@ -17,7 +17,7 @@
 # OpenSSH client set, 10.6 or later: ssh, ssh-keygen, ssh-keyscan,
 # ssh-agent, sftp and scp. Nothing else, and no toolchain: the release
 # gates run it on the artifacts (ADR-0055). The account cases (ADR-0068)
-# also need root, useradd, groupadd and getent.
+# also need root, useradd, groupadd, getent and perl.
 #
 # Env overrides:
 #   QUANTUMSSH_BIN       the binary under test (default

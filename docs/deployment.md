@@ -380,11 +380,16 @@ To keep every session from gaining privilege, add
 `NoNewPrivileges=yes` with `sudo systemctl edit quantumssh`. The cost
 is `sudo` in every session.
 
-**One kernel session keyring for the whole unit.** Every session of
-every listed account, and the network server, share one session
-keyring. A key that one of them links into it is within reach of the
-others (ADR-0065 §4). Do not keep keys in the session keyring until
-[#299](https://github.com/gonzafg2/quantumssh/issues/299) closes this.
+**Session keyrings.** Each session joins a kernel session keyring of
+its own, so a key that one session links into it is out of reach of the
+other sessions and of the network server
+([ADR-0074](adr/0074-each-account-mode-session-joins-its-own-session-keyring.md)).
+Where `keyctl` is blocked as a whole, as under Docker's default seccomp
+profile, sessions run with no keyring of their own, and cannot reach
+one either. Where only joining a keyring is denied, sessions fail. A
+filter may still deny the join and the helper's probe but allow another
+keyring call. Under such a filter, sessions keep the keyring the unit's
+processes share, so keep no secret in the session keyring there.
 
 **Logs.** `server.started` carries `"identity_mode":"account"`.
 `exec.started` and `exec.finished` carry the account's name in

@@ -316,6 +316,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "keyutils-raw"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "db322e79368bacfd8d7ecba9d9038866d2ff5e78b52377376f38b7360878392b"
+dependencies = [
+ "errno",
+ "libc",
+ "log",
+ "uninit",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -332,6 +344,12 @@ name = "linux-raw-sys"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53"
+
+[[package]]
+name = "log"
+version = "0.4.35"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5d15f86d12da44cd8d4ec3c73984537eb7f4cadcb9776a575a0a8a05ca11005c"
 
 [[package]]
 name = "matchers"
@@ -492,6 +510,7 @@ dependencies = [
  "cipher",
  "ed25519-dalek",
  "getrandom",
+ "keyutils-raw",
  "ml-dsa",
  "ml-kem",
  "poly1305",
@@ -839,6 +858,12 @@ name = "unicode-ident"
 version = "1.0.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75"
+
+[[package]]
+name = "uninit"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ac20c07bcac4f505f1e4fbd2e55b54f6297a35a27538f107cb3d4254b4514146"
 
 [[package]]
 name = "universal-hash"

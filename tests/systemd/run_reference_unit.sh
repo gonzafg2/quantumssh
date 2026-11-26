@@ -208,7 +208,46 @@ if systemctl reload quantumssh 2>/dev/null; then
 fi
 echo "ok: systemd_account_no_reload"
 
-# 9. Stop, as in 4: a session runs, and another left a process outside
+# 9. Each session joins its own session keyring (ADR-0074). A key that a
+# session of qssh-alice links into its @s is not found by a session of
+# qssh-bob, which shared the unit's keyring before. Neither qssh-bob nor
+# the service account can read it by its serial.
+case "$(uname -m)" in
+    x86_64) nrs="248 250" ;;
+    aarch64) nrs="217 219" ;;
+    *) fail "no keyring system call numbers for $(uname -m)" ;;
+esac
+# From the checkout next to this script: a release tarball has no tests/.
+install -m 0644 "$(dirname "$0")/keyring_probe.pl" /usr/local/share/keyring_probe.pl
+BOB=("${ALICE[@]}")
+BOB[2]="$WORK/bob"
+"${ALICE[@]}" qssh-alice@127.0.0.1 "perl /usr/local/share/keyring_probe.pl $nrs add" \
+    >"$WORK/alice-key" 2>&1 &
+keyholder=$!
+for _ in $(seq 1 100); do
+    [ -s "$WORK/alice-key" ] && break
+    sleep 0.1
+done
+serial="$(head -1 "$WORK/alice-key")"
+case "$serial" in
+    '' | *[!0-9]*) kill "$keyholder" 2>/dev/null; fail "qssh-alice could not add a key: $(cat "$WORK/alice-key")" ;;
+esac
+search="$("${BOB[@]}" qssh-bob@127.0.0.1 "perl /usr/local/share/keyring_probe.pl $nrs search")"
+read_bob="$("${BOB[@]}" qssh-bob@127.0.0.1 "perl /usr/local/share/keyring_probe.pl $nrs read $serial")"
+# From outside the unit, so this checks permission only. The network
+# server has no possession path either: it never joins a session's
+# keyring (ADR-0074 §4).
+# shellcheck disable=SC2086 # $nrs is two arguments
+read_service="$(setpriv --reuid quantumssh --regid quantumssh --clear-groups \
+    perl /usr/local/share/keyring_probe.pl $nrs read "$serial")"
+kill "$keyholder" 2>/dev/null || true
+wait "$keyholder" 2>/dev/null || true
+[ "$search" = "errno 126" ] || fail "qssh-bob's search for qssh-alice's key gave '$search', want ENOKEY"
+[ "$read_bob" = "errno 13" ] || fail "qssh-bob reading qssh-alice's key gave '$read_bob', want EACCES"
+[ "$read_service" = "errno 13" ] || fail "the service account reading qssh-alice's key gave '$read_service', want EACCES"
+echo "ok: systemd_account_own_keyring"
+
+# 10. Stop, as in 4: a session runs, and another left a process outside
 # its process group.
 "${ALICE[@]}" qssh-alice@127.0.0.1 'setsid sleep 303 </dev/null >/dev/null 2>&1 &' \
     || fail "account mode: ssh (escape) exited $?"
@@ -238,8 +277,8 @@ done
 log="$(journalctl _SYSTEMD_INVOCATION_ID="$invocation" --no-pager -o cat)"
 started=$(grep -c '"exec.started"' <<<"$log" || true)
 finished=$(grep -c '"exec.finished"' <<<"$log" || true)
-[ "$started" -eq 4 ] && [ "$finished" -eq 4 ] \
-    || fail "account mode: exec.started=$started exec.finished=$finished, want 4 and 4"
+[ "$started" -eq 7 ] && [ "$finished" -eq 7 ] \
+    || fail "account mode: exec.started=$started exec.finished=$finished, want 7 and 7"
 echo "ok: systemd_account_stop_drain (${elapsed}s)"
 
 echo "SYSTEMD PASS"

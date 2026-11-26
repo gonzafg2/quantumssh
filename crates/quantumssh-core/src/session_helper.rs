@@ -122,6 +122,33 @@ impl HelperArgs {
     }
 }
 
+/// ADR-0074 §2's rule for the helper's own session keyring, apart from
+/// the calls so it can be tested. `join` is the result of joining a
+/// fresh keyring, and `probe` asks for the session keyring's ID without
+/// creating one. `true` lets the session go on.
+///
+/// - The join succeeded.
+/// - The join got `EPERM` or `ENOSYS`, and so did the probe: `keyctl` is
+///   unavailable as a whole, no keyrings in the kernel or a filter on
+///   every call, which binds the session's processes too.
+///
+/// A probe that succeeds after either error means only the join was
+/// denied, so the inherited keyring is still reachable and the session
+/// fails. So does any other error.
+#[cfg(any(target_os = "linux", test))]
+fn keyring_goes_on(
+    join: Result<(), rustix::io::Errno>,
+    probe: impl FnOnce() -> Result<(), rustix::io::Errno>,
+) -> bool {
+    use rustix::io::Errno;
+    let unavailable = |e: Errno| e == Errno::PERM || e == Errno::NOSYS;
+    match join {
+        Ok(()) => true,
+        Err(e) if unavailable(e) => probe().is_err_and(unavailable),
+        Err(_) => false,
+    }
+}
+
 /// A decimal ID of 1 to 10 digits, at most [`MAX_ID`].
 fn id(field: &[u8]) -> Option<u32> {
     if field.is_empty() || field.len() > 10 || !field.iter().all(u8::is_ascii_digit) {
@@ -185,6 +212,12 @@ mod linux {
         if !dropped(uid, gid, &args.groups) {
             return HELPER_FAILED;
         }
+        // 5a. A session keyring of its own, created as the account, so
+        // no other session and not the network server possess it
+        // (ADR-0074).
+        if !own_session_keyring() {
+            return HELPER_FAILED;
+        }
         // 6. Home, or `/`.
         if std::env::set_current_dir(&args.home).is_err() && std::env::set_current_dir("/").is_err()
         {
@@ -209,6 +242,23 @@ mod linux {
             }
             Run::Sftp => crate::sftp::serve_stdio(),
         }
+    }
+
+    /// ADR-0074 §1, §2: joins a fresh anonymous session keyring in place
+    /// of the unit's, under [`super::keyring_goes_on`]'s rule.
+    pub(super) fn own_session_keyring() -> bool {
+        use keyutils_raw::{
+            KEY_SPEC_SESSION_KEYRING, keyctl_get_keyring_id, keyctl_join_session_keyring,
+        };
+        use rustix::io::Errno;
+        let join = keyctl_join_session_keyring(None)
+            .map(drop)
+            .map_err(|e| Errno::from_raw_os_error(e.0));
+        super::keyring_goes_on(join, || {
+            keyctl_get_keyring_id(KEY_SPEC_SESSION_KEYRING, false)
+                .map(drop)
+                .map_err(|e| Errno::from_raw_os_error(e.0))
+        })
     }
 
     /// The base name of `program`, for argv[0].
@@ -328,6 +378,46 @@ mod tests {
         sftp[1] = "pty".into();
         assert_eq!(HelperArgs::parse(&sftp), None);
         assert_eq!(HelperArgs::parse(&good[..6]), None);
+    }
+
+    /// ADR-0074 §2's table.
+    #[test]
+    fn the_keyring_rule_goes_on_only_where_keyctl_is_out_of_reach() {
+        use rustix::io::Errno;
+        let unreachable = || panic!("the probe ran");
+        assert!(keyring_goes_on(Ok(()), unreachable));
+        for join in [Errno::PERM, Errno::NOSYS] {
+            assert!(keyring_goes_on(Err(join), || Err(Errno::PERM)), "{join:?}");
+            assert!(keyring_goes_on(Err(join), || Err(Errno::NOSYS)), "{join:?}");
+            // Only the join was denied: the inherited keyring is reachable.
+            assert!(!keyring_goes_on(Err(join), || Ok(())), "{join:?}");
+            assert!(
+                !keyring_goes_on(Err(join), || Err(Errno::ACCESS)),
+                "{join:?}"
+            );
+            assert!(
+                !keyring_goes_on(Err(join), || Err(Errno::INVAL)),
+                "{join:?}"
+            );
+        }
+        assert!(!keyring_goes_on(Err(Errno::DQUOT), unreachable));
+        assert!(!keyring_goes_on(Err(Errno::NOMEM), unreachable));
+    }
+
+    /// ADR-0074 §4: after the call, the process's session keyring is a
+    /// new one. Where keyrings are unavailable, as in a default Docker
+    /// container, the call reports success and there is nothing to
+    /// compare.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_helper_joins_a_fresh_session_keyring() {
+        use keyutils_raw::{KEY_SPEC_SESSION_KEYRING, keyctl_get_keyring_id};
+        let before = keyctl_get_keyring_id(KEY_SPEC_SESSION_KEYRING, true);
+        assert!(super::linux::own_session_keyring());
+        let after = keyctl_get_keyring_id(KEY_SPEC_SESSION_KEYRING, false);
+        if let (Ok(before), Ok(after)) = (before, after) {
+            assert_ne!(before, after, "the session keyring did not change");
+        }
     }
 
     #[cfg(target_os = "linux")]

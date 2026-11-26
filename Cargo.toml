@@ -37,6 +37,10 @@ getrandom          = { version = "0.4", default-features = false }  # OS randomn
 # `unsafe`-free (ADR-0018). ADR-0038 §4 adds `pty` and `termios` for
 # PTY allocation, modes and window size.
 rustix             = { version = "1", default-features = false, features = ["std", "process", "fs", "pty", "termios", "thread", "net"] }
+# ADR-0074 (#299): account mode's session helper joins a fresh session
+# keyring. rustix has no keyctl; this crate wraps the one syscall through
+# libc, with no C library. Pinned to the reviewed release.
+keyutils-raw       = { version = "=0.4.0", default-features = false }
 # ADR-0029 (RFC-0010): the TOML config file. The parser is `toml`
 # (ADR-0044, replacing the unmaintained `basic-toml`): parse and serde
 # only. No `display`, and no `unbounded`, so the recursion limit stays.
