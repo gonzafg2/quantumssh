@@ -810,4 +810,3 @@ case_account_own_keyring() {
     n=0
     while kill -0 "$holder" 2>/dev/null && [ "$n" -lt 50 ]; do sleep 0.1; n=$((n + 1)); done
 }
-
