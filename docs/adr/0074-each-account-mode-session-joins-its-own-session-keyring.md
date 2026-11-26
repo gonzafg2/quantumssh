@@ -6,7 +6,7 @@
 - **Related:**
   - Closes [#299](https://github.com/gonzafg2/quantumssh/issues/299).
   - Supersedes in part [ADR-0065](0065-session-helper-identity-change-checks-and-environment.md) §4, whose bullet "It gives the session no kernel session keyring of its own" records the gap. It adds a step to ADR-0065 §2's sequence.
-  - Refines [RFC-0020](../rfcs/0020-privilege-separation-root-launcher-and-session-helper.md) §11, which adds no crate. This ADR adds one, and the two it depends on.
+  - Implements RFC-0021 (Draft, [#311](https://github.com/gonzafg2/quantumssh/pull/311)), which makes one exception to [RFC-0020](../rfcs/0020-privilege-separation-root-launcher-and-session-helper.md) §11's "No new crate" for this crate and this purpose. It waits for that RFC's acceptance.
   - Narrows the residual that [ADR-0069](0069-threat-model-text-for-account-mode.md) §4 adds to threat model §7, "One kernel session keyring for every account-mode session".
 
 ## Context
@@ -24,7 +24,8 @@
   network server.
 
 **How OpenSSH avoids it.** `pam_keyinit` gives each session a fresh
-keyring. Account mode has no PAM (RFC-0019).
+keyring, and links the account's user keyring `@u` into it. Account mode
+has no PAM (RFC-0019).
 
 **The fix is one system call** in the session helper, after the identity
 change: `keyctl(KEYCTL_JOIN_SESSION_KEYRING, NULL)`. With a NULL name the
@@ -68,29 +69,44 @@ home directory):
 
 - **Why after step 5.** The helper is then the account, so the keyring
   belongs to the account's UID, and counts against its key quota.
-- **Who possesses it.** The session's own process tree, and nothing
-  else. The launcher, the network server and other sessions keep or get
-  other keyrings.
+- **Who possesses it.** The session's own process tree. The launcher,
+  the network server and the sessions of other accounts never join it,
+  and have no permission on it, because their UIDs differ.
+- **What other sessions of the same account keep.** They share the UID,
+  so they keep its permissions on the keyring: view, read and link. They
+  could link it by its serial and possess it. That crosses no boundary,
+  because processes of one UID can already reach each other, through
+  `ptrace` for example.
 - **Every kind of session joins:** `exec`, `shell`, on a PTY or on pipes,
   and SFTP, which runs in the helper itself.
 
 ### 2. When the call fails
 
-- **`EPERM` or `ENOSYS`: the helper goes on.** `ENOSYS` means the kernel
-  has no keyrings. `EPERM` with a NULL name comes from a seccomp filter
-  or an LSM, as in a default Docker container. A seccomp filter binds
-  the helper's descendants too, so the session cannot reach any keyring
-  through `keyctl` either.
-- **Any other error fails the session** with status 127, as a failed
-  check of ADR-0065 §2 does. Examples are `EDQUOT`, when the account's
-  key quota is full, and `ENOMEM`.
+- **`ENOSYS`: the helper goes on.** The kernel has no keyrings.
+- **`EPERM`: the helper probes, then decides.** `EPERM` with a NULL name
+  comes from a seccomp filter or an LSM, as in a default Docker
+  container. That alone does not say whether the inherited keyring is
+  still reachable. The helper therefore asks for its session keyring's ID
+  without creating one: `keyctl_get_keyring_id(KEY_SPEC_SESSION_KEYRING,
+  false)`.
+  - **If the probe fails with `EPERM` too,** the filter blocks `keyctl`
+    as a whole, as Docker's default profile does. It binds the session's
+    processes too, so the helper goes on.
+  - **If the probe succeeds,** only the join was denied, for example by
+    a filter on that one operation or by an LSM. The inherited keyring
+    is reachable, so the session fails.
+  - **Any other probe error** also fails the session.
+- **Any other error of the join fails the session** with status 127, as
+  a failed check of ADR-0065 §2 does. Examples are `EDQUOT`, when the
+  account's key quota is full, and `ENOMEM`.
 - **No record.** The helper's stderr is already the session's, and no
   step of the sequence writes there.
 
-**Residual:** a filter could deny `keyctl` but allow `add_key` or
-`request_key`. A session could then still add keys to the inherited
-keyring, or find keys there. Docker's default profile denies all three.
-The threat model's §7 entry is narrowed to this case.
+**Residual:** a filter could deny the join and the probe but allow some
+other keyring call: another `keyctl` operation, `add_key` or
+`request_key`. A session could then still reach the inherited keyring
+through that call. Docker's default profile denies all three system
+calls. The threat model's §7 entry is narrowed to this case.
 
 ### 3. The dependency
 
@@ -98,8 +114,8 @@ The threat model's §7 entry is narrowed to this case.
   in `quantumssh-core` a Linux-only target dependency (RFC-0019 §4). It
   is pinned to the release whose source was read, so a bump is a
   reviewed change.
-- **Its use:** only the session helper calls it, and only this one
-  function.
+- **Its use:** only the session helper calls it, and only the join and
+  the probe of §2.
 - **What it adds to the tree:**
   - `keyutils-raw` 0.4.0 (BSD-3-Clause);
   - `log` 0.4.35 (MIT OR Apache-2.0);
@@ -147,8 +163,8 @@ The implementing PR also changes three documents:
 
 ### Positive
 
-- **A key linked into a session's `@s` is out of reach** of every other
-  session and of the network server.
+- **A key linked into a session's `@s` is out of reach** of other
+  accounts' sessions and of the network server (§1).
 - **No PAM, and no change to the unit.**
 - **The fix is one call,** at one place in the sequence ADR-0065 already
   checks.
@@ -157,13 +173,18 @@ The implementing PR also changes three documents:
 
 - **Three crates join the tree,** one of them with `unsafe` system calls,
   and its last release is from 2023 (§3).
-- **Under a filter that denies `keyctl` but not `add_key`,** the shared
-  keyring stays reachable (§2).
+- **Under a filter that denies the join and the probe but not every
+  keyring call,** the shared keyring stays reachable (§2).
 
 ### Neutral
 
 - **Service-account mode is unchanged.** Its sessions run as the service
   account, which already owns the keyring they share.
+- **The account's user keyring `@u` is not linked in,** unlike under
+  `pam_keyinit`. A program that relies on `request_key` reaching `@u`
+  through `@s` does not find its key in a session. That keeps `@u`'s
+  contents away from anything that possesses the session keyring.
+  Linking it is RFC-0021's "Future possibilities".
 
 ## Alternatives considered
 
@@ -197,11 +218,12 @@ argv that ADR-0065 §2 fixes.
 ### Alternative 4: fail the session when the call fails with `EPERM`
 
 Rejected. Account mode would then fail in every default Docker
-container, the conformance job's among them. Under a seccomp filter,
-the session cannot reach a keyring through `keyctl` anyway (§2).
+container, the conformance job's among them. §2's probe tells a filter
+that blocks `keyctl` as a whole, which binds the session too, from one
+that denies only the join.
 
 ## Links
 
-- [#299](https://github.com/gonzafg2/quantumssh/issues/299); [RFC-0020](../rfcs/0020-privilege-separation-root-launcher-and-session-helper.md) §11; [ADR-0065](0065-session-helper-identity-change-checks-and-environment.md) §2, §4; [ADR-0067](0067-account-mode-systemd-unit.md) §5; [ADR-0069](0069-threat-model-text-for-account-mode.md) §4.
+- [#299](https://github.com/gonzafg2/quantumssh/issues/299); RFC-0021 ([#311](https://github.com/gonzafg2/quantumssh/pull/311)); [RFC-0020](../rfcs/0020-privilege-separation-root-launcher-and-session-helper.md) §11; [ADR-0065](0065-session-helper-identity-change-checks-and-environment.md) §2, §4; [ADR-0067](0067-account-mode-systemd-unit.md) §5; [ADR-0069](0069-threat-model-text-for-account-mode.md) §4.
 - keyctl_join_session_keyring(3), keyrings(7), systemd.exec(5) `KeyringMode=`.
 - keyutils-raw 0.4.0, `src/functions.rs`: `keyctl_join_session_keyring`.
