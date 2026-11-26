@@ -4,7 +4,7 @@
 - **Authors:** Gonzalo Fleming Garrido
 - **Created:** 2026-11-26
 - **Roadmap issue:** [#248](https://github.com/gonzafg2/quantumssh/issues/248) (Phase 3); tracked in [#299](https://github.com/gonzafg2/quantumssh/issues/299)
-- **Implementation PR:** TBD
+- **Implementation PR:** [#312](https://github.com/gonzafg2/quantumssh/pull/312); the implementing ADR is ADR-0074, in [#310](https://github.com/gonzafg2/quantumssh/pull/310)
 
 ## Summary
 
@@ -63,8 +63,10 @@ In account mode, each session starts with a session keyring of its own.
 - **Who else can reach them:**
   - other sessions of the same account, which share its UID, and so the
     UID's permissions on the keyring;
-  - nothing else. Not other accounts' sessions, and not the network
-    server.
+  - no other account's session, and not the network server.
+
+  Root, the launcher included, can reach every key, as it can reach
+  everything else. It is outside this model.
 
 **Where keyrings are unavailable,** sessions run as before, with no
 keyring of their own:
@@ -81,16 +83,28 @@ An operator changes nothing: no setting, no unit directive, no package.
 
 - **The crate.** `quantumssh-core` may depend on `keyutils-raw`, as a
   Linux-only dependency.
-- **The pin.** `keyutils-raw` is pinned to an exact, reviewed version.
-  A version bump is a reviewed change, like any other pin.
+- **The pin.** `keyutils-raw` is pinned to an exact, reviewed version,
+  which the implementing ADR names. A version bump is a reviewed change,
+  like any other pin.
 - **Its use.** Only the session helper calls it, and only the calls that
-  give the session its own keyring. The implementing ADR names them.
+  give the session its own keyring. The implementing ADR names them. A
+  reviewer checks the confinement by searching the workspace for the
+  crate's name: it must occur only in the session helper's module.
 - **Where the call runs.** After the identity change of ADR-0065 §2, as
-  the account, never as root.
+  the account, never as root. That rule covers the calls only.
+- **Where the code is.** The crate is linked into the one binary, so its
+  code is present in every process the binary runs as, the root
+  launcher included. The launcher never calls it. This RFC accepts that,
+  with the exact pin and `cargo deny` as the controls. At the versions
+  of the evidence below, none of the three crates has a build script or
+  code that runs at process start.
 - **What it brings.** The crate and its dependencies must pass
   `cargo deny` with the repository's `deny.toml`.
 
-  At `keyutils-raw` 0.4.0, the tree gains exactly three crates:
+  The evidence at drafting, for `keyutils-raw` 0.4.0, shows the tree
+  gaining exactly three crates. The table records that evidence; the
+  decision is the policy above, and the implementing ADR keeps the
+  versions current:
 
   | Crate | Version | Licence |
   |---|---|---|
@@ -104,6 +118,15 @@ An operator changes nothing: no setting, no unit directive, no package.
   offers the call without `unsafe` in first-party code, the dependency is
   removed. That would be `keyctl` in rustix, or a public join in
   linux-keyutils. The removal needs no new RFC.
+
+### What falls back, and what fails
+
+Only an error that means the session cannot reach any keyring either may
+let the session go on without one of its own: a kernel without
+keyrings, or `keyctl` blocked as a whole. Every other failure, such as
+`ENOMEM` or a join denied while other keyring calls still work, fails
+the session. The implementing ADR fixes the exact errors and how the
+helper tells them apart.
 
 ### What the implementing ADR decides
 
@@ -130,6 +153,9 @@ ADR-0074 decides:
   unmaintained advisory against it would fail `cargo deny`, and then the
   exception's end condition decides what replaces it.
 - **Three crates for one call.** `log` and `uninit` come with it.
+- **The code is in the root launcher too.** It is linked into the one
+  binary, so it is present in the root process, which never calls it
+  (see the reference-level explanation).
 - **RFC-0020 §11 no longer holds absolutely.** A reader of RFC-0020 has
   to know this RFC exists.
 
