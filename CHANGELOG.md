@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-27
+
+Account mode, on Linux. Each connection logs in to an account the
+operator lists, and its session runs as that account. A root launcher
+starts the session, and the network server never runs as root
+([RFC-0019](docs/rfcs/0019-identity-model-ssh-user-name-to-os-account.md),
+[RFC-0020](docs/rfcs/0020-privilege-separation-root-launcher-and-session-helper.md)).
+
+This release also:
+- turns the interop gate into a conformance suite;
+- fuzzes every pre-authentication parser continuously;
+- wipes the stack below the transport ciphers.
+
 ### Added
 
 - **The account-mode systemd unit**,
@@ -23,7 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     stop.
   - **`docs/deployment.md` gains an "Account mode" section:** set-up,
     file ownership, when a change takes effect, what a listed account
-    exposes, and the shared session keyring.
+    exposes, and session keyrings.
 - **Account mode, on Linux**
   ([RFC-0019](docs/rfcs/0019-identity-model-ssh-user-name-to-os-account.md),
   [RFC-0020](docs/rfcs/0020-privilege-separation-root-launcher-and-session-helper.md);
@@ -143,7 +156,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **§6.3:** a certificate logs in only to the account its principals
     name, and a new account-binding control.
   - **§7:** two residuals: a compromised network server, and the shared
-    session keyring.
+    session keyring. ADR-0074 later narrows the second, as listed under
+    Security.
   - **§2.7, §3.2.1, §3.2.4 and §5.4.5** are scoped to the two modes.
   - **Status notes:** ADR-0016, 0029, 0038, 0041, 0043 and 0050 each
     gain the note that ADR-0072 §3 gives them.
@@ -204,7 +218,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     the join is denied, the session fails.
   - **The call** goes through the new dependency `keyutils-raw` 0.4.0,
     which brings `log` and `uninit` with it.
-  - **The systemd gate checks the isolation.** A session of one account
+  - **The systemd gate checks the isolation,** and so does the
+    conformance case `account_own_keyring`. A session of one account
     cannot find or read another account's key, and neither can the
     service account.
 - The first `SSH_MSG_USERAUTH_REQUEST` fixes the user name for the
@@ -836,7 +851,8 @@ maintainer signs its checksums
   the project accepts this in exchange for protecting first-time
   HTTP visitors from active downgrade attacks on initial request.
 
-[Unreleased]: https://github.com/gonzafg2/quantumssh/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/gonzafg2/quantumssh/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/gonzafg2/quantumssh/releases/tag/v0.3.0
 [0.2.0]: https://github.com/gonzafg2/quantumssh/releases/tag/v0.2.0
 [0.1.0]: https://github.com/gonzafg2/quantumssh/releases/tag/v0.1.0
 [0.0.1]: https://github.com/gonzafg2/quantumssh/releases/tag/v0.0.1
