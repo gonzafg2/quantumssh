@@ -24,7 +24,7 @@ cargo-fuzz = true
 # an `unsafe impl GlobalAlloc`, which ADR-0018 forbids.
 cap             = "=0.1.2"
 libfuzzer-sys   = "=0.4.13"
-quantumssh-core = { path = "../crates/quantumssh-core", version = "0.2.0" }
+quantumssh-core = { path = "../crates/quantumssh-core", version = "0.3.0" }
 # The stateful `handshake` target's current-thread runtime and in-memory
 # stream. Already in the graph through quantumssh-core.
 tokio           = { version = "~1.51", default-features = false, features = ["rt", "io-util"] }
